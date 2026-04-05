@@ -4,16 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is nocode
 
-A terminal-native AI coding assistant built in Rust — a ground-up rewrite of a 507K-LOC TypeScript harness. Connects to Claude, OpenAI, Gemini, or any compatible endpoint via the Custom provider. Ships two interfaces: line-mode REPL and 4-pane TUI.
-
-The reference architecture is **claw-code** (`/home/telagod/project/claw-code`), a 60K-LOC 9-crate Rust workspace with production-grade MCP lifecycle, worker boot state machine, recovery recipes, policy engine, and 40 tools. nocode is evolving toward that target.
+A terminal-native AI coding assistant built in Rust — 38K LOC, 51 modules, 25 tools, 555 tests. Connects to Claude, OpenAI, Gemini, or any compatible endpoint. Two interfaces: line-mode REPL and 4-pane TUI with full Markdown rendering, syntect syntax highlighting, and RGB color support.
 
 ## Build & Test Commands
 
 ```bash
 cargo build                                     # debug build
 cargo build --release                           # release build
-cargo test                                      # all tests (~30)
+cargo test                                      # all tests (~555)
 cargo test -p nocode-core                       # core library only
 cargo test -p nocode                            # CLI binary only
 cargo test <test_name>                          # single test by name
@@ -24,227 +22,134 @@ cargo fmt                                       # auto-format
 
 ## Workspace Layout
 
-Two-crate Cargo workspace (edition 2024, clippy all+pedantic+nursery at workspace level, unsafe forbidden):
+Two-crate Cargo workspace (edition 2024, clippy all+pedantic+nursery, unsafe forbidden):
 
 ```
-crates/nocode-core/   — library (~29K LOC), owns all core logic
+crates/nocode-core/   — library (~30K LOC, 51 modules), all core logic
 crates/nocode/        — binary (~8K LOC), CLI/REPL/TUI shell
 ```
 
-### Target Architecture (from claw-code, 9 crates)
+Dependencies: serde, serde_json, reqwest, jsonschema, rusqlite (bundled), chrono, pulldown-cmark, syntect, crossterm.
 
-nocode is consolidating toward this crate split as it matures:
+## Architecture — 51 Modules
 
-| Crate | Purpose | nocode status |
-|-------|---------|---------------|
-| **runtime** | Session, conversation loop, config, permissions, MCP, hooks, recovery, worker boot, task/team/cron registries, LSP, policy engine | Partially in `nocode-core` |
-| **tools** | 40 tool specs + execution, global registries (OnceLock singletons) | 10 tools in `nocode-core/tool_execution/` |
-| **api** | Anthropic HTTP client, SSE streaming, OAuth, prompt caching, provider abstraction | In `nocode-core/provider.rs` + `provider_transport.rs` |
-| **commands** | 15+ slash commands with manifest system | In `nocode/repl.rs` (~40 commands) |
-| **plugins** | Plugin lifecycle, hook system (PreToolUse/PostToolUse/PostToolUseFailure) | Skeleton only |
-| **rusty-claude-cli** | Main binary: REPL, one-shot, streaming, rendering | In `nocode/` crate |
-| **mock-anthropic-service** | Deterministic mock for parity testing (12 scenarios) | Not yet |
-| **compat-harness** | Tool/command manifest extraction for parity validation | Not yet |
-| **telemetry** | Session tracing, usage telemetry, request profiling | `usage_tracker.rs` only |
+### Provider Layer
+- `provider.rs` — ModelProvider enum (Mock|Claude|OpenAi|Gemini|Custom), ApiFormat routing
+- `provider_transport.rs` — HTTP client, SSE parsing, retry/backoff, per-provider auth
 
-## Architecture — Current Implementation
+### Query Engine
+- `query_engine.rs` + `query_engine/` — conversation lifecycle, tool schema gen, 9-state loop
+- `query_loop.rs` — QueryLoopRunner state machine, budget, stop hooks
+- `query_deps.rs` — DI with trait objects (CallModel, Compactor, ToolRunner), RichCompactor default
+- `query_config.rs` — query configuration with tool definitions
 
-### Provider Layer (`nocode-core/src/provider.rs`, `provider_transport.rs`)
+### Tool System (25 tools)
 
-`ModelProvider` enum: `Mock | Claude | OpenAi | Gemini | Custom` (all Copy).
-`ApiFormat` enum: `Claude | OpenAi | Gemini` — routes Custom providers to the correct request builder and response parser.
+Core: Read, Edit, Write, Bash, Glob, Grep, WebFetch, WebSearch, Agent
+Task: TaskGet, TaskList, TaskUpdate, TaskStop, TaskOutput
+Team: TeamCreate, TeamDelete
+Cron: CronCreate, CronDelete, CronList
+Discovery: ToolSearch, Lsp
+Memory: MemorySave, MemoryList, MemorySearch, MemoryDelete
 
-Bedrock/Vertex are not first-class; use Custom with `NOCODE_CUSTOM_API_FORMAT=claude`.
+Modules:
+- `tool_execution/executor.rs` — DefaultToolExecutor dispatch with hook/sandbox/validation integration
+- `tool_execution/model.rs` — ToolCallInput, ToolCallResult, ToolExecutionTrace
+- `tool_execution/task_tools.rs` — 5 task tools wired to global TaskCoordinator
+- `tool_execution/team_tools.rs` — TeamCreate/Delete
+- `tool_execution/cron_tools.rs` — CronRegistry (OnceLock singleton) + 3 tools
+- `tool_execution/mcp_bridge.rs` — McpToolBridge, mcp:server:tool prefix dispatch
+- `tool_execution/lsp_tools.rs` — LSP tool with 6 actions (diagnostics/hover/definition/references/completion/symbols)
+- `tool_execution/tool_search.rs` — DeferredToolRegistry + fuzzy search
+- `tool_execution/memory_tools.rs` — 4 memory tools wired to real MemoryStore
+- `tool_registry.rs` — PermissionMode (ReadOnly/WorkspaceWrite/DangerFullAccess), ToolDefinition with required_permission
+- `tool_validation.rs` — JSON Schema validation for all tool inputs
+- `bash_validation.rs` — 6 validation submodules (read_only, destructive, mode, sed, path, semantics)
+- `file_safety.rs` — symlink escape prevention, binary detection, 10MB size limit
 
-Request paths:
-- Claude/Custom(claude): `/v1/messages`
-- OpenAI: `/v1/responses`
-- Gemini: `/v1beta/models/{model}:generateContent`
+### Storage Layer
+- `sql_store.rs` — rusqlite-backed storage with date-based volume partitioning (~/.nocode/data/nocode_YYYY-MM-DD.db). 5 tables: sessions, messages, memories, command_history, telemetry_events. Global singleton.
+- `session_persistence.rs` — JSONL session/transcript/history persistence (legacy)
+- `persistence_backend.rs` — PersistenceBackend trait, Noop/Recording implementations
+- `history_store.rs` — command history
+- `file_history.rs` — file change tracking
 
-`CustomProviderConfig { name, base_url, format: ApiFormat }` lives outside the enum to keep `ModelProvider` Copy-compatible.
+### Memory System
+- `memory_store.rs` — MemoryEntry with frontmatter (name/description/type/content), file-system CRUD, MEMORY.md index management
+- `memory_signals.rs` — 8 signal types (UserCorrection, UserPreference, UserRole, ProjectContext, PositiveFeedback, ExternalReference, ExplicitRemember, ExplicitForget), pattern-based detection with confidence scores
+- `summary_compression.rs` — priority-based line dedup/truncation (1200 chars, 24 lines budget), core detail line preservation
 
-### Query Engine (`nocode-core/src/query_engine/`)
+### Session & Compaction
+- `session_compaction.rs` — RichCompactor with structured summaries (message counts, tool names, recent requests, pending work, key files), integrated with summary_compression
+- `budget.rs` + `budget_state.rs` — token budget tracking with diminishing returns
 
-`QueryEngine` manages conversation lifecycle and tool schema generation. Submodules:
-- `runtime.rs` — turn execution orchestration
-- `state.rs` — query state management
-- `persistence.rs` — session save/load
-- `tests/` — submission and state resume tests
+### Runtime Infrastructure
+- `worker_boot.rs` — Worker state machine (Spawning→TrustRequired→ReadyForPrompt→Running→Finished/Failed), WorkerEvent audit trail, WorkerRegistry singleton
+- `recovery.rs` — 7 failure scenarios, RecoveryRecipe (steps + max_attempts + escalation), one-attempt-before-escalation
+- `policy_engine.rs` — composable conditions (GreenAt/StaleBranch/And/Or), chainable actions (MergeToDev/Escalate/Chain), priority-sorted rule evaluation
+- `task_runtime.rs` — TaskCoordinator (shell/agent/dream/daemon), global singleton
+- `hook_runner.rs` — HookRunner executing PreToolUse/PostToolUse/PostToolUseFailure commands, global singleton, deny-stops-chain
+- `plugin_system.rs` — PluginState lifecycle (Unconfigured→Validated→Healthy/Degraded/Failed), PluginRegistry, hook dispatch
+- `sandbox.rs` — FilesystemIsolationMode, container detection, namespace probing, capability-aware degradation
 
-`QueryLoopRunner` (`query_loop.rs`) is a 9-state state machine: model call → tool call extraction → tool execution → result feedback → next turn. Budget tracking via `budget.rs` with diminishing returns; truncating compactor at 100K threshold, keeps 20 messages.
+### Configuration & Auth
+- `config_loader.rs` — 3-tier config hierarchy (User/Project/Local), RuntimeConfig with MCP/hooks/sandbox sections
+- `prompt_assembly.rs` — SystemPromptBuilder with dynamic boundary, instruction file discovery (CLAUDE.md variants), dedup by FNV hash, truncation budgets
+- `oauth.rs` — PKCE code pair generation, token persistence/refresh, authorization URL builder
+- `command_registry.rs` — SlashCommandSpec with aliases/summary/argument_hint, 20+ pre-registered commands
 
-### Tool Call Flow (`nocode-core/src/query_engine/runtime.rs`)
+### Observability
+- `telemetry.rs` — 9 TelemetryEvent variants, TelemetryRecord with sequence, SessionTracer, global telemetry log
+- `model_pricing.rs` — Haiku/Sonnet/Opus pricing tables, CostEstimate, format_usd
+- `usage_tracker.rs` — UsageSnapshot with token counts and totals
+- `prompt_cache.rs` — FNV-1a fingerprint, TTL-based cache (256 entries, 30s default), hit/miss/eviction stats
 
-`extract_tool_calls()` normalizes three provider formats into `ToolCallRequest { name, id, arguments }`:
-- Claude: `tool_use` content blocks
-- OpenAI: `function_call` in response output
-- Gemini: `functionCall` in parts
+### Branch & Workflow
+- `stale_branch.rs` — BranchFreshness (Fresh/Stale/Diverged), 4 policies (WarnOnly/Block/AutoRebase/AutoMergeForward)
+- `lane_events.rs` — 16 LaneEventName variants, 11 status variants, 11 failure classes
+- `green_contract.rs` — GreenLevel hierarchy (TargetedTests→Package→Workspace→MergeReady)
 
-Each becomes a `ToolCallInput` (via `with_arguments_map()`), dispatched through `execute_tool_call()`, results fed back via `QueryLoopAction::ResolveTool` then `FlushToolBatch`.
+### MCP & LSP
+- `mcp_client.rs` — JSON-RPC over stdio, initialize/list_tools/call_tool
+- `mcp_manager.rs` — McpManager with per-server lifecycle, tool discovery, global singleton
+- `lsp_client.rs` — LspRegistry with file-system based implementation (grep-based definition/references, bracket diagnostics, keyword completion)
+- `global_registry.rs` — GlobalToolRegistry (OnceLock singleton), ToolSource (Base/Plugin/Mcp/Runtime), fuzzy search
 
-### Tool System (`nocode-core/src/tool_execution/`)
+### Testing
+- `mock_service.rs` — MockAnthropicService with 12 deterministic scenarios, CapturedRequest recording, ParityTestRunner
+- `tests/integration.rs` — end-to-end parity scenarios + memory roundtrip
 
-10 built-in tools: Read, Edit, Write, Bash, Glob, Grep, WebFetch, WebSearch, Agent, MCP. Each tool is a module under `tool_execution/`, with `executor.rs` for dispatch and `model.rs` for shared types.
+### TUI (nocode crate, 3,412 LOC)
+- `tui.rs` — 4-pane fullscreen (Transcript/TaskList/TaskDetail/Events), StyledContent with RGB rendering, overlay system, adaptive polling
+- `markdown_render.rs` — pulldown-cmark + syntect, headings/code/lists/quotes/links/rules
+- `markdown_stream.rs` — MarkdownStreamState with fence-aware boundary detection
+- `tool_render.rs` — per-tool box-drawing formatting (Bash/Read/Write/Edit/Glob/Grep)
+- `tool_truncate.rs` — configurable truncation (80 lines/6K for read, 60 lines/4K for tools)
+- `spinner.rs` — 10-frame braille animation
+- `status_hud.rs` — token/cost/elapsed/model/session HUD strip
 
-Target: 40 tools (from claw-code), adding TodoWrite, NotebookEdit, Skill, ToolSearch, LSP, Task/Team/Cron dispatch, SendUserMessage, Config, PlanMode, StructuredOutput, PowerShell, Sleep, Brief.
-
-### Tool Registry & Permissions (`nocode-core/src/tool_registry.rs`)
-
-`ToolPermissionContext` with 9 preset Bash safety rules. Permission rule engine gates tool access.
-
-Target permission model (from claw-code, 3 tiers):
-- `ReadOnly` — no file writes, no destructive commands
-- `WorkspaceWrite` — file writes within workspace boundary only
-- `DangerFullAccess` — unrestricted
-
-With `PermissionPolicy` (rules + prompting), `PermissionEnforcer` (gate enforcement), and hook-based overrides.
-
-### MCP Client (`nocode-core/src/mcp_client.rs`)
-
-JSON-RPC over stdio. Tool discovery and execution via `mcp:` prefix.
-
-Target MCP architecture (from claw-code):
-- 11-phase lifecycle: ConfigLoad → ServerRegistration → SpawnConnect → InitializeHandshake → ToolDiscovery → ResourceDiscovery → Ready → Invocation → ErrorSurfacing → Shutdown → Cleanup
-- `McpToolRegistry` — bridge between tools and MCP servers
-- Degraded-mode reporting (partial server failures remain usable)
-- Error classification per phase with `McpErrorSurface`
-- Transport abstraction: Stdio, SSE, HTTP, WebSocket
-
-### Session & Persistence (`nocode-core/src/session_persistence.rs`)
-
-JSONL format in `.nocode/` directory: sessions, history, file-history, tasks.
-
-Target session model (from claw-code):
-- `Session` with versioned state, compaction metadata, fork provenance
-- Append-only JSONL with atomic writes, rotation after 256KB (3 rotated files max)
-- `SessionCompaction` — summarize old messages, preserve last 4 verbatim, trigger at 10K estimated tokens
-- `SessionFork` — parent session ID + branch name for branch-aware tracking
-
-### Task Runtime (`nocode-core/src/task_runtime.rs`)
-
-Four task types: shell, agent, dream, process daemon. Supervisor manages lifecycle.
-
-Target task system (from claw-code):
-- `TaskRegistry` — in-memory lifecycle with `TaskPacket` (objective, scope, repo, branch_policy, acceptance_tests, commit_policy, escalation_policy)
-- `TeamRegistry` — multi-agent team coordination
-- `CronRegistry` — scheduled task management
-- Global registries via `OnceLock<Arc<Mutex<T>>>` singletons
-
-### CLI Shell (`nocode/src/`)
-
-- `main.rs` — entry point, provider detection, bootstrap config, 7 execution modes
-- `repl.rs` — REPL session, ~40 slash commands, task management
-- `tui.rs` — 4-pane TUI (crossterm), async streaming with adaptive polling (16ms streaming / 120ms idle), overlay system (help/inspector/permission)
-- `claudemd.rs` — CLAUDE.md auto-discovery (user/project/rules/local)
-- `task_panel.rs` — task filtering and rendering
-
-### Other Core Modules
-
-- `assistant_turn.rs` — assistant turn representation
-- `message.rs` — conversation message types
+### Other
+- `message.rs` — QueryMessage types
 - `model_response.rs` — model response parsing
-- `budget_state.rs` — budget state tracking
-- `stop_hook.rs` — stop condition hooks
+- `assistant_turn.rs` — assistant turn representation
 - `transcript.rs` — conversation transcript
-- `usage_tracker.rs` — token usage and cost tracking
-- `file_history.rs` / `history_store.rs` — file and command history
-- `bridge_runtime.rs` — local/remote bridge, permission callbacks
-
-## Architecture — Target Patterns (from claw-code)
-
-These patterns are the reference implementation in claw-code. Adopt them as nocode matures.
-
-### Worker Boot State Machine
-
-States: `Spawning → TrustRequired → ReadyForPrompt → PromptAccepted → Running → Blocked/Finished/Failed`
-
-- Trust gate detection and resolution (auto-trust for known repos, approval for unknown)
-- Prompt misdelivery detection and recovery
-- Structured `WorkerEvent` emission for observability
-
-### Recovery Recipes
-
-7 known failure scenarios with one automatic recovery attempt before escalation:
-
-| Scenario | Recovery Step | Escalation |
-|----------|--------------|------------|
-| TrustPromptUnresolved | AcceptTrustPrompt | AlertHuman |
-| PromptMisdelivery | RedirectPromptToAgent | AlertHuman |
-| StaleBranch | RebaseBranch + CleanBuild | AlertHuman |
-| CompileRedCrossCrate | CleanBuild | AlertHuman |
-| McpHandshakeFailure | RetryMcpHandshake (5s) | Abort |
-| PartialPluginStartup | RestartPlugin + RetryMcp (3s) | LogAndContinue |
-| ProviderFailure | RestartWorker | AlertHuman |
-
-### Policy Engine
-
-Lane-based automation with composable conditions and chainable actions:
-- Conditions: `GreenAt { level }`, `StaleBranch`, `StartupBlocked`, `LaneCompleted`, `ReviewPassed`, `And(vec)`, `Or(vec)`
-- Actions: `MergeToDev`, `MergeForward`, `RecoverOnce`, `Escalate`, `CloseoutLane`, `Notify`, `Block`, `Chain(vec)`
-- Green levels: TargetedTests → Package → Workspace → MergeReady
-
-### Hook System
-
-Plugin hooks at three lifecycle points:
-- `PreToolUse` — gate or modify tool invocation
-- `PostToolUse` — react to tool results
-- `PostToolUseFailure` — handle tool failures
-
-`HookRunner` executes hook commands with abort signals and permission overrides.
-
-### Bash Validation (6 submodules in claw-code)
-
-- readOnlyValidation — enforce read-only mode
-- destructiveCommandWarning — flag dangerous commands
-- modeValidation — permission mode checks
-- sedValidation — sed command safety
-- pathValidation — workspace boundary enforcement
-- commandSemantics — semantic command analysis
-
-### Sandbox & Isolation
-
-- `FilesystemIsolationMode`: Off, WorkspaceOnly (default), AllowList
-- Linux namespace/network isolation with capability detection
-- Container detection (dockerenv, containerenv, cgroup markers)
-- Capability-aware: degrades gracefully when unshare unavailable
-
-### Config Hierarchy (3-tier, highest wins)
-
-1. User — `~/.claude/settings.json`
-2. Project — `.claude/settings.json` in repo root
-3. Local — `.claude.local/settings.json` for machine-specific overrides
-
-### System Prompt Assembly
-
-Layered and deterministic with dynamic boundary marker:
-1. Static scaffolding (intro, output style, system, task, actions sections)
-2. `__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__`
-3. Runtime context (cwd, date, platform, model, git status/diff, instruction files)
-4. Config sections (hooks, plugins, MCP servers)
-
-Instruction file discovery walks up directory tree, looks for CLAUDE.md variants, deduplicates, limits to 4K chars/file, 12K total.
-
-### Mock Parity Harness
-
-Deterministic Anthropic-compatible mock service for end-to-end testing:
-- 12 scripted scenarios (streaming_text, read_file_roundtrip, write_file_allowed/denied, bash_permission_prompt, multi_tool_turn, plugin_tool, auto_compact, token_cost)
-- Spawns TCP listener on dynamic port, captures requests for assertion
-- No external API dependency, fully reproducible
+- `stop_hook.rs` — stop condition hooks
+- `bridge_runtime.rs` — local/remote bridge
+- `roadmap.rs` — roadmap tracking
 
 ## Key Conventions
 
 - Workspace edition 2024. Clippy all+pedantic+nursery. Unsafe forbidden.
 - `ModelProvider` and `ApiFormat` are Copy enums. Custom config stored separately.
-- Canonical result term: display `response-result`, Rust/wire `response_result`, task panel `result`. Legacy `structured_output` only in provider JSON schema request name and bridge backward-compat decode alias.
-- Trait-based extensibility: `ApiClient`, `ToolExecutor`, `PermissionPrompter`, `TelemetrySink` for pluggable behavior.
-- Global registries use `OnceLock<Arc<Mutex<T>>>` singleton pattern for shared state across tool invocations.
-- State machines over inferred state: worker lifecycle, MCP lifecycle, plugin lifecycle all use explicit enum states.
-- Events over scraped prose: structured typed events (`RecoveryEvent`, `LaneEvent`, `WorkerEvent`) for observability.
+- Global registries use `OnceLock<Arc<Mutex<T>>>` singleton pattern.
+- State machines over inferred state: worker, MCP, plugin lifecycles use explicit enum states.
+- Events over scraped prose: structured typed events for observability.
 - One recovery attempt before escalation — never silently retry indefinitely.
+- SQL storage with date-based volume partitioning for clean data management.
+- Memory entries use Markdown with YAML frontmatter (name/description/type).
 
 ## Environment Variables
 
-Provider auto-detected from API key presence. Override with:
 - `NOCODE_MODEL_PROVIDER` — force provider (`claude`, `openai`, `gemini`, `custom`, `mock`)
 - `NOCODE_MODEL` — override model name
 - `NOCODE_CUSTOM_BASE_URL` / `NOCODE_CUSTOM_API_FORMAT` — Custom provider config
