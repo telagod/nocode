@@ -4,6 +4,7 @@ pub mod budget;
 pub mod budget_state;
 pub mod file_history;
 pub mod history_store;
+pub mod mcp_client;
 pub mod message;
 pub mod model_response;
 pub mod persistence_backend;
