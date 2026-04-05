@@ -418,21 +418,8 @@ fn submit_message_records_model_error_when_provider_fails() {
 #[test]
 fn submit_message_builds_protocol_specific_http_requests() {
     let cases = [
-        (
-            SharedModelProvider::ClaudeMessages,
-            "/v1/messages",
-            "\"messages\"",
-        ),
-        (
-            SharedModelProvider::OpenAiChatCompletions,
-            "/v1/chat/completions",
-            "\"messages\"",
-        ),
-        (
-            SharedModelProvider::OpenAiResponses,
-            "/v1/responses",
-            "\"input\"",
-        ),
+        (SharedModelProvider::Claude, "/v1/messages", "\"messages\""),
+        (SharedModelProvider::OpenAi, "/v1/responses", "\"input\""),
     ];
 
     for (provider, path, marker) in cases {
@@ -457,9 +444,9 @@ fn submit_message_builds_protocol_specific_http_requests() {
 }
 
 #[test]
-fn submit_message_adds_json_schema_to_openai_chat_completions_requests() {
+fn submit_message_adds_json_schema_to_openai_requests() {
     let mut config = sample_config();
-    config.model_provider = SharedModelProvider::OpenAiChatCompletions;
+    config.model_provider = SharedModelProvider::OpenAi;
     config.json_schema = Some(String::from(
         "{\"type\":\"object\",\"properties\":{\"ok\":{\"type\":\"boolean\"}},\"required\":[\"ok\"]}",
     ));
@@ -474,25 +461,15 @@ fn submit_message_adds_json_schema_to_openai_chat_completions_requests() {
         .as_ref()
         .expect("provider invocation should be recorded");
 
-    assert_eq!(
-        invocation.provider,
-        SharedModelProvider::OpenAiChatCompletions
-    );
-    assert_eq!(invocation.http_request.path, "/v1/chat/completions");
-    assert!(invocation.http_request.body.contains("\"response_format\""));
-    assert!(invocation.http_request.body.contains("\"json_schema\""));
-    assert!(
-        invocation
-            .http_request
-            .body
-            .contains("\"structured_output\"")
-    );
+    assert_eq!(invocation.provider, SharedModelProvider::OpenAi);
+    assert_eq!(invocation.http_request.path, "/v1/responses");
+    assert!(invocation.http_request.body.contains("\"text\""));
 }
 
 #[test]
-fn submit_message_adds_reasoning_effort_to_openai_chat_completions_requests() {
+fn submit_message_adds_reasoning_effort_to_openai_requests() {
     let mut config = sample_config();
-    config.model_provider = SharedModelProvider::OpenAiChatCompletions;
+    config.model_provider = SharedModelProvider::OpenAi;
     config.model_reasoning_effort = Some(String::from("high"));
     let deps = SharedQueryDeps::builder()
         .with_call_model(FixedCallModel)
@@ -505,19 +482,14 @@ fn submit_message_adds_reasoning_effort_to_openai_chat_completions_requests() {
         .as_ref()
         .expect("provider invocation should be recorded");
 
-    assert_eq!(invocation.http_request.path, "/v1/chat/completions");
-    assert!(
-        invocation
-            .http_request
-            .body
-            .contains("\"reasoning_effort\":\"high\"")
-    );
+    assert_eq!(invocation.http_request.path, "/v1/responses");
+    assert!(invocation.http_request.body.contains("\"reasoning\""));
 }
 
 #[test]
 fn submit_message_adds_json_schema_to_openai_responses_requests() {
     let mut config = sample_config();
-    config.model_provider = SharedModelProvider::OpenAiResponses;
+    config.model_provider = SharedModelProvider::OpenAi;
     config.json_schema = Some(String::from(
         "{\"type\":\"object\",\"properties\":{\"ok\":{\"type\":\"boolean\"}},\"required\":[\"ok\"]}",
     ));
@@ -532,7 +504,7 @@ fn submit_message_adds_json_schema_to_openai_responses_requests() {
         .as_ref()
         .expect("provider invocation should be recorded");
 
-    assert_eq!(invocation.provider, SharedModelProvider::OpenAiResponses);
+    assert_eq!(invocation.provider, SharedModelProvider::OpenAi);
     assert_eq!(invocation.http_request.path, "/v1/responses");
     assert!(invocation.http_request.body.contains("\"text\""));
     assert!(invocation.http_request.body.contains("\"format\""));
@@ -548,7 +520,7 @@ fn submit_message_adds_json_schema_to_openai_responses_requests() {
 #[test]
 fn submit_message_adds_reasoning_effort_to_openai_responses_requests() {
     let mut config = sample_config();
-    config.model_provider = SharedModelProvider::OpenAiResponses;
+    config.model_provider = SharedModelProvider::OpenAi;
     config.model_reasoning_effort = Some(String::from("high"));
     let deps = SharedQueryDeps::builder()
         .with_call_model(FixedCallModel)

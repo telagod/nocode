@@ -38,68 +38,42 @@ fn env_var_optional(name: &str) -> Option<String> {
 }
 
 fn env_provider_override() -> Option<ModelProvider> {
-    match env_var_optional("NOCODE_MODEL_PROVIDER")
+    env_var_optional("NOCODE_MODEL_PROVIDER")
         .or_else(|| env_var_optional("NOCODE_PROVIDER"))
-        .map(|value| value.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("mock") => Some(ModelProvider::Mock),
-        Some("claude" | "claude-messages" | "anthropic") => Some(ModelProvider::ClaudeMessages),
-        Some("openai-chat" | "openai-chat-completions" | "chat-completions") => {
-            Some(ModelProvider::OpenAiChatCompletions)
-        }
-        Some("openai-responses" | "responses" | "openai") => Some(ModelProvider::OpenAiResponses),
-        _ => None,
-    }
+        .and_then(|value| ModelProvider::parse(&value))
 }
 
 fn env_default_provider() -> ModelProvider {
     if let Some(provider) = env_provider_override() {
         return provider;
     }
-    if env_var_optional("AWS_BEDROCK_BASE_URL").is_some()
-        || (env_var_optional("AWS_ACCESS_KEY_ID").is_some()
-            && env_var_optional("NOCODE_MODEL_PROVIDER")
-                .as_deref()
-                .is_some_and(|v| v.contains("bedrock")))
-    {
-        return ModelProvider::Bedrock;
-    }
-    if env_var_optional("GOOGLE_ACCESS_TOKEN").is_some()
-        || env_var_optional("GCLOUD_ACCESS_TOKEN").is_some()
-    {
-        return ModelProvider::Vertex;
+    if env_var_optional("GEMINI_API_KEY").is_some() {
+        return ModelProvider::Gemini;
     }
     if env_var_optional("OPENAI_API_KEY").is_some() || env_var_optional("OPENAI_BASE_URL").is_some()
     {
-        return ModelProvider::OpenAiResponses;
+        return ModelProvider::OpenAi;
     }
     if env_var_optional("ANTHROPIC_API_KEY").is_some()
         || env_var_optional("ANTHROPIC_BASE_URL").is_some()
     {
-        return ModelProvider::ClaudeMessages;
+        return ModelProvider::Claude;
     }
     ModelProvider::Mock
 }
 
 fn env_default_model(provider: ModelProvider) -> Option<String> {
-    match provider {
+    env_var_optional("NOCODE_MODEL").or_else(|| match provider {
         ModelProvider::Mock => Some(String::from("sonnet")),
-        ModelProvider::ClaudeMessages => env_var_optional("NOCODE_MODEL")
-            .or_else(|| env_var_optional("ANTHROPIC_MODEL"))
-            .or_else(|| Some(String::from("claude-3-7-sonnet"))),
-        ModelProvider::OpenAiChatCompletions | ModelProvider::OpenAiResponses => {
-            env_var_optional("NOCODE_MODEL")
-                .or_else(|| env_var_optional("OPENAI_MODEL"))
-                .or_else(|| Some(String::from("gpt-5.4")))
+        ModelProvider::Claude | ModelProvider::Custom => env_var_optional("ANTHROPIC_MODEL")
+            .or_else(|| Some(String::from("claude-sonnet-4-20250514"))),
+        ModelProvider::OpenAi => {
+            env_var_optional("OPENAI_MODEL").or_else(|| Some(String::from("gpt-4.1")))
         }
-        ModelProvider::Bedrock => env_var_optional("NOCODE_MODEL")
-            .or_else(|| env_var_optional("AWS_BEDROCK_MODEL"))
-            .or_else(|| Some(String::from("anthropic.claude-3-5-sonnet-20241022-v2:0"))),
-        ModelProvider::Vertex => env_var_optional("NOCODE_MODEL")
-            .or_else(|| env_var_optional("VERTEX_MODEL"))
-            .or_else(|| Some(String::from("claude-3-5-sonnet-v2@20241022"))),
-    }
+        ModelProvider::Gemini => {
+            env_var_optional("GEMINI_MODEL").or_else(|| Some(String::from("gemini-2.5-flash")))
+        }
+    })
 }
 
 fn env_thinking_mode() -> ThinkingMode {
@@ -1190,13 +1164,17 @@ mod tests {
 
         assert!(rendered.contains("caps=stream(request=yes,live=no,sse=no)"));
         assert!(rendered.contains("matrix=mock[stream(request=yes,live=no,sse=no)"));
-        assert!(rendered.contains("claude-messages[stream(request=yes,live=yes,sse=yes)"));
-        assert!(rendered.contains(
-            "openai-chat-completions[stream(request=yes,live=yes,sse=yes) tool-use=yes json-schema=yes"
-        ));
-        assert!(rendered.contains(
-            "openai-responses[stream(request=yes,live=yes,sse=yes) tool-use=yes json-schema=yes"
-        ));
+        assert!(rendered.contains("claude[stream(request=yes,live=yes,sse=yes)"));
+        assert!(
+            rendered.contains(
+                "openai[stream(request=yes,live=yes,sse=yes) tool-use=yes json-schema=yes"
+            )
+        );
+        assert!(
+            rendered.contains(
+                "gemini[stream(request=yes,live=yes,sse=yes) tool-use=yes json-schema=yes"
+            )
+        );
         assert!(rendered.contains("stream=total=3 delta=1 chars="));
         assert!(rendered.contains("start=yes complete=yes"));
         assert!(rendered.contains("response-result=none"));

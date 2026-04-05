@@ -109,15 +109,11 @@ impl ProviderTransportConfig {
     pub fn for_provider(provider: ModelProvider) -> Self {
         match provider {
             ModelProvider::Mock => Self::new("mock://nocode"),
-            ModelProvider::ClaudeMessages => Self::new("https://api.anthropic.com")
+            ModelProvider::Claude | ModelProvider::Custom => Self::new("https://api.anthropic.com")
                 .with_default_header("Accept", "application/json"),
-            ModelProvider::OpenAiChatCompletions | ModelProvider::OpenAiResponses => {
-                Self::new("https://api.openai.com")
-                    .with_default_header("Accept", "application/json")
-            }
-            ModelProvider::Bedrock => Self::new("https://bedrock-runtime.us-east-1.amazonaws.com")
+            ModelProvider::OpenAi => Self::new("https://api.openai.com")
                 .with_default_header("Accept", "application/json"),
-            ModelProvider::Vertex => Self::new("https://us-central1-aiplatform.googleapis.com")
+            ModelProvider::Gemini => Self::new("https://generativelanguage.googleapis.com")
                 .with_default_header("Accept", "application/json"),
         }
     }
@@ -134,8 +130,10 @@ impl ProviderTransportConfig {
         let mut config = Self::for_provider(provider);
         match provider {
             ModelProvider::Mock => Ok(config),
-            ModelProvider::ClaudeMessages => {
-                if let Some(base_url) = env_var_optional("ANTHROPIC_BASE_URL") {
+            ModelProvider::Claude | ModelProvider::Custom => {
+                if let Some(base_url) = env_var_optional("ANTHROPIC_BASE_URL")
+                    .or_else(|| env_var_optional("NOCODE_CUSTOM_BASE_URL"))
+                {
                     config.base_url = base_url;
                 }
                 config.auth = AuthConfig::ApiKey {
@@ -144,7 +142,7 @@ impl ProviderTransportConfig {
                 };
                 Ok(config)
             }
-            ModelProvider::OpenAiChatCompletions | ModelProvider::OpenAiResponses => {
+            ModelProvider::OpenAi => {
                 if let Some(base_url) = env_var_optional("OPENAI_BASE_URL") {
                     config.base_url = base_url;
                 }
@@ -156,30 +154,13 @@ impl ProviderTransportConfig {
                 }
                 Ok(config)
             }
-            ModelProvider::Bedrock => {
-                if let Some(base_url) = env_var_optional("AWS_BEDROCK_BASE_URL") {
+            ModelProvider::Gemini => {
+                if let Some(base_url) = env_var_optional("GEMINI_BASE_URL") {
                     config.base_url = base_url;
                 }
-                // Bedrock uses AWS SigV4 — for now, pass region + key as bearer token placeholder.
-                if let Ok(token) = std::env::var("AWS_SESSION_TOKEN") {
-                    config.auth = AuthConfig::Bearer { token };
-                } else if let Ok(key) = std::env::var("AWS_ACCESS_KEY_ID") {
-                    config.auth = AuthConfig::ApiKey {
-                        header: String::from("X-Aws-Access-Key"),
-                        value: key,
-                    };
-                }
-                Ok(config)
-            }
-            ModelProvider::Vertex => {
-                if let Some(base_url) = env_var_optional("VERTEX_BASE_URL") {
-                    config.base_url = base_url;
-                }
-                if let Ok(token) = std::env::var("GOOGLE_ACCESS_TOKEN") {
-                    config.auth = AuthConfig::Bearer { token };
-                } else if let Ok(token) = std::env::var("GCLOUD_ACCESS_TOKEN") {
-                    config.auth = AuthConfig::Bearer { token };
-                }
+                config.auth = AuthConfig::Bearer {
+                    token: env_var_required("GEMINI_API_KEY")?,
+                };
                 Ok(config)
             }
         }
@@ -782,8 +763,8 @@ mod tests {
 
     #[test]
     fn default_provider_config_uses_expected_base_url() {
-        let anthropic = ProviderTransportConfig::for_provider(ModelProvider::ClaudeMessages);
-        let openai = ProviderTransportConfig::for_provider(ModelProvider::OpenAiResponses);
+        let anthropic = ProviderTransportConfig::for_provider(ModelProvider::Claude);
+        let openai = ProviderTransportConfig::for_provider(ModelProvider::OpenAi);
 
         assert_eq!(anthropic.base_url, "https://api.anthropic.com");
         assert_eq!(openai.base_url, "https://api.openai.com");
@@ -791,14 +772,15 @@ mod tests {
 
     #[test]
     fn prepare_http_request_merges_protocol_headers() {
-        let config = ProviderTransportConfig::for_provider(ModelProvider::ClaudeMessages)
-            .with_auth(AuthConfig::ApiKey {
+        let config = ProviderTransportConfig::for_provider(ModelProvider::Claude).with_auth(
+            AuthConfig::ApiKey {
                 header: "x-api-key".to_string(),
                 value: "secret".to_string(),
-            });
+            },
+        );
         let request = ProviderHttpRequest::new(
             "POST",
-            ModelProvider::ClaudeMessages,
+            ModelProvider::Claude,
             serde_json::json!({"model":"claude"}),
         )
         .with_header("anthropic-version", "2023-06-01");
