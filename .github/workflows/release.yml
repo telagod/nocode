@@ -28,6 +28,9 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             npm_pkg: nocode-darwin-arm64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            npm_pkg: nocode-win32-x64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -43,28 +46,43 @@ jobs:
 
       - name: Extract version from tag
         id: version
+        shell: bash
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Package tarball for GitHub Release
+        shell: bash
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} dist/
-          cd dist
-          tar czf ${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz ${{ env.BINARY_NAME }}
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}.exe dist/
+            cd dist
+            7z a ${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-${{ matrix.target }}.zip ${{ env.BINARY_NAME }}.exe
+          else
+            cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} dist/
+            cd dist
+            tar czf ${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz ${{ env.BINARY_NAME }}
+          fi
 
       - name: Prepare npm platform package
+        shell: bash
         run: |
           PKG_DIR=npm-stage/${{ matrix.npm_pkg }}
           mkdir -p "$PKG_DIR/bin"
-          cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} "$PKG_DIR/bin/"
-          chmod +x "$PKG_DIR/bin/${{ env.BINARY_NAME }}"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}.exe "$PKG_DIR/bin/"
+          else
+            cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} "$PKG_DIR/bin/"
+            chmod +x "$PKG_DIR/bin/${{ env.BINARY_NAME }}"
+          fi
           cp npm/${{ matrix.npm_pkg }}/package.json "$PKG_DIR/package.json"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.target }}
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
           retention-days: 5
 
       - name: Upload npm platform package
@@ -91,7 +109,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: dist/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
 
   publish-npm:
     needs: build

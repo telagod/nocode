@@ -78,12 +78,12 @@ fn env_default_model(provider: ModelProvider) -> Option<String> {
     env_var_optional("NOCODE_MODEL").or_else(|| match provider {
         ModelProvider::Mock => Some(String::from("sonnet")),
         ModelProvider::Claude | ModelProvider::Custom => env_var_optional("ANTHROPIC_MODEL")
-            .or_else(|| Some(String::from("claude-sonnet-4-20250514"))),
+            .or_else(|| Some(String::from("claude-opus-4-6"))),
         ModelProvider::OpenAi => {
-            env_var_optional("OPENAI_MODEL").or_else(|| Some(String::from("gpt-4.1")))
+            env_var_optional("OPENAI_MODEL").or_else(|| Some(String::from("gpt-5.4")))
         }
         ModelProvider::Gemini => {
-            env_var_optional("GEMINI_MODEL").or_else(|| Some(String::from("gemini-2.5-flash")))
+            env_var_optional("GEMINI_MODEL").or_else(|| Some(String::from("gemini-3.1-pro")))
         }
     })
 }

@@ -46,9 +46,9 @@ Auto-detected from environment variables. Priority: explicit override > Gemini >
 
 | Provider | API Key | Default Model |
 |----------|---------|---------------|
-| Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
-| OpenAI | `OPENAI_API_KEY` | `gpt-4.1` |
-| Gemini | `GEMINI_API_KEY` | `gemini-2.5-flash` |
+| Claude | `ANTHROPIC_API_KEY` | `claude-opus-4-6` |
+| OpenAI | `OPENAI_API_KEY` | `gpt-5.4` |
+| Gemini | `GEMINI_API_KEY` | `gemini-3.1-pro` |
 | Custom | `NOCODE_CUSTOM_BASE_URL` | user-specified |
 | Mock | (none, fallback) | `sonnet` |
 
@@ -56,7 +56,7 @@ Override provider or model:
 
 ```bash
 export NOCODE_MODEL_PROVIDER=openai
-export NOCODE_MODEL=gpt-4.1
+export NOCODE_MODEL=gpt-5.4
 ```
 
 Use any OpenAI/Claude-compatible endpoint (Ollama, vLLM, LiteLLM, etc.):
@@ -175,6 +175,7 @@ export NOCODE_MODEL=llama3
 | Linux x64 | `@telagod/nocode-linux-x64` |
 | macOS x64 | `@telagod/nocode-darwin-x64` |
 | macOS ARM64 | `@telagod/nocode-darwin-arm64` |
+| Windows x64 | `@telagod/nocode-win32-x64` |
 
 ## License
 

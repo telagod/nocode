@@ -10,6 +10,7 @@ const PLATFORM_PACKAGES = {
   "linux-x64": "@telagod/nocode-linux-x64",
   "darwin-x64": "@telagod/nocode-darwin-x64",
   "darwin-arm64": "@telagod/nocode-darwin-arm64",
+  "win32-x64": "@telagod/nocode-win32-x64",
 };
 
 function getBinaryPath() {
@@ -38,7 +39,8 @@ function getBinaryPath() {
     process.exit(1);
   }
 
-  const bin = path.join(pkgDir, "bin", "nocode");
+  const binName = process.platform === "win32" ? "nocode.exe" : "nocode";
+  const bin = path.join(pkgDir, "bin", binName);
   if (!fs.existsSync(bin)) {
     console.error(`Binary not found at ${bin}`);
     process.exit(1);

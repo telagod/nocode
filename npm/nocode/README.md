@@ -41,7 +41,7 @@ Override provider or model:
 
 ```bash
 export NOCODE_MODEL_PROVIDER=claude   # claude|openai|gemini|custom
-export NOCODE_MODEL=claude-sonnet-4-20250514
+export NOCODE_MODEL=claude-opus-4-6
 ```
 
 ## Supported Platforms
@@ -51,6 +51,7 @@ export NOCODE_MODEL=claude-sonnet-4-20250514
 | Linux x64 | `@telagod/nocode-linux-x64` |
 | macOS x64 | `@telagod/nocode-darwin-x64` |
 | macOS ARM64 | `@telagod/nocode-darwin-arm64` |
+| Windows x64 | `@telagod/nocode-win32-x64` |
 
 ## License
 
