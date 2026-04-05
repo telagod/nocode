@@ -1,0 +1,13 @@
+[package]
+name = "nocode"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+crossterm = "0.28"
+nocode-core = { path = "../nocode-core" }
+serde_json = "1"
+
+[dev-dependencies]
