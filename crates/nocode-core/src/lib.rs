@@ -3,17 +3,26 @@ pub mod bash_validation;
 pub mod bridge_runtime;
 pub mod budget;
 pub mod budget_state;
+pub mod command_registry;
+pub mod config_loader;
+
 pub mod file_history;
 pub mod file_safety;
 pub mod global_registry;
+pub mod green_contract;
 pub mod history_store;
+pub mod hook_runner;
+pub mod lane_events;
 pub mod lsp_client;
 pub mod mcp_client;
 pub mod message;
+pub mod model_pricing;
 pub mod model_response;
+pub mod oauth;
 pub mod persistence_backend;
 pub mod plugin_system;
 pub mod policy_engine;
+pub mod prompt_assembly;
 pub mod provider;
 pub mod provider_transport;
 pub mod query_config;
@@ -24,6 +33,7 @@ pub mod recovery;
 pub mod roadmap;
 pub mod session_compaction;
 pub mod session_persistence;
+pub mod stale_branch;
 pub mod stop_hook;
 pub mod task_runtime;
 pub mod tool_execution;
@@ -43,6 +53,9 @@ pub use bridge_runtime::{
 };
 pub use budget::{BudgetCompletionEvent, BudgetTracker, TokenBudgetDecision, check_token_budget};
 pub use budget_state::{BudgetState, TaskBudget};
+pub use command_registry::{
+    CommandRegistry, CommandSource, SlashCommandSpec, default_command_registry,
+};
 pub use file_history::{FileHistoryConfig, FileHistoryPlan, FileHistoryState};
 pub use file_safety::{
     check_file_size, check_symlink_escape, is_binary_file, validate_read_target,

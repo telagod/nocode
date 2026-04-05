@@ -39,15 +39,23 @@ pub fn execute_task_get(call: ToolCallInput) -> ToolExecutionTrace {
     let Some(task_id) = call.argument("task_id") else {
         return missing_argument(call, "task_id");
     };
-    let _task_id = task_id.to_string();
-    stub_response(&call, "TaskGet", "task system not connected")
+    let task_id = task_id.to_string();
+    stub_response(
+        &call,
+        "TaskGet",
+        &format!("task system: task {task_id} not found (task runtime not connected)"),
+    )
 }
 
 /// List tasks, optionally filtered by status.
 pub fn execute_task_list(call: ToolCallInput) -> ToolExecutionTrace {
     // filter is optional — "all", "running", "completed", "failed"
     let _filter = call.argument("filter").unwrap_or("all").to_string();
-    stub_response(&call, "TaskList", "task system not connected")
+    stub_response(
+        &call,
+        "TaskList",
+        "task system: 0 tasks (task runtime not connected)",
+    )
 }
 
 /// Update a task's status.
@@ -58,10 +66,14 @@ pub fn execute_task_update(call: ToolCallInput) -> ToolExecutionTrace {
     let Some(status) = call.argument("status") else {
         return missing_argument(call, "status");
     };
-    let _task_id = task_id.to_string();
+    let task_id = task_id.to_string();
     let _status = status.to_string();
     let _message = call.argument("message").map(ToString::to_string);
-    stub_response(&call, "TaskUpdate", "task system not connected")
+    stub_response(
+        &call,
+        "TaskUpdate",
+        &format!("task system: update queued for {task_id} (task runtime not connected)"),
+    )
 }
 
 /// Stop a running task.
@@ -69,8 +81,12 @@ pub fn execute_task_stop(call: ToolCallInput) -> ToolExecutionTrace {
     let Some(task_id) = call.argument("task_id") else {
         return missing_argument(call, "task_id");
     };
-    let _task_id = task_id.to_string();
-    stub_response(&call, "TaskStop", "task system not connected")
+    let task_id = task_id.to_string();
+    stub_response(
+        &call,
+        "TaskStop",
+        &format!("task system: stop requested for {task_id} (task runtime not connected)"),
+    )
 }
 
 /// Retrieve the full output of a task.
@@ -78,8 +94,12 @@ pub fn execute_task_output(call: ToolCallInput) -> ToolExecutionTrace {
     let Some(task_id) = call.argument("task_id") else {
         return missing_argument(call, "task_id");
     };
-    let _task_id = task_id.to_string();
-    stub_response(&call, "TaskOutput", "task system not connected")
+    let task_id = task_id.to_string();
+    stub_response(
+        &call,
+        "TaskOutput",
+        &format!("task system: no output for {task_id} (task runtime not connected)"),
+    )
 }
 
 #[cfg(test)]
@@ -94,7 +114,7 @@ mod tests {
             .with_argument("task_id", "a0000000000000001");
         let trace = execute_task_get(call);
         assert_eq!(trace.result.status_label(), "completed");
-        assert!(trace.result.message().contains("task system not connected"));
+        assert!(trace.result.message().contains("task runtime not connected"));
     }
 
     #[test]

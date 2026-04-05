@@ -31,7 +31,7 @@ pub fn execute_team_create(call: ToolCallInput) -> ToolExecutionTrace {
         .collect::<Vec<_>>()
         .join("\n");
 
-    let summary = format!("team {team_name} created with {count} subtasks");
+    let summary = format!("team '{team_name}' created with {count} subtasks: {}", subtasks.join(", "));
     let detail = format!("{summary}\n{listing}");
     let progress =
         ToolProgressUpdate::new(call.tool_use_id.clone(), format!("creating team {team_name}"));
@@ -66,7 +66,7 @@ pub fn execute_team_delete(call: ToolCallInput) -> ToolExecutionTrace {
     };
 
     let team_name = team_name.to_string();
-    let summary = format!("team {team_name} deleted");
+    let summary = format!("team '{team_name}' deletion requested");
     let progress =
         ToolProgressUpdate::new(call.tool_use_id.clone(), format!("deleting team {team_name}"));
 
@@ -116,7 +116,7 @@ mod tests {
         let trace = execute_team_create(call);
         assert_eq!(trace.result.status_label(), "completed");
         let msg = trace.result.message();
-        assert!(msg.contains("team alpha created with 3 subtasks"), "{msg}");
+        assert!(msg.contains("team 'alpha' created with 3 subtasks"), "{msg}");
     }
 
     #[test]
@@ -143,6 +143,6 @@ mod tests {
         let trace = execute_team_delete(call);
         assert_eq!(trace.result.status_label(), "completed");
         let msg = trace.result.message();
-        assert!(msg.contains("team alpha deleted"), "{msg}");
+        assert!(msg.contains("team 'alpha' deletion requested"), "{msg}");
     }
 }

@@ -86,14 +86,17 @@ pub fn execute_mcp_tool_bridged(
         Some(info) => {
             let server = &info.server_name;
             let name = &info.tool_name;
+            let msg = format!(
+                "MCP tool '{name}' found on server '{server}' (execution pending real MCP client connection)"
+            );
             ToolExecutionTrace {
                 progress_updates: vec![progress],
                 result: ToolPermissionDecision::allow(false).settle(
                     call.clone(),
                     ToolCallOutput {
-                        summary: format!("MCP tool {name} executed via {server}"),
+                        summary: msg.clone(),
                         generated_messages: vec![QueryMessage::assistant(format!(
-                            "tool-message: MCP tool {name} executed via {server}"
+                            "tool-message: {msg}"
                         ))],
                         context_label: Some(call.context_label.clone()),
                         progress_updates: vec![ToolProgressUpdate::new(
@@ -105,14 +108,25 @@ pub fn execute_mcp_tool_bridged(
                 permission_denial: None,
             }
         }
-        None => ToolExecutionTrace {
-            progress_updates: vec![progress],
-            result: ToolCallResult::failed(
-                call,
-                format!("MCP tool not found: {tool_name}"),
-            ),
-            permission_denial: None,
-        },
+        None => {
+            let servers: Vec<&String> = bridge
+                .discovered_tools
+                .keys()
+                .collect();
+            let server_list = if servers.is_empty() {
+                String::from("(none)")
+            } else {
+                servers.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            };
+            ToolExecutionTrace {
+                progress_updates: vec![progress],
+                result: ToolCallResult::failed(
+                    call,
+                    format!("MCP tool not found: {tool_name}. Available servers: {server_list}"),
+                ),
+                permission_denial: None,
+            }
+        }
     }
 }
 
