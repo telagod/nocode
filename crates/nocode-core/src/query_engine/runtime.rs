@@ -241,6 +241,10 @@ pub(super) fn submit_message_with_runtime_and_stream(
                     let transport_request =
                         ProviderTransportConfig::for_provider(model_request.selection.provider)
                             .prepare_http_request(&http_request);
+
+                    // Extract tool calls from model response.
+                    let model_tool_calls = output.tool_calls.clone();
+
                     let invocation = ModelInvocation::from_call(
                         &model_request,
                         http_request,
@@ -253,8 +257,51 @@ pub(super) fn submit_message_with_runtime_and_stream(
                     });
                     record_step(&mut steps, "call-model", &outcome);
                     model_invocation = Some(invocation);
-                    outcome = runner.apply(QueryLoopAction::Complete);
-                    record_step(&mut steps, "complete", &outcome);
+
+                    // If model requested tool calls, execute them.
+                    if !model_tool_calls.is_empty()
+                        && matches!(outcome, QueryLoopOutcome::Continue(_))
+                    {
+                        for tc in &model_tool_calls {
+                            let tool_call = crate::tool_execution::ToolCallInput::new(
+                                tc.name.as_str(),
+                                tc.id.as_str(),
+                            )
+                            .with_arguments_map(&tc.arguments);
+                            requested_tools.push(tool_call.clone());
+                            outcome = runner.apply(QueryLoopAction::RequestTool {
+                                call: tool_call.clone(),
+                            });
+                            record_step(&mut steps, format!("model-tool:{}", tc.name), &outcome);
+
+                            let execution =
+                                execute_tool_call(engine, executor, tool_call, &tool_pool);
+                            handle_tool_execution(
+                                engine,
+                                &mut runner,
+                                &mut steps,
+                                &mut tool_results,
+                                execution,
+                                &mut outcome,
+                            );
+
+                            if matches!(outcome, QueryLoopOutcome::Terminal(_)) {
+                                break;
+                            }
+                        }
+
+                        if !requested_tools.is_empty()
+                            && matches!(outcome, QueryLoopOutcome::Continue(_))
+                        {
+                            outcome = runner.apply(QueryLoopAction::FlushToolBatch);
+                            record_step(&mut steps, "flush-model-tool-batch", &outcome);
+                        }
+                    }
+
+                    if matches!(outcome, QueryLoopOutcome::Continue(_)) {
+                        outcome = runner.apply(QueryLoopAction::Complete);
+                        record_step(&mut steps, "complete", &outcome);
+                    }
                 }
                 Err(error) => {
                     model_error = Some(error.clone());

@@ -441,21 +441,20 @@ fn finalize_model_output(
     request: &ModelRequest,
     model: impl Into<String>,
     text: String,
+    tool_calls: Vec<ToolCallRequest>,
 ) -> Result<ModelCallOutput, ModelError> {
     let provider = request.selection.provider;
     let model = model.into();
     if let Some(response_result) = validate_structured_output(request, text.as_str())? {
         let canonical = response_result.to_string();
-        return Ok(
-            ModelCallOutput::new(provider, model, QueryMessage::assistant(canonical))
-                .with_response_result(response_result),
-        );
+        let mut output = ModelCallOutput::new(provider, model, QueryMessage::assistant(canonical))
+            .with_response_result(response_result);
+        output.tool_calls = tool_calls;
+        return Ok(output);
     }
-    Ok(ModelCallOutput::new(
-        provider,
-        model,
-        QueryMessage::assistant(text),
-    ))
+    let mut output = ModelCallOutput::new(provider, model, QueryMessage::assistant(text));
+    output.tool_calls = tool_calls;
+    Ok(output)
 }
 
 fn validate_structured_output(
@@ -659,12 +658,21 @@ impl ProviderHttpRequest {
     }
 }
 
+/// A tool call request extracted from a model response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCallRequest {
+    pub id: String,
+    pub name: String,
+    pub arguments: std::collections::HashMap<String, String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelCallOutput {
     pub provider: ModelProvider,
     pub model: String,
     pub message: QueryMessage,
     pub response_result: Option<Value>,
+    pub tool_calls: Vec<ToolCallRequest>,
 }
 
 impl ModelCallOutput {
@@ -674,6 +682,7 @@ impl ModelCallOutput {
             model: model.into(),
             message,
             response_result: None,
+            tool_calls: Vec::new(),
         }
     }
 
@@ -1169,12 +1178,16 @@ pub(crate) fn parse_model_response(
             .reply_target()
             .map(|target| format!("nocode response: {target}"))
             .unwrap_or_else(|| format!("nocode response: {model}")),
-        ModelProvider::Claude | ModelProvider::Custom => parse_claude_message_text(&payload)?,
-        ModelProvider::OpenAi => parse_openai_responses_text(&payload)?,
-        ModelProvider::Gemini => parse_gemini_message_text(&payload)?,
+        ModelProvider::Claude | ModelProvider::Custom => {
+            parse_claude_message_text(&payload).unwrap_or_default()
+        }
+        ModelProvider::OpenAi => parse_openai_responses_text(&payload).unwrap_or_default(),
+        ModelProvider::Gemini => parse_gemini_message_text(&payload).unwrap_or_default(),
     };
 
-    finalize_model_output(request, model, text)
+    let tool_calls = extract_tool_calls(request.selection.provider, &payload);
+
+    finalize_model_output(request, model, text, tool_calls)
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -1303,6 +1316,109 @@ fn parse_gemini_message_text(payload: &Value) -> Result<String, ModelError> {
     })
 }
 
+/// Extract tool call requests from a model response payload.
+fn extract_tool_calls(provider: ModelProvider, payload: &Value) -> Vec<ToolCallRequest> {
+    match provider {
+        ModelProvider::Claude | ModelProvider::Custom => extract_claude_tool_calls(payload),
+        ModelProvider::OpenAi => extract_openai_tool_calls(payload),
+        ModelProvider::Gemini => extract_gemini_tool_calls(payload),
+        ModelProvider::Mock => Vec::new(),
+    }
+}
+
+fn extract_claude_tool_calls(payload: &Value) -> Vec<ToolCallRequest> {
+    let Some(content) = payload.get("content").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    content
+        .iter()
+        .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+        .filter_map(|block| {
+            let id = block.get("id").and_then(Value::as_str)?.to_string();
+            let name = block.get("name").and_then(Value::as_str)?.to_string();
+            let input = block.get("input").cloned().unwrap_or(json!({}));
+            let arguments = flatten_json_to_strings(&input);
+            Some(ToolCallRequest {
+                id,
+                name,
+                arguments,
+            })
+        })
+        .collect()
+}
+
+fn extract_openai_tool_calls(payload: &Value) -> Vec<ToolCallRequest> {
+    // OpenAI Responses format: output array with type=function_call items
+    if let Some(output) = payload.get("output").and_then(Value::as_array) {
+        let calls: Vec<ToolCallRequest> = output
+            .iter()
+            .filter(|item| item.get("type").and_then(Value::as_str) == Some("function_call"))
+            .filter_map(|item| {
+                let id = item.get("call_id").and_then(Value::as_str)?.to_string();
+                let name = item.get("name").and_then(Value::as_str)?.to_string();
+                let args_str = item
+                    .get("arguments")
+                    .and_then(Value::as_str)
+                    .unwrap_or("{}");
+                let args_val: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+                let arguments = flatten_json_to_strings(&args_val);
+                Some(ToolCallRequest {
+                    id,
+                    name,
+                    arguments,
+                })
+            })
+            .collect();
+        if !calls.is_empty() {
+            return calls;
+        }
+    }
+    Vec::new()
+}
+
+fn extract_gemini_tool_calls(payload: &Value) -> Vec<ToolCallRequest> {
+    let Some(candidates) = payload.get("candidates").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let Some(parts) = candidates
+        .first()
+        .and_then(|c| c.get("content"))
+        .and_then(|c| c.get("parts"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    parts
+        .iter()
+        .filter_map(|part| {
+            let fc = part.get("functionCall")?;
+            let name = fc.get("name").and_then(Value::as_str)?.to_string();
+            let args = fc.get("args").cloned().unwrap_or(json!({}));
+            let arguments = flatten_json_to_strings(&args);
+            Some(ToolCallRequest {
+                id: format!("gemini-{}", name),
+                name,
+                arguments,
+            })
+        })
+        .collect()
+}
+
+/// Flatten a JSON object's top-level keys into string key-value pairs.
+fn flatten_json_to_strings(value: &Value) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    if let Some(obj) = value.as_object() {
+        for (key, val) in obj {
+            let str_val = match val {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            map.insert(key.clone(), str_val);
+        }
+    }
+    map
+}
+
 fn extract_openai_text_content(content: Option<&Value>) -> Option<String> {
     match content {
         Some(Value::String(text)) => Some(text.clone()),
@@ -1417,7 +1533,7 @@ impl<'a> StreamingModelParser<'a> {
             ));
         }
 
-        finalize_model_output(self.request, self.model, text)
+        finalize_model_output(self.request, self.model, text, Vec::new())
     }
 
     fn parse_claude_stream_frame(

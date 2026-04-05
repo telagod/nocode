@@ -43,6 +43,14 @@ impl ToolCallInput {
         self
     }
 
+    pub fn with_arguments_map(mut self, map: &std::collections::HashMap<String, String>) -> Self {
+        for (key, value) in map {
+            self.arguments
+                .push(ToolCallArgument::new(key.clone(), value.clone()));
+        }
+        self
+    }
+
     pub fn argument(&self, key: &str) -> Option<&str> {
         self.arguments
             .iter()
