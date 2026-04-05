@@ -5,6 +5,7 @@ use crate::{
         ModelStreamSink, StreamingModelParser, parse_model_response,
     },
     provider_transport::ProviderTransportConfig,
+    session_compaction::{CompactionConfig, RichCompactor},
     stop_hook::StopHookResult,
     tool_execution::{ToolCallInput, ToolCallOutput, ToolCallResult, ToolProgressUpdate},
 };
@@ -59,8 +60,7 @@ impl QueryDeps {
 }
 
 pub fn production_deps() -> QueryDeps {
-    // ~100K tokens threshold, keep last 20 messages when compacting.
-    let compactor = TruncatingCompactor::new(100_000, 20);
+    let compactor = RichCompactor::new(CompactionConfig::default());
     QueryDeps::builder()
         .with_microcompact(compactor)
         .with_tool_runner(RescuingToolRunner)
@@ -68,7 +68,7 @@ pub fn production_deps() -> QueryDeps {
 }
 
 pub fn production_deps_with_tool_runner(runner: impl ToolRunner + 'static) -> QueryDeps {
-    let compactor = TruncatingCompactor::new(100_000, 20);
+    let compactor = RichCompactor::new(CompactionConfig::default());
     QueryDeps::builder()
         .with_microcompact(compactor)
         .with_tool_runner(runner)
@@ -78,7 +78,7 @@ pub fn production_deps_with_tool_runner(runner: impl ToolRunner + 'static) -> Qu
 /// Production deps with `DefaultToolRunner` (returns failed) — used when a custom
 /// executor is provided and fallback should not rescue failed tool calls.
 pub fn production_deps_without_rescue() -> QueryDeps {
-    let compactor = TruncatingCompactor::new(100_000, 20);
+    let compactor = RichCompactor::new(CompactionConfig::default());
     QueryDeps::builder()
         .with_microcompact(compactor)
         .with_tool_runner(DefaultToolRunner)

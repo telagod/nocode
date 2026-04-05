@@ -2,6 +2,7 @@ use crate::markdown_render::{LineSegment, render_markdown_to_lines};
 use crate::markdown_stream::MarkdownStreamState;
 use crate::repl::{ReplIntent, ReplSession};
 use crate::spinner::Spinner;
+use crate::tool_render;
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::execute;
@@ -71,9 +72,17 @@ pub(crate) fn run_tui() -> io::Result<()> {
         // W1: Poll pending stream events for live rendering.
         let (stream_lines, returned_engine) = session.poll_pending_stream();
         for line in &stream_lines {
-            // Route stream deltas through MarkdownStreamState for boundary detection.
-            if let Some(rendered) = app.md_stream.push(line.as_str()) {
-                app.push_markdown_block(rendered.as_str());
+            // Route tool call/result lines through tool_render for formatted output.
+            if line.contains("[CALL]") || line.contains("[DONE]") {
+                app.push_tool_event(line.as_str());
+            } else if line.starts_with("stream delta:") {
+                // Route stream deltas through MarkdownStreamState for boundary detection.
+                let text = line.strip_prefix("stream delta: ").unwrap_or(line.as_str());
+                if let Some(rendered) = app.md_stream.push(text) {
+                    app.push_markdown_block(rendered.as_str());
+                }
+            } else {
+                app.push_block(line.as_str());
             }
         }
         if let Some(eng) = returned_engine {
@@ -630,6 +639,60 @@ impl TuiApp {
                 self.styled_lines.push(StyledContent::Styled(line.segments));
             }
         }
+        if self.styled_lines.len() > LOG_LIMIT {
+            let overflow = self.styled_lines.len() - LOG_LIMIT;
+            self.styled_lines.drain(0..overflow);
+        }
+        self.mark_dirty();
+    }
+
+    /// Push a tool call/result event through tool_render for formatted output.
+    fn push_tool_event(&mut self, line: &str) {
+        // Extract tool name and content from "[CALL] tool-message: ..." or "[DONE] ..." format
+        let content = line
+            .trim()
+            .strip_prefix("[CALL]")
+            .or_else(|| line.trim().strip_prefix("[DONE]"))
+            .unwrap_or(line)
+            .trim();
+
+        let is_call = line.contains("[CALL]");
+
+        if is_call {
+            // Try to extract tool name from "tool-message: ToolName#id(...)" pattern
+            let tool_name = content
+                .strip_prefix("tool-message: ")
+                .and_then(|s| s.split('#').next())
+                .unwrap_or("Unknown");
+            let formatted = tool_render::format_tool_call_start(
+                tool_name,
+                &serde_json::Value::String(content.to_string()),
+            );
+            for fline in &formatted {
+                self.styled_lines.push(StyledContent::Styled(vec![
+                    LineSegment {
+                        text: fline.clone(),
+                        color: crossterm::style::Color::Yellow,
+                        bold: false,
+                        italic: false,
+                    },
+                ]));
+            }
+        } else {
+            // Tool result
+            let formatted = tool_render::format_tool_result("Unknown", content);
+            for fline in &formatted {
+                self.styled_lines.push(StyledContent::Styled(vec![
+                    LineSegment {
+                        text: fline.clone(),
+                        color: crossterm::style::Color::DarkYellow,
+                        bold: false,
+                        italic: false,
+                    },
+                ]));
+            }
+        }
+
         if self.styled_lines.len() > LOG_LIMIT {
             let overflow = self.styled_lines.len() - LOG_LIMIT;
             self.styled_lines.drain(0..overflow);
