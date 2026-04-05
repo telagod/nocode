@@ -31,6 +31,12 @@ pub struct MockAnthropicService {
     captured: Vec<CapturedRequest>,
 }
 
+impl Default for MockAnthropicService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockAnthropicService {
     pub fn new() -> Self {
         Self {
@@ -238,6 +244,12 @@ pub struct ParityResult {
 /// Convenience harness that drives `MockAnthropicService` through named scenarios.
 pub struct ParityTestRunner {
     service: MockAnthropicService,
+}
+
+impl Default for ParityTestRunner {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ParityTestRunner {

@@ -15,6 +15,7 @@ pub mod hook_runner;
 pub mod lane_events;
 pub mod lsp_client;
 pub mod mcp_client;
+pub mod mcp_manager;
 pub mod message;
 pub mod mock_service;
 pub mod model_pricing;
@@ -126,6 +127,9 @@ pub use tool_execution::{
     ToolPermissionDecision, ToolProgressUpdate, ToolSearchResult,
 };
 pub use tool_execution::mcp_bridge::{McpToolBridge, McpToolInfo, execute_mcp_tool_bridged};
+pub use mcp_manager::{
+    McpDiscoveredTool, McpManager, McpServerEntry, McpServerStatus, global_mcp_manager,
+};
 pub use lsp_client::{
     LspAction, LspCompletionItem, LspDiagnostic, LspHoverResult, LspLocation, LspRegistry,
     LspResult, LspServer, LspServerStatus, LspSymbol, global_lsp_registry,

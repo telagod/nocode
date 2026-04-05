@@ -7,8 +7,17 @@ use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static TASK_COORDINATOR: OnceLock<Arc<Mutex<TaskCoordinator>>> = OnceLock::new();
+
+pub fn global_task_coordinator() -> Arc<Mutex<TaskCoordinator>> {
+    TASK_COORDINATOR
+        .get_or_init(|| Arc::new(Mutex::new(TaskCoordinator::new())))
+        .clone()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TaskId(String);
@@ -20,6 +29,10 @@ impl TaskId {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub fn from_string(s: String) -> Self {
+        Self(s)
     }
 }
 
