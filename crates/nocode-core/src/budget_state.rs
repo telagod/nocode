@@ -108,4 +108,59 @@ mod tests {
         );
         assert_eq!(state.current_turn_output_tokens, 8_500);
     }
+
+    #[test]
+    fn new_without_budget_has_no_turn_budget() {
+        let state = BudgetState::new(None);
+        assert!(state.task_budget.is_none());
+        assert!(state.current_turn_budget.is_none());
+        assert_eq!(state.output_tokens_at_turn_start, 0);
+        assert_eq!(state.current_turn_output_tokens, 0);
+        assert!(state.last_decision.is_none());
+        assert!(state.last_completion_event.is_none());
+        assert_eq!(state.continuation_count(), 0);
+    }
+
+    #[test]
+    fn begin_turn_resets_per_turn_state() {
+        let mut state = BudgetState::new(Some(TaskBudget { total: 5_000 }));
+        // Simulate some prior state
+        state.sync_turn_output_tokens(2_000);
+        state.record_decision(Some(TokenBudgetDecision::Continue {
+            nudge_message: String::from("go"),
+            continuation_count: 1,
+            pct: 40,
+            turn_tokens: 2_000,
+            budget: 5_000,
+        }));
+        assert_eq!(state.continuation_count(), 1);
+
+        // begin_turn should reset
+        state.begin_turn(3_000);
+        assert_eq!(state.output_tokens_at_turn_start, 3_000);
+        assert_eq!(state.current_turn_output_tokens, 0);
+        assert!(state.last_decision.is_none());
+        assert!(state.last_completion_event.is_none());
+        assert_eq!(state.continuation_count(), 0);
+        assert_eq!(state.current_turn_budget, Some(5_000));
+    }
+
+    #[test]
+    fn sync_turn_output_tokens_saturates_at_zero() {
+        let mut state = BudgetState::new(Some(TaskBudget { total: 1_000 }));
+        state.begin_turn(500);
+        // total < start => saturating_sub yields 0
+        state.sync_turn_output_tokens(200);
+        assert_eq!(state.current_turn_output_tokens, 0);
+    }
+
+    #[test]
+    fn stop_without_completion_event_yields_zero_continuation() {
+        let mut state = BudgetState::new(None);
+        state.record_decision(Some(TokenBudgetDecision::Stop {
+            completion_event: None,
+        }));
+        assert_eq!(state.continuation_count(), 0);
+        assert!(state.last_completion_event.is_none());
+    }
 }

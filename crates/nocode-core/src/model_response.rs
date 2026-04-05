@@ -116,4 +116,53 @@ mod tests {
             Some(QueryMessage::assistant("assistant follow-up"))
         );
     }
+
+    #[test]
+    fn no_assistant_message_yields_none() {
+        let response = ModelResponse::new(
+            "resp-2",
+            AssistantTurnStatus::Completed,
+            ModelResponseStopReason::Completed,
+            0,
+            AssistantTurn {
+                sequence: 1,
+                status: AssistantTurnStatus::Completed,
+                response_messages: vec![QueryMessage::tool("only tool output")],
+                tool_uses: Vec::new(),
+                transcript_entries: 1,
+            },
+        );
+
+        assert!(response.final_assistant_message.is_none());
+        assert_eq!(response.tool_phase.requested_tools, 0);
+        assert_eq!(response.tool_phase.resolved_tools, 0);
+    }
+
+    #[test]
+    fn stop_reason_labels_are_stable() {
+        assert_eq!(ModelResponseStopReason::ToolBatchFlushed.as_str(), "tool_batch_flushed");
+        assert_eq!(ModelResponseStopReason::Completed.as_str(), "completed");
+        assert_eq!(ModelResponseStopReason::MaxTurns.as_str(), "max_turns");
+        assert_eq!(ModelResponseStopReason::Terminal.as_str(), "terminal");
+    }
+
+    #[test]
+    fn tool_phase_new_sets_resolved_from_vec_len() {
+        use super::ModelResponseToolPhase;
+        let phase = ModelResponseToolPhase::new(5, vec![
+            AssistantToolUse {
+                tool_name: String::from("Read"),
+                tool_use_id: String::from("t1"),
+                status: String::from("completed"),
+            },
+            AssistantToolUse {
+                tool_name: String::from("Write"),
+                tool_use_id: String::from("t2"),
+                status: String::from("completed"),
+            },
+        ]);
+        assert_eq!(phase.requested_tools, 5);
+        assert_eq!(phase.resolved_tools, 2);
+        assert_eq!(phase.tool_uses.len(), 2);
+    }
 }

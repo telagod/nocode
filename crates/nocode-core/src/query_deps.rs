@@ -502,4 +502,72 @@ mod tests {
             }
         ));
     }
+
+    #[test]
+    fn builder_defaults_all_deps_without_panic() {
+        let deps = QueryDeps::builder().build();
+        // All deps should be populated with defaults
+        assert!(deps.clock.now_ms() > 0);
+        let id1 = deps.id_gen.generate();
+        let id2 = deps.id_gen.generate();
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn truncating_compactor_passes_through_under_threshold() {
+        let compactor = TruncatingCompactor::new(1000, 4);
+        let messages = vec![
+            QueryMessage::system("sys"),
+            QueryMessage::user("hi"),
+            QueryMessage::assistant("hello"),
+        ];
+        let result = compactor.compact(&messages);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].content, "sys");
+    }
+
+    #[test]
+    fn truncating_compactor_keeps_system_and_recent_when_over_threshold() {
+        let compactor = TruncatingCompactor::new(5, 2);
+        let messages = vec![
+            QueryMessage::system("system prompt"),
+            QueryMessage::user("old message one that is long enough"),
+            QueryMessage::assistant("old reply that is also long enough"),
+            QueryMessage::user("recent question"),
+            QueryMessage::assistant("recent answer"),
+        ];
+        let result = compactor.compact(&messages);
+
+        // Should keep system message + compaction marker + 2 most recent non-system
+        assert!(result.len() >= 3);
+        // First should be the system message
+        assert_eq!(result[0].role, crate::message::QueryMessageRole::System);
+        assert_eq!(result[0].content, "system prompt");
+        // Second should be compaction marker (also system role)
+        assert!(result[1].content.contains("context compacted"));
+        // Last two should be the recent messages
+        let last = &result[result.len() - 1];
+        assert_eq!(last.content, "recent answer");
+    }
+
+    #[test]
+    fn rescuing_tool_runner_returns_completed() {
+        let runner = RescuingToolRunner;
+        let call = ToolCallInput::new("Bash", "toolu-99")
+            .with_context_label("test-ctx");
+        let result = runner.run_tool(call);
+        assert_eq!(result.status_label(), "completed");
+        assert!(result.message().contains("rescued"));
+    }
+
+    #[test]
+    fn default_tool_runner_returns_failed() {
+        let deps = QueryDeps::builder()
+            .with_tool_runner(DefaultToolRunner)
+            .build();
+        let call = ToolCallInput::new("Read", "toolu-1");
+        let result = deps.tool_runner.run_tool(call);
+        assert_eq!(result.status_label(), "failed");
+        assert!(result.message().contains("tool runner disabled"));
+    }
 }

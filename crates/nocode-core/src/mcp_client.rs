@@ -213,3 +213,85 @@ impl Drop for McpClient {
         let _ = self.child.wait();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn mcp_tool_serialization_roundtrip() {
+        let tool = McpTool {
+            name: String::from("read_file"),
+            description: String::from("Read a file from disk"),
+            input_schema: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+        };
+        let serialized = serde_json::to_string(&tool).expect("serialize");
+        let deserialized: McpTool = serde_json::from_str(&serialized).expect("deserialize");
+        assert_eq!(deserialized.name, "read_file");
+        assert_eq!(deserialized.description, "Read a file from disk");
+        assert_eq!(
+            deserialized.input_schema["properties"]["path"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
+    fn mcp_tool_result_fields() {
+        let result = McpToolResult {
+            content: String::from("file contents here"),
+            is_error: false,
+        };
+        assert_eq!(result.content, "file contents here");
+        assert!(!result.is_error);
+
+        let err_result = McpToolResult {
+            content: String::from("not found"),
+            is_error: true,
+        };
+        assert!(err_result.is_error);
+    }
+
+    #[test]
+    fn json_rpc_request_serializes_correctly() {
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0",
+            id: 42,
+            method: String::from("tools/list"),
+            params: json!({}),
+        };
+        let serialized = serde_json::to_value(&request).expect("serialize");
+        assert_eq!(serialized["jsonrpc"], "2.0");
+        assert_eq!(serialized["id"], 42);
+        assert_eq!(serialized["method"], "tools/list");
+    }
+
+    #[test]
+    fn json_rpc_response_parses_result() {
+        let raw = r#"{"id": 1, "result": {"tools": []}, "error": null}"#;
+        let response: JsonRpcResponse = serde_json::from_str(raw).expect("parse");
+        assert_eq!(response.id, Some(1));
+        assert!(response.result.is_some());
+        assert!(response.error.is_none());
+    }
+
+    #[test]
+    fn json_rpc_response_parses_error() {
+        let raw = r#"{"id": 2, "result": null, "error": {"code": -32601, "message": "method not found"}}"#;
+        let response: JsonRpcResponse = serde_json::from_str(raw).expect("parse");
+        assert_eq!(response.id, Some(2));
+        assert!(response.result.is_none());
+        let err = response.error.expect("should have error");
+        assert_eq!(err.code, -32601);
+        assert_eq!(err.message, "method not found");
+    }
+
+    #[test]
+    fn spawn_fails_with_nonexistent_command() {
+        let result = McpClient::spawn("__nonexistent_mcp_binary_12345__", &[]);
+        match result {
+            Err(msg) => assert!(msg.contains("failed to spawn"), "unexpected error: {msg}"),
+            Ok(_) => panic!("expected spawn to fail for nonexistent binary"),
+        }
+    }
+}

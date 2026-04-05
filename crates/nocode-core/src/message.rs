@@ -74,4 +74,36 @@ mod tests {
         assert_eq!(tool.role, QueryMessageRole::Tool);
         assert_eq!(user.summary(), "user: continue rewrite");
     }
+
+    #[test]
+    fn all_role_constructors_and_as_str() {
+        let system = QueryMessage::system("sys");
+        let user = QueryMessage::user("usr");
+        let assistant = QueryMessage::assistant("ast");
+        let tool = QueryMessage::tool("tl");
+
+        assert_eq!(system.role.as_str(), "system");
+        assert_eq!(user.role.as_str(), "user");
+        assert_eq!(assistant.role.as_str(), "assistant");
+        assert_eq!(tool.role.as_str(), "tool");
+    }
+
+    #[test]
+    fn parse_role_is_case_insensitive_and_trims() {
+        assert_eq!(QueryMessageRole::parse("  System  "), Some(QueryMessageRole::System));
+        assert_eq!(QueryMessageRole::parse("USER"), Some(QueryMessageRole::User));
+        assert_eq!(QueryMessageRole::parse("Assistant"), Some(QueryMessageRole::Assistant));
+        assert_eq!(QueryMessageRole::parse("TOOL"), Some(QueryMessageRole::Tool));
+        assert_eq!(QueryMessageRole::parse("unknown"), None);
+        assert_eq!(QueryMessageRole::parse(""), None);
+    }
+
+    #[test]
+    fn summary_format_is_role_colon_content() {
+        let msg = QueryMessage::new(QueryMessageRole::Assistant, "hello world");
+        assert_eq!(msg.summary(), "assistant: hello world");
+
+        let empty = QueryMessage::system("");
+        assert_eq!(empty.summary(), "system: ");
+    }
 }

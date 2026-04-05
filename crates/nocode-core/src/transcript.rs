@@ -103,4 +103,40 @@ mod tests {
         );
         assert_eq!(TranscriptRole::parse_kind("missing"), None);
     }
+
+    #[test]
+    fn all_roles_roundtrip_through_as_str_and_parse() {
+        let roles = [
+            TranscriptRole::Conversation,
+            TranscriptRole::ToolRequest,
+            TranscriptRole::ToolProgress,
+            TranscriptRole::ToolResult,
+            TranscriptRole::ToolMessage,
+        ];
+        for role in roles {
+            let label = role.as_str();
+            assert_eq!(TranscriptRole::parse_kind(label), Some(role));
+        }
+    }
+
+    #[test]
+    fn empty_transcript_reports_empty() {
+        let transcript = QueryTranscript::default();
+        assert!(transcript.is_empty());
+        assert_eq!(transcript.len(), 0);
+    }
+
+    #[test]
+    fn push_increments_len_and_preserves_order() {
+        let mut transcript = QueryTranscript::default();
+        transcript.push(1, TranscriptRole::Conversation, "first");
+        transcript.push(1, TranscriptRole::ToolRequest, "second");
+        transcript.push(2, TranscriptRole::ToolResult, "third");
+
+        assert_eq!(transcript.len(), 3);
+        assert!(!transcript.is_empty());
+        assert_eq!(transcript.entries[0].content, "first");
+        assert_eq!(transcript.entries[1].role, TranscriptRole::ToolRequest);
+        assert_eq!(transcript.entries[2].turn, 2);
+    }
 }
