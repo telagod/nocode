@@ -1,3 +1,35 @@
+/// Three-tier permission mode controlling which tools are available.
+///
+/// Ordering: `ReadOnly < WorkspaceWrite < DangerFullAccess`.
+/// A tool whose `required_permission` exceeds the active mode is rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionMode {
+    /// Only read-oriented tools (Read, Glob, Grep, WebFetch, WebSearch).
+    ReadOnly = 0,
+    /// Allows workspace-scoped writes (Edit, Write, Bash, Agent, Task).
+    WorkspaceWrite = 1,
+    /// No restrictions whatsoever.
+    DangerFullAccess = 2,
+}
+
+impl Default for PermissionMode {
+    fn default() -> Self {
+        Self::WorkspaceWrite
+    }
+}
+
+impl PartialOrd for PermissionMode {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PermissionMode {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (*self as u8).cmp(&(*other as u8))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ToolRegistryModule;
 
@@ -21,6 +53,7 @@ pub struct ToolDefinition {
     pub name: String,
     pub kind: ToolKind,
     pub enabled_in_simple_mode: bool,
+    pub required_permission: PermissionMode,
 }
 
 impl ToolDefinition {
@@ -29,7 +62,13 @@ impl ToolDefinition {
             name: name.into(),
             kind,
             enabled_in_simple_mode,
+            required_permission: PermissionMode::default(),
         }
+    }
+
+    pub fn with_permission(mut self, permission: PermissionMode) -> Self {
+        self.required_permission = permission;
+        self
     }
 }
 
@@ -37,6 +76,7 @@ impl ToolDefinition {
 pub struct ToolPermissionContext {
     pub blanket_denies: Vec<String>,
     pub rules: Vec<PermissionRule>,
+    pub mode: PermissionMode,
 }
 
 /// A rule that conditionally denies tool execution.
@@ -61,6 +101,11 @@ pub enum PermissionCondition {
 impl ToolPermissionContext {
     pub fn deny(mut self, tool_name: impl Into<String>) -> Self {
         self.blanket_denies.push(tool_name.into());
+        self
+    }
+
+    pub fn with_mode(mut self, mode: PermissionMode) -> Self {
+        self.mode = mode;
         self
     }
 
@@ -150,15 +195,44 @@ impl Default for ToolRegistry {
     fn default() -> Self {
         Self {
             base_tools: vec![
-                ToolDefinition::new("Agent", ToolKind::Orchestration, false),
-                ToolDefinition::new("Task", ToolKind::Orchestration, false),
-                ToolDefinition::new("Bash", ToolKind::Execution, true),
-                ToolDefinition::new("Glob", ToolKind::ReadOnly, false),
-                ToolDefinition::new("Grep", ToolKind::ReadOnly, false),
-                ToolDefinition::new("Read", ToolKind::ReadOnly, true),
-                ToolDefinition::new("Edit", ToolKind::Edit, true),
-                ToolDefinition::new("Write", ToolKind::Edit, false),
-                ToolDefinition::new("WebFetch", ToolKind::ReadOnly, false),
+                ToolDefinition::new("Agent", ToolKind::Orchestration, false)
+                    .with_permission(PermissionMode::WorkspaceWrite),
+                ToolDefinition::new("Task", ToolKind::Orchestration, false)
+                    .with_permission(PermissionMode::WorkspaceWrite),
+                ToolDefinition::new("Bash", ToolKind::Execution, true)
+                    .with_permission(PermissionMode::WorkspaceWrite),
+                ToolDefinition::new("Glob", ToolKind::ReadOnly, false)
+                    .with_permission(PermissionMode::ReadOnly),
+                ToolDefinition::new("Grep", ToolKind::ReadOnly, false)
+                    .with_permission(PermissionMode::ReadOnly),
+                ToolDefinition::new("Read", ToolKind::ReadOnly, true)
+                    .with_permission(PermissionMode::ReadOnly),
+                ToolDefinition::new("Edit", ToolKind::Edit, true)
+                    .with_permission(PermissionMode::WorkspaceWrite),
+                ToolDefinition::new("Write", ToolKind::Edit, false)
+                    .with_permission(PermissionMode::WorkspaceWrite),
+                ToolDefinition::new("WebFetch", ToolKind::ReadOnly, false)
+                    .with_permission(PermissionMode::ReadOnly),
+                ToolDefinition::new("CronCreate", ToolKind::Orchestration, false)
+                    .with_permission(PermissionMode::WorkspaceWrite),
+                ToolDefinition::new("CronDelete", ToolKind::Orchestration, false)
+                    .with_permission(PermissionMode::WorkspaceWrite),
+                ToolDefinition::new("CronList", ToolKind::Orchestration, false)
+                    .with_permission(PermissionMode::ReadOnly),
+                ToolDefinition::new("TaskGet", ToolKind::ReadOnly, false)
+                    .with_permission(PermissionMode::ReadOnly),
+                ToolDefinition::new("TaskList", ToolKind::ReadOnly, false)
+                    .with_permission(PermissionMode::ReadOnly),
+                ToolDefinition::new("TaskUpdate", ToolKind::Orchestration, false)
+                    .with_permission(PermissionMode::WorkspaceWrite),
+                ToolDefinition::new("TaskStop", ToolKind::Orchestration, false)
+                    .with_permission(PermissionMode::WorkspaceWrite),
+                ToolDefinition::new("TaskOutput", ToolKind::ReadOnly, false)
+                    .with_permission(PermissionMode::ReadOnly),
+                ToolDefinition::new("TeamCreate", ToolKind::Orchestration, false)
+                    .with_permission(PermissionMode::WorkspaceWrite),
+                ToolDefinition::new("TeamDelete", ToolKind::Orchestration, false)
+                    .with_permission(PermissionMode::WorkspaceWrite),
             ],
         }
     }
@@ -206,6 +280,17 @@ impl ToolRegistry {
                 continue;
             }
 
+            if tool.required_permission > permission_context.mode {
+                selection.unavailable_tools.push(ToolSelectionIssue::new(
+                    tool.name.clone(),
+                    format!(
+                        "tool requires {:?} but mode is {:?}",
+                        tool.required_permission, permission_context.mode
+                    ),
+                ));
+                continue;
+            }
+
             if !selection
                 .available_tools
                 .iter()
@@ -221,7 +306,7 @@ impl ToolRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::{ToolKind, ToolPermissionContext, ToolRegistry, ToolRuntimeMode};
+    use super::{PermissionMode, ToolKind, ToolPermissionContext, ToolRegistry, ToolRuntimeMode};
 
     #[test]
     fn standard_mode_keeps_requested_tools() {
@@ -307,5 +392,80 @@ mod tests {
                 .map(|issue| issue.reason.as_str()),
             Some("unknown tool in registry")
         );
+    }
+
+    #[test]
+    fn read_only_mode_blocks_edit_tools() {
+        let registry = ToolRegistry::default();
+        let ctx = ToolPermissionContext::default().with_mode(PermissionMode::ReadOnly);
+        let selection = registry.select_tools(
+            &[
+                String::from("Read"),
+                String::from("Glob"),
+                String::from("Edit"),
+                String::from("Write"),
+                String::from("Bash"),
+            ],
+            ToolRuntimeMode::Standard,
+            &ctx,
+        );
+
+        let available: Vec<&str> = selection
+            .available_tools
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert!(available.contains(&"Read"));
+        assert!(available.contains(&"Glob"));
+        assert!(!available.contains(&"Edit"));
+        assert!(!available.contains(&"Write"));
+        assert!(!available.contains(&"Bash"));
+        assert!(selection.issue_for("Edit").is_some());
+        assert!(selection.issue_for("Write").is_some());
+        assert!(selection.issue_for("Bash").is_some());
+    }
+
+    #[test]
+    fn workspace_write_mode_allows_edit_tools() {
+        let registry = ToolRegistry::default();
+        let ctx = ToolPermissionContext::default().with_mode(PermissionMode::WorkspaceWrite);
+        let selection = registry.select_tools(
+            &[
+                String::from("Read"),
+                String::from("Edit"),
+                String::from("Write"),
+                String::from("Bash"),
+                String::from("Agent"),
+            ],
+            ToolRuntimeMode::Standard,
+            &ctx,
+        );
+
+        let available: Vec<&str> = selection
+            .available_tools
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert!(available.contains(&"Read"));
+        assert!(available.contains(&"Edit"));
+        assert!(available.contains(&"Write"));
+        assert!(available.contains(&"Bash"));
+        assert!(available.contains(&"Agent"));
+        assert!(selection.unavailable_tools.is_empty());
+    }
+
+    #[test]
+    fn danger_mode_allows_all() {
+        let registry = ToolRegistry::default();
+        let ctx = ToolPermissionContext::default().with_mode(PermissionMode::DangerFullAccess);
+        let selection = registry.select_tools(
+            &[],
+            ToolRuntimeMode::Standard,
+            &ctx,
+        );
+
+        // All base tools should be available.
+        assert_eq!(selection.available_tools.len(), registry.base_tools.len());
+        assert!(selection.unavailable_tools.is_empty());
     }
 }

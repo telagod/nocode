@@ -2,6 +2,7 @@ use super::model::{
     ToolCallInput, ToolCallOutput, ToolCallResult, ToolExecutionRequest, ToolExecutionTrace,
     ToolPermissionDecision, ToolProgressUpdate,
 };
+use crate::file_safety::{validate_read_target, validate_write_target};
 use crate::message::QueryMessage;
 use crate::provider::ModelProvider;
 use crate::query_engine::QueryEngineConfig;
@@ -169,6 +170,17 @@ impl<H: ToolHost> DefaultToolExecutor<H> {
                 };
             }
         };
+        // File safety: symlink escape, size limit, binary detection.
+        let resolved = match validate_read_target(&resolved, &self.context.cwd_path()) {
+            Ok(path) => path,
+            Err(error) => {
+                return ToolExecutionTrace {
+                    progress_updates: vec![progress],
+                    result: ToolCallResult::failed(call, error),
+                    permission_denial: None,
+                };
+            }
+        };
         match self.host.read_to_string(&resolved) {
             Ok(content) => {
                 // Return full content to model, truncated at 100K chars for safety.
@@ -225,6 +237,17 @@ impl<H: ToolHost> DefaultToolExecutor<H> {
         let progress =
             ToolProgressUpdate::new(call.tool_use_id.clone(), format!("editing {file_path}"));
         let resolved = match self.context.resolve_path(&file_path) {
+            Ok(path) => path,
+            Err(error) => {
+                return ToolExecutionTrace {
+                    progress_updates: vec![progress],
+                    result: ToolCallResult::failed(call, error),
+                    permission_denial: None,
+                };
+            }
+        };
+        // File safety: symlink escape check for edit target.
+        let resolved = match validate_write_target(&resolved, &self.context.cwd_path()) {
             Ok(path) => path,
             Err(error) => {
                 return ToolExecutionTrace {
@@ -394,6 +417,18 @@ impl<H: ToolHost> DefaultToolExecutor<H> {
                 permission_denial: None,
             };
         }
+
+        // File safety: symlink escape check for write target.
+        let candidate = match validate_write_target(&candidate, &self.context.cwd_path()) {
+            Ok(path) => path,
+            Err(error) => {
+                return ToolExecutionTrace {
+                    progress_updates: vec![progress],
+                    result: ToolCallResult::failed(call, error),
+                    permission_denial: None,
+                };
+            }
+        };
 
         match self.host.write_string(&candidate, &content) {
             Ok(()) => ToolExecutionTrace {
@@ -780,6 +815,24 @@ impl<H: ToolHost> ToolExecutor for DefaultToolExecutor<H> {
             };
         }
 
+        // Validate tool input against JSON Schema before dispatch.
+        let arg_pairs: Vec<(String, String)> = request
+            .call
+            .arguments
+            .iter()
+            .map(|a| (a.key.clone(), a.value.clone()))
+            .collect();
+        if let Err(error) = crate::tool_validation::validate_tool_input(
+            &request.call.tool_name,
+            &arg_pairs,
+        ) {
+            return ToolExecutionTrace {
+                progress_updates: Vec::new(),
+                result: ToolCallResult::failed(request.call, error),
+                permission_denial: None,
+            };
+        }
+
         match request.call.tool_name.as_str() {
             "Read" => self.execute_read(request.call),
             "Edit" => self.execute_edit(request.call),
@@ -790,6 +843,16 @@ impl<H: ToolHost> ToolExecutor for DefaultToolExecutor<H> {
             "WebFetch" => self.execute_web_fetch(request.call),
             "WebSearch" => self.execute_web_search(request.call),
             "Agent" => self.execute_agent(request.call),
+            "CronCreate" => super::cron_tools::execute_cron_create(request.call),
+            "CronDelete" => super::cron_tools::execute_cron_delete(request.call),
+            "CronList" => super::cron_tools::execute_cron_list(request.call),
+            "TeamCreate" => super::team_tools::execute_team_create(request.call),
+            "TeamDelete" => super::team_tools::execute_team_delete(request.call),
+            "TaskGet" => super::task_tools::execute_task_get(request.call),
+            "TaskList" => super::task_tools::execute_task_list(request.call),
+            "TaskUpdate" => super::task_tools::execute_task_update(request.call),
+            "TaskStop" => super::task_tools::execute_task_stop(request.call),
+            "TaskOutput" => super::task_tools::execute_task_output(request.call),
             tool_name if tool_name.starts_with("mcp:") => self.execute_mcp_tool(request.call),
             _ => ToolExecutionTrace {
                 progress_updates: Vec::new(),

@@ -3,6 +3,7 @@ pub mod bridge_runtime;
 pub mod budget;
 pub mod budget_state;
 pub mod file_history;
+pub mod file_safety;
 pub mod history_store;
 pub mod mcp_client;
 pub mod message;
@@ -20,6 +21,7 @@ pub mod stop_hook;
 pub mod task_runtime;
 pub mod tool_execution;
 pub mod tool_registry;
+pub mod tool_validation;
 pub mod transcript;
 pub mod usage_tracker;
 pub use assistant_turn::{AssistantToolUse, AssistantTurn, AssistantTurnStatus};
@@ -34,6 +36,10 @@ pub use bridge_runtime::{
 pub use budget::{BudgetCompletionEvent, BudgetTracker, TokenBudgetDecision, check_token_budget};
 pub use budget_state::{BudgetState, TaskBudget};
 pub use file_history::{FileHistoryConfig, FileHistoryPlan, FileHistoryState};
+pub use file_safety::{
+    check_file_size, check_symlink_escape, is_binary_file, validate_read_target,
+    validate_write_target, BINARY_CHECK_SIZE, MAX_FILE_SIZE,
+};
 pub use history_store::{HistoryEntry, HistoryStore, HistoryStoreConfig, HistoryStorePlan};
 pub use message::{QueryMessage, QueryMessageRole};
 pub use model_response::{ModelResponse, ModelResponseStopReason, ModelResponseToolPhase};
@@ -85,9 +91,12 @@ pub use tool_execution::{
     ToolExecutionRequest, ToolExecutionTrace, ToolExecutor, ToolHost, ToolPermissionDecision,
     ToolProgressUpdate,
 };
+pub use tool_execution::mcp_bridge::{McpToolBridge, McpToolInfo, execute_mcp_tool_bridged};
 pub use tool_registry::{
-    PermissionCondition, PermissionRule, ToolDefinition, ToolKind, ToolPermissionContext,
-    ToolRegistry, ToolRegistryModule, ToolRegistrySelection, ToolRuntimeMode, ToolSelectionIssue,
+    PermissionCondition, PermissionMode, PermissionRule, ToolDefinition, ToolKind,
+    ToolPermissionContext, ToolRegistry, ToolRegistryModule, ToolRegistrySelection,
+    ToolRuntimeMode, ToolSelectionIssue,
 };
+pub use tool_validation::{get_tool_schema, validate_tool_input};
 pub use transcript::{QueryTranscript, TranscriptEntry, TranscriptRole};
 pub use usage_tracker::{UsageSnapshot, UsageTotals, UsageTracker};
