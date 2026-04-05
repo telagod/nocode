@@ -2,7 +2,7 @@
 
 [中文文档](README_CN.md) | [Development Guide](docs/DEVELOPMENT.md)
 
-A fast, native AI coding assistant for the terminal. Built in Rust.
+A terminal-native AI coding assistant built in Rust. 38K LOC, 51 modules, 25 tools, 555 tests.
 
 ## Install
 
@@ -20,92 +20,153 @@ cp target/release/nocode ~/.local/bin/
 
 ## Setup
 
-Set your API key:
+Set one API key and go:
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."   # Claude (default)
+# or
 export OPENAI_API_KEY="sk-..."          # OpenAI
+# or
 export GEMINI_API_KEY="..."             # Gemini
 ```
 
 ## Usage
 
 ```bash
-nocode --repl          # interactive REPL
-nocode --tui           # 4-pane terminal UI
-nocode --status        # system diagnostics
+nocode --repl                        # interactive REPL
+nocode --tui                         # 4-pane terminal UI
+nocode --status                      # system diagnostics
+nocode --bridge-once "prompt"        # single-turn local execution
+nocode --bridge-remote-once "prompt" # single-turn remote execution
 ```
 
 ## Providers
 
-nocode auto-detects your provider from environment variables:
+Auto-detected from environment variables. Priority: explicit override > Gemini > OpenAI > Claude > Mock.
 
-| Provider | API Key Variable | Default Model |
-|----------|-----------------|---------------|
+| Provider | API Key | Default Model |
+|----------|---------|---------------|
 | Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
 | OpenAI | `OPENAI_API_KEY` | `gpt-4.1` |
 | Gemini | `GEMINI_API_KEY` | `gemini-2.5-flash` |
-| Custom | `NOCODE_CUSTOM_BASE_URL` | (user-specified) |
+| Custom | `NOCODE_CUSTOM_BASE_URL` | user-specified |
+| Mock | (none, fallback) | `sonnet` |
 
-Override with:
+Override provider or model:
 
 ```bash
-export NOCODE_MODEL_PROVIDER=openai    # force provider
-export NOCODE_MODEL=gpt-4.1            # force model
+export NOCODE_MODEL_PROVIDER=openai
+export NOCODE_MODEL=gpt-4.1
 ```
 
-Any OpenAI-compatible or Claude-compatible endpoint works via Custom provider:
+Use any OpenAI/Claude-compatible endpoint (Ollama, vLLM, LiteLLM, etc.):
 
 ```bash
 export NOCODE_MODEL_PROVIDER=custom
 export NOCODE_CUSTOM_BASE_URL=http://localhost:11434/v1
-export NOCODE_CUSTOM_API_FORMAT=openai
+export NOCODE_CUSTOM_API_FORMAT=openai   # or claude, gemini
 export NOCODE_MODEL=llama3
 ```
 
-## Features
+## REPL Commands
 
-**25 built-in tools** — Read, Edit, Write, Bash, Glob, Grep, WebFetch, WebSearch, Agent, Tasks, Teams, MCP, LSP, Memory, and more
+### Session
+| Command | Description |
+|---------|-------------|
+| `/help` | Show all commands |
+| `/status` | Provider and engine status |
+| `/runtime` | Runtime diagnostics |
+| `/history` | Show conversation history |
+| `/inputs` | Show raw input history |
+| `/quit` | Exit |
 
-**Multi-provider** — Claude, OpenAI, Gemini, or any compatible endpoint
+### Git
+| Command | Description |
+|---------|-------------|
+| `/commit <message>` | `git add -A && git commit -m "..."` |
+| `/diff [args]` | Run `git diff` |
+| `/branch [name]` | Run `git branch` |
 
-**Two interfaces** — Line-mode REPL or 4-pane TUI with Markdown rendering and syntax highlighting
+### Tasks
+| Command | Description |
+|---------|-------------|
+| `/tasks [filter]` | List tasks. Filters: `all`, `completed`, `shell`, `agent`, `status:X type:Y` |
+| `/task-shell <command>` | Spawn a shell task |
+| `/task-agent <agent-id> <prompt>` | Spawn an agent task |
+| `/task-dream [sessions] [description]` | Spawn a dream task |
+| `/task-show <id\|first\|last\|latest\|prev\|next>` | Show task detail |
+| `/task-open` | Open selected task |
+| `/task-queue` | Show task queue |
+| `/task-run-next` | Run next queued task |
+| `/task-run-all` | Run all queued tasks |
+| `/task-stop <task-id>` | Stop a running task |
 
-**Multi-agent** — Spawn parallel agent teams for complex tasks
+### Teams
+| Command | Description |
+|---------|-------------|
+| `/team-create <subtask1; subtask2; ...>` | Spawn parallel agent team |
+| `/team-status` | Show team status |
 
-**Safe by default** — Bash sandbox blocks destructive commands, 3-tier permission model gates tool access
+### Editing
+| Command | Description |
+|---------|-------------|
+| `/draft <text>` | Start a draft message |
+| `/edit <text>` | Replace draft content |
+| `/append <text>` | Append to draft |
+| `/send` | Send the draft |
+| `/queue <prompt>` | Queue a prompt for later |
+| `/queue-slash </command>` | Queue a slash command |
+| `/queue-show` | Show queued items |
 
-**MCP support** — Connect external tools via Model Context Protocol (JSON-RPC over stdio)
+### Navigation
+| Command | Description |
+|---------|-------------|
+| `/focus <transcript\|tasks\|detail>` | Focus a TUI pane |
+| `/tasks-next` `/j` | Select next task |
+| `/tasks-prev` `/k` | Select previous task |
+| `/enter` | Open selected task |
+| `/history-prev` `/history-next` | Navigate input history |
 
-**CLAUDE.md support** — Auto-discovers project instructions from `CLAUDE.md`, `.claude/CLAUDE.md`, `.claude/rules/*.md`
+### Account
+| Command | Description |
+|---------|-------------|
+| `/login <api-key>` | Store API key to `~/.nocode/credentials` |
+| `/logout` | Remove stored credentials |
+| `/doctor` | System diagnostics (provider, tools, connectivity) |
+| `/plugin list` | List discovered plugins |
 
-**Persistent memory** — Remembers context across sessions with auto-detection signals
+## TUI
 
-**SQL storage** — Clean session/memory storage with date-based volume partitioning
-
-## Commands
-
-| Category | Commands |
-|----------|----------|
-| Session | `/help` `/status` `/runtime` `/history` `/quit` |
-| Git | `/commit <msg>` `/diff` `/branch` |
-| Tasks | `/tasks` `/task-shell <cmd>` `/task-agent <id> <prompt>` `/task-dream` |
-| Teams | `/team-create <subtask1; subtask2; ...>` `/team-status` |
-| Account | `/login <key>` `/logout` `/doctor` |
-| Editing | `/draft` `/edit` `/append` `/send` |
-
-## TUI Keyboard Shortcuts
+4-pane fullscreen interface with Markdown rendering (pulldown-cmark + syntect syntax highlighting), RGB color support, and overlay system.
 
 | Key | Action |
 |-----|--------|
-| `Alt-1..4` | Focus pane (transcript / tasks / detail / events) |
+| `Alt-1..4` | Focus pane (transcript / task list / task detail / events) |
 | `Tab` / `Shift-Tab` | Cycle pane focus |
-| `Up/Down` `PgUp/PgDn` | Scroll |
-| `Ctrl-P/N` | Input history |
-| `F1` | Help overlay |
+| `Up` / `Down` | Scroll or navigate |
+| `PgUp` / `PgDn` | Fast scroll |
+| `Ctrl-P` / `Ctrl-N` | Input history |
+| `Ctrl-U` | Clear input |
+| `F1` / `?` | Help overlay |
 | `F2` | Inspector overlay |
-| `F3` | Permission overlay |
+| `F3` | Permission overlay (`a` approve / `d` deny) |
 | `Esc` | Close overlay or quit |
+
+## Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `NOCODE_MODEL_PROVIDER` | Force provider: `claude`, `openai`, `gemini`, `custom`, `mock` |
+| `NOCODE_MODEL` | Override model name |
+| `NOCODE_CUSTOM_BASE_URL` | Base URL for Custom provider |
+| `NOCODE_CUSTOM_API_FORMAT` | Wire format: `claude`, `openai`, `gemini` |
+| `NOCODE_SYSTEM_PROMPT` | Override system prompt |
+| `NOCODE_MODEL_REASONING_EFFORT` | `low`, `medium`, `high` |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | Provider API keys |
+| `ANTHROPIC_MODEL` / `OPENAI_MODEL` / `GEMINI_MODEL` | Per-provider model override |
+| `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` | Per-provider base URL override |
+| `NOCODE_BRIDGE_BASE_URL` | Remote bridge endpoint |
+| `NOCODE_BRIDGE_AUTH_TOKEN` | Bearer token for remote bridge |
 
 ## Supported Platforms
 
