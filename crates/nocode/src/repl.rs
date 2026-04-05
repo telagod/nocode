@@ -9,6 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::{self, BufRead, Write};
 use std::sync::mpsc;
 
+use crate::status_hud::StatusHud;
 use crate::task_panel;
 
 const TASK_ACTIVITY_HISTORY_LIMIT: usize = 8;
@@ -933,6 +934,8 @@ pub struct ReplSession {
     permission_rx: Option<mpsc::Receiver<TuiPermissionRequest>>,
     pending_permissions: Vec<TuiPermissionRequest>,
     permission_cursor: usize,
+    // T7: status bar HUD
+    status_hud: StatusHud,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -946,6 +949,7 @@ pub struct ReplTuiSnapshot {
     pub transcript: String,
     pub task_list: String,
     pub task_detail: String,
+    pub hud_line: String,
 }
 
 impl ReplSession {
@@ -968,6 +972,7 @@ impl ReplSession {
             permission_rx: None,
             pending_permissions: Vec::new(),
             permission_cursor: 0,
+            status_hud: StatusHud::new("pending", "pending"),
         }
     }
 
@@ -1024,6 +1029,8 @@ impl ReplSession {
                 ModelStreamEvent::Start { provider, model } => {
                     if !pending.started {
                         pending.started = true;
+                        self.status_hud.model_name = model.clone();
+                        self.status_hud.start_turn();
                         lines.push(format!(
                             "stream start: provider={} model={}",
                             provider.as_str(),
@@ -1033,6 +1040,9 @@ impl ReplSession {
                 }
                 ModelStreamEvent::Delta { text } => {
                     pending.accumulated_text.push_str(text);
+                    // Approximate streaming output tokens: 1 token ~ 4 chars.
+                    let approx_tokens = (text.len() as u64).div_ceil(4);
+                    self.status_hud.record_tokens(0, approx_tokens);
                     lines.push(format!(
                         "stream delta: {}",
                         normalize_session_content(text.as_str())
@@ -1055,6 +1065,8 @@ impl ReplSession {
             self.last_plan_summary = Some(render_plan_status(&plan));
             self.last_plan_diagnostics = Some(render_plan_diagnostics(&plan));
             self.last_plan_response_result_pretty = plan.response_result_pretty();
+            // T7: finalize HUD with real usage from the plan.
+            self.finalize_hud_from_plan(&plan);
             self.pending_submission = None;
             returned_engine = Some(engine);
         }
@@ -1206,6 +1218,7 @@ impl ReplSession {
             transcript: format!("{transcript_title}\n{}", self.render_tui_transcript_body()),
             task_list: format!("{task_list_title}\n{task_list}"),
             task_detail: format!("{task_detail_title}\n{task_detail}"),
+            hud_line: self.render_tui_hud_line(),
         }
     }
 
@@ -1594,6 +1607,9 @@ impl ReplSession {
                 self.last_plan_summary = Some(render_plan_status(&plan));
                 self.last_plan_diagnostics = Some(render_plan_diagnostics(&plan));
                 self.last_plan_response_result_pretty = plan.response_result_pretty();
+                // T7: update HUD from synchronous submission.
+                self.status_hud.start_turn();
+                self.finalize_hud_from_plan(&plan);
                 Ok(true)
             }
             ReplCommand::Status => {
@@ -2539,6 +2555,30 @@ impl ReplSession {
         } else {
             plan.to_string()
         }
+    }
+
+    #[allow(dead_code)]
+    fn render_tui_hud_line(&self) -> String {
+        if self.is_streaming() {
+            self.status_hud.render_line_streaming()
+        } else {
+            self.status_hud.render_line()
+        }
+    }
+
+    /// Overwrite HUD turn/cumulative tokens with real values from the plan,
+    /// update model name and session ID, then end the turn timer.
+    fn finalize_hud_from_plan(&mut self, plan: &QuerySubmissionPlan) {
+        if let Some(inv) = plan.model_invocation.as_ref() {
+            self.status_hud.model_name = inv.model.clone();
+        }
+        self.status_hud.session_id = plan.session_persistence.session_id.clone();
+        let snap = &plan.usage_snapshot;
+        self.status_hud.turn_input_tokens = snap.input_tokens;
+        self.status_hud.turn_output_tokens = snap.output_tokens;
+        self.status_hud.cumulative_input_tokens = snap.total_usage.input_tokens;
+        self.status_hud.cumulative_output_tokens = snap.total_usage.output_tokens;
+        self.status_hud.end_turn();
     }
 
     fn render_tui_diagnostics_line(&self) -> String {

@@ -1,4 +1,7 @@
+use crate::markdown_render::{render_line_to_string, render_markdown_to_lines};
+use crate::markdown_stream::MarkdownStreamState;
 use crate::repl::{ReplIntent, ReplSession};
+use crate::spinner::Spinner;
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::execute;
@@ -16,7 +19,7 @@ use std::time::Duration;
 const LOG_LIMIT: usize = 160;
 const MIN_TUI_WIDTH: u16 = 72;
 const MIN_TUI_HEIGHT: u16 = 20;
-const HEADER_ROWS: u16 = 3;
+const HEADER_ROWS: u16 = 4;
 const FOOTER_ROWS: u16 = 4;
 
 pub(crate) fn run_tui() -> io::Result<()> {
@@ -43,6 +46,7 @@ pub(crate) fn run_tui() -> io::Result<()> {
         if let Some(intent) = session.take_pending_intent() {
             if let Some(eng) = engine.take() {
                 launch_async_submission(&mut session, eng, intent);
+                app.thinking_spinner = Some(Spinner::new("\u{1F980} Thinking..."));
             } else {
                 // Engine is busy in a background thread — re-queue the intent.
                 app.push_block("engine busy — waiting for current submission to complete");
@@ -56,12 +60,31 @@ pub(crate) fn run_tui() -> io::Result<()> {
             app.capture_output(tick_output);
         }
 
+        // Tick the thinking spinner while streaming.
+        if let Some(spinner) = app.thinking_spinner.as_mut()
+            && !spinner.is_done()
+        {
+            let frame = spinner.tick();
+            app.push_block(frame.display.as_str());
+        }
+
         // W1: Poll pending stream events for live rendering.
         let (stream_lines, returned_engine) = session.poll_pending_stream();
         for line in &stream_lines {
-            app.push_block(line.as_str());
+            // Route stream deltas through MarkdownStreamState for boundary detection.
+            if let Some(rendered) = app.md_stream.push(line.as_str()) {
+                app.push_markdown_block(rendered.as_str());
+            }
         }
         if let Some(eng) = returned_engine {
+            // Flush remaining markdown buffer when stream ends.
+            if let Some(rendered) = app.md_stream.flush() {
+                app.push_markdown_block(rendered.as_str());
+            }
+            if let Some(spinner) = app.thinking_spinner.as_mut() {
+                spinner.finish("Done");
+            }
+            app.thinking_spinner = None;
             engine = Some(eng);
         }
 
@@ -166,6 +189,8 @@ struct TuiApp {
     events_scroll: usize,
     detail_follow_selection: bool,
     dirty: bool,
+    thinking_spinner: Option<Spinner>,
+    md_stream: MarkdownStreamState,
 }
 
 impl TuiApp {
@@ -574,6 +599,23 @@ impl TuiApp {
         self.mark_dirty();
     }
 
+    /// Push a block of markdown through the renderer, converting to plain text lines
+    /// with structural formatting (headings, code fences, bullets, etc.).
+    fn push_markdown_block(&mut self, markdown: &str) {
+        let rendered_lines = render_markdown_to_lines(markdown);
+        for line in &rendered_lines {
+            let text = render_line_to_string(line);
+            if !text.is_empty() {
+                self.log_lines.push(text);
+            }
+        }
+        if self.log_lines.len() > LOG_LIMIT {
+            let overflow = self.log_lines.len() - LOG_LIMIT;
+            self.log_lines.drain(0..overflow);
+        }
+        self.mark_dirty();
+    }
+
     /// Open the permissions overlay.
     fn set_overlay_permissions(&mut self) {
         self.overlay = TuiOverlay::Permissions;
@@ -721,6 +763,7 @@ impl TuiApp {
         self.draw_strip(stdout, 0, width, title.as_str())?;
         self.draw_strip(stdout, 1, width, snapshot.status_line.as_str())?;
         self.draw_strip(stdout, 2, width, snapshot.diagnostics_line.as_str())?;
+        self.draw_strip(stdout, 3, width, snapshot.hud_line.as_str())?;
 
         self.draw_panel(
             stdout,
@@ -821,6 +864,7 @@ impl TuiApp {
             0 => Color::Cyan,       // title bar
             1 => Color::Green,      // status line
             2 => Color::DarkYellow, // diagnostics
+            3 => Color::Magenta,    // HUD: model/tokens/timing
             _ => Color::White,      // footer
         };
         queue!(

@@ -1,6 +1,18 @@
 mod claudemd;
+#[allow(dead_code)]
+mod markdown_render;
+#[allow(dead_code, clippy::collapsible_if)]
+mod markdown_stream;
 mod repl;
+#[allow(dead_code)]
+mod spinner;
+#[allow(dead_code)]
+mod status_hud;
 mod task_panel;
+#[allow(dead_code, clippy::empty_line_after_doc_comments)]
+mod tool_truncate;
+#[allow(dead_code)]
+mod tool_render;
 mod tui;
 
 use nocode_core::{
