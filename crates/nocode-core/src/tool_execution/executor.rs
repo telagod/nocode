@@ -4,6 +4,7 @@ use super::model::{
 };
 use crate::bash_validation::validate_bash_command;
 use crate::file_safety::{validate_read_target, validate_write_target};
+use crate::sandbox::{FilesystemIsolationMode, SandboxRequest, resolve_sandbox_status};
 use crate::message::QueryMessage;
 use crate::provider::ModelProvider;
 use crate::query_engine::QueryEngineConfig;
@@ -327,8 +328,41 @@ impl<H: ToolHost> DefaultToolExecutor<H> {
             };
         }
 
-        let progress =
-            ToolProgressUpdate::new(call.tool_use_id.clone(), format!("running bash: {command}"));
+        // Sandbox: check command paths against workspace boundary.
+        let sandbox_request = SandboxRequest {
+            enabled: true,
+            filesystem_mode: FilesystemIsolationMode::WorkspaceOnly,
+            network_isolation: false,
+            allowed_mounts: vec![self.context.cwd.clone()],
+        };
+        let sandbox_status = resolve_sandbox_status(&sandbox_request);
+
+        let mut progress_updates = vec![ToolProgressUpdate::new(
+            call.tool_use_id.clone(),
+            format!(
+                "sandbox: active={} fs={:?}",
+                sandbox_status.active, sandbox_status.filesystem_mode
+            ),
+        )];
+
+        if sandbox_status.active
+            && sandbox_status.filesystem_mode == FilesystemIsolationMode::WorkspaceOnly
+            && let Some(reason) = check_command_paths(&command, &self.context.cwd)
+        {
+            return ToolExecutionTrace {
+                progress_updates,
+                result: ToolCallResult::failed(
+                    call,
+                    format!("sandbox blocked: {reason}"),
+                ),
+                permission_denial: Some(reason),
+            };
+        }
+
+        progress_updates.push(ToolProgressUpdate::new(
+            call.tool_use_id.clone(),
+            format!("running bash: {command}"),
+        ));
         match self.host.run_command(&self.context.cwd_path(), &command) {
             Ok(output) if output.exit_code == 0 => {
                 let combined = if output.stderr.trim().is_empty() {
@@ -343,7 +377,7 @@ impl<H: ToolHost> DefaultToolExecutor<H> {
                     )
                 };
                 ToolExecutionTrace {
-                    progress_updates: vec![progress],
+                    progress_updates,
                     result: ToolPermissionDecision::allow(false).settle(
                         call.clone(),
                         ToolCallOutput {
@@ -363,7 +397,7 @@ impl<H: ToolHost> DefaultToolExecutor<H> {
                 }
             }
             Ok(output) => ToolExecutionTrace {
-                progress_updates: vec![progress],
+                progress_updates,
                 result: ToolCallResult::failed(
                     call,
                     format!(
@@ -375,7 +409,7 @@ impl<H: ToolHost> DefaultToolExecutor<H> {
                 permission_denial: None,
             },
             Err(error) => ToolExecutionTrace {
-                progress_updates: vec![progress],
+                progress_updates,
                 result: ToolCallResult::failed(call, error),
                 permission_denial: None,
             },
@@ -878,6 +912,29 @@ impl<H: ToolHost> ToolExecutor for DefaultToolExecutor<H> {
 /// Escape a string for safe use in a shell command.
 fn shell_escape(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// Check whether any absolute path tokens in a command fall outside the workspace.
+fn check_command_paths(command: &str, cwd: &str) -> Option<String> {
+    for token in command.split_whitespace() {
+        if token.starts_with('/')
+            && !token.starts_with(cwd)
+            && !is_safe_system_path(token)
+        {
+            return Some(format!("path {token} is outside workspace {cwd}"));
+        }
+    }
+    None
+}
+
+/// Return `true` for system paths that are safe to reference from sandboxed commands.
+fn is_safe_system_path(path: &str) -> bool {
+    path.starts_with("/dev/null")
+        || path.starts_with("/tmp")
+        || path.starts_with("/usr/bin")
+        || path.starts_with("/usr/local/bin")
+        || path.starts_with("/bin")
+        || path.starts_with("/proc")
 }
 
 #[cfg(test)]

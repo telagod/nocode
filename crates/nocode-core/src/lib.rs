@@ -33,6 +33,7 @@ pub mod query_engine;
 pub mod query_loop;
 pub mod recovery;
 pub mod roadmap;
+pub mod sandbox;
 pub mod session_compaction;
 pub mod session_persistence;
 pub mod stale_branch;
