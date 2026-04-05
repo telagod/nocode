@@ -1,5 +1,7 @@
 # nocode
 
+[中文文档](README_CN.md)
+
 A fast, native AI coding assistant for the terminal. Built in Rust.
 
 ## What is nocode?
