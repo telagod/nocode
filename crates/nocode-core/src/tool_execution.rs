@@ -2,6 +2,7 @@ pub mod cron_tools;
 mod executor;
 pub mod lsp_tools;
 pub mod mcp_bridge;
+pub mod memory_tools;
 mod model;
 pub mod task_tools;
 pub mod team_tools;

@@ -6,6 +6,7 @@
 
 use crate::message::{QueryMessage, QueryMessageRole};
 use crate::query_deps::Compactor;
+use crate::summary_compression::{SummaryCompressionBudget, compress_summary};
 use std::collections::BTreeSet;
 
 // ---------------------------------------------------------------------------
@@ -183,7 +184,9 @@ pub fn compact_session(
     let old_messages = &messages[..split];
     let recent_messages = &messages[split..];
 
-    let summary = summarize_messages(old_messages);
+    let raw_summary = summarize_messages(old_messages);
+    let compressed = compress_summary(&raw_summary, &SummaryCompressionBudget::default());
+    let summary = compressed.summary;
 
     let mut compacted = Vec::with_capacity(keep + 1);
     compacted.push(QueryMessage::system(format!(

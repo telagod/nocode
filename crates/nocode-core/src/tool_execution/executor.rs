@@ -896,6 +896,10 @@ impl<H: ToolHost> ToolExecutor for DefaultToolExecutor<H> {
             "TaskOutput" => super::task_tools::execute_task_output(request.call),
             "ToolSearch" => super::tool_search::execute_tool_search(request.call),
             "Lsp" => super::lsp_tools::execute_lsp(request.call),
+            "MemorySave" => super::memory_tools::execute_memory_save(request.call),
+            "MemoryList" => super::memory_tools::execute_memory_list(request.call),
+            "MemorySearch" => super::memory_tools::execute_memory_search(request.call),
+            "MemoryDelete" => super::memory_tools::execute_memory_delete(request.call),
             tool_name if tool_name.starts_with("mcp:") => self.execute_mcp_tool(request.call),
             _ => ToolExecutionTrace {
                 progress_updates: Vec::new(),

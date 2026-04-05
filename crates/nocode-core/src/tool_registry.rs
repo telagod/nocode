@@ -237,6 +237,14 @@ impl Default for ToolRegistry {
                     .with_permission(PermissionMode::ReadOnly),
                 ToolDefinition::new("Lsp", ToolKind::ReadOnly, false)
                     .with_permission(PermissionMode::ReadOnly),
+                ToolDefinition::new("MemorySave", ToolKind::Edit, false)
+                    .with_permission(PermissionMode::WorkspaceWrite),
+                ToolDefinition::new("MemoryList", ToolKind::ReadOnly, false)
+                    .with_permission(PermissionMode::ReadOnly),
+                ToolDefinition::new("MemorySearch", ToolKind::ReadOnly, false)
+                    .with_permission(PermissionMode::ReadOnly),
+                ToolDefinition::new("MemoryDelete", ToolKind::Edit, false)
+                    .with_permission(PermissionMode::WorkspaceWrite),
             ],
         }
     }

@@ -220,6 +220,16 @@ pub fn default_command_registry() -> CommandRegistry {
     ));
     r.register(builtin("team-status", "Show team status"));
 
+    // -- memory --
+    r.register(SlashCommandSpec {
+        name: "memory".to_string(),
+        aliases: vec!["mem".to_string()],
+        summary: "List and manage persistent memories".to_string(),
+        argument_hint: Some("[list|search <query>|show <file>]".to_string()),
+        source: CommandSource::Builtin,
+        resume_supported: false,
+    });
+
     r
 }
 

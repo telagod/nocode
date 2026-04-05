@@ -92,6 +92,37 @@ pub fn get_tool_schema(tool_name: &str) -> Option<Value> {
                 "column": { "type": "string" }
             }
         })),
+        "MemorySave" => Some(json!({
+            "type": "object",
+            "required": ["name", "description", "memory_type", "content", "file_name"],
+            "properties": {
+                "name": { "type": "string" },
+                "description": { "type": "string" },
+                "memory_type": { "type": "string" },
+                "content": { "type": "string" },
+                "file_name": { "type": "string" }
+            }
+        })),
+        "MemoryList" => Some(json!({
+            "type": "object",
+            "properties": {
+                "memory_type": { "type": "string" }
+            }
+        })),
+        "MemorySearch" => Some(json!({
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": { "type": "string" }
+            }
+        })),
+        "MemoryDelete" => Some(json!({
+            "type": "object",
+            "required": ["file_name"],
+            "properties": {
+                "file_name": { "type": "string" }
+            }
+        })),
         _ => None,
     }
 }
