@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="kyxiaxiang/redcode"
+REPO="telagod/nocode"
 BINARY="nocode"
 INSTALL_DIR="${NOCODE_INSTALL_DIR:-$HOME/.local/bin}"
 
