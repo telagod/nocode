@@ -1,0 +1,67 @@
+#!/usr/bin/env node
+
+"use strict";
+
+const { spawn } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+
+const PLATFORM_PACKAGES = {
+  "linux-x64": "@telagod/nocode-linux-x64",
+  "darwin-x64": "@telagod/nocode-darwin-x64",
+  "darwin-arm64": "@telagod/nocode-darwin-arm64",
+};
+
+function getBinaryPath() {
+  const platform = process.platform;
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  const key = `${platform}-${arch}`;
+  const pkg = PLATFORM_PACKAGES[key];
+
+  if (!pkg) {
+    console.error(
+      `Unsupported platform: ${platform}-${arch}\n` +
+        `Supported: ${Object.keys(PLATFORM_PACKAGES).join(", ")}`
+    );
+    process.exit(1);
+  }
+
+  // Resolve the platform sub-package directory
+  let pkgDir;
+  try {
+    pkgDir = path.dirname(require.resolve(`${pkg}/package.json`));
+  } catch {
+    console.error(
+      `Platform package ${pkg} is not installed.\n` +
+        `Try: npm install -g @telagod/nocode`
+    );
+    process.exit(1);
+  }
+
+  const bin = path.join(pkgDir, "bin", "nocode");
+  if (!fs.existsSync(bin)) {
+    console.error(`Binary not found at ${bin}`);
+    process.exit(1);
+  }
+
+  return bin;
+}
+
+const bin = getBinaryPath();
+const child = spawn(bin, process.argv.slice(2), {
+  stdio: "inherit",
+  env: process.env,
+});
+
+// Forward signals to the child process
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sig, () => child.kill(sig));
+}
+
+child.on("exit", (code, signal) => {
+  if (signal) {
+    process.kill(process.pid, signal);
+  } else {
+    process.exit(code ?? 1);
+  }
+});

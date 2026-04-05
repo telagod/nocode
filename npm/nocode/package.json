@@ -1,0 +1,26 @@
+{
+  "name": "@telagod/nocode",
+  "version": "0.1.0",
+  "description": "Terminal-native AI coding assistant built in Rust",
+  "license": "MIT",
+  "author": "telagod",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/telagod/nocode"
+  },
+  "bin": {
+    "nocode": "bin/nocode"
+  },
+  "files": ["bin/", "scripts/"],
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "optionalDependencies": {
+    "@telagod/nocode-linux-x64": "0.1.0",
+    "@telagod/nocode-darwin-x64": "0.1.0",
+    "@telagod/nocode-darwin-arm64": "0.1.0"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

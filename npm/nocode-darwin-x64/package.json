@@ -1,0 +1,15 @@
+{
+  "name": "@telagod/nocode-darwin-x64",
+  "version": "0.1.0",
+  "description": "nocode platform binary for macOS x64",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "license": "MIT",
+  "author": "telagod",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/telagod/nocode"
+  },
+  "files": ["bin/"],
+  "preferUnplugged": true
+}

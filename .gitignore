@@ -1,1 +1,5 @@
 target/
+dist/
+npm/nocode-linux-x64/bin/nocode
+npm/nocode-darwin-x64/bin/nocode
+npm/nocode-darwin-arm64/bin/nocode
