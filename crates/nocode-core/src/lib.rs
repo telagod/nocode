@@ -16,6 +16,7 @@ pub mod lane_events;
 pub mod lsp_client;
 pub mod mcp_client;
 pub mod message;
+pub mod mock_service;
 pub mod model_pricing;
 pub mod model_response;
 pub mod oauth;
