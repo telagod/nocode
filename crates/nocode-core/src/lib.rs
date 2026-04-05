@@ -9,13 +9,16 @@ pub mod mcp_client;
 pub mod message;
 pub mod model_response;
 pub mod persistence_backend;
+pub mod policy_engine;
 pub mod provider;
 pub mod provider_transport;
 pub mod query_config;
 pub mod query_deps;
 pub mod query_engine;
 pub mod query_loop;
+pub mod recovery;
 pub mod roadmap;
+pub mod session_compaction;
 pub mod session_persistence;
 pub mod stop_hook;
 pub mod task_runtime;
@@ -24,6 +27,7 @@ pub mod tool_registry;
 pub mod tool_validation;
 pub mod transcript;
 pub mod usage_tracker;
+pub mod worker_boot;
 pub use assistant_turn::{AssistantToolUse, AssistantTurn, AssistantTurnStatus};
 pub use bridge_runtime::{
     BridgeEventPayloadWire, BridgeEventWire, BridgeMode, BridgeModule, BridgeRequest,
@@ -47,6 +51,10 @@ pub use persistence_backend::{
     FileHistorySnapshot, LocalPersistenceBackend, NoopPersistenceBackend, NoopPersistenceReader,
     PersistedTranscriptEntry, PersistenceBackend, PersistenceDispatchResult, PersistenceReader,
 };
+pub use policy_engine::{
+    DiffScope, GreenLevel, LaneBlocker, LaneContext, PolicyAction, PolicyCondition, PolicyEngine,
+    PolicyRule, ReconcileReason, ReviewStatus,
+};
 pub use provider::{
     ChannelModelStreamSink, HttpStatusClass, ModelCallOutput, ModelError, ModelErrorKind,
     ModelErrorWire, ModelInvocation, ModelProvider, ModelProviderCapabilities, ModelRequest,
@@ -68,6 +76,14 @@ pub use query_loop::{
     QueryLoopRunner, QueryLoopState, QueryLoopTerminal, QuerySource,
 };
 pub use roadmap::{MigrationSurface, RewriteRoadmap, RewriteStage, default_roadmap, render_status};
+pub use recovery::{
+    EscalationPolicy, FailureScenario, RecoveryContext, RecoveryEvent, RecoveryRecipe,
+    RecoveryResult, RecoveryStep, recipe_for,
+};
+pub use session_compaction::{
+    CompactionConfig, CompactionResult, RichCompactor, compact_session, estimate_message_tokens,
+    should_compact, summarize_messages,
+};
 pub use session_persistence::{
     ReadFileCacheState, SessionIdentity, SessionPersistenceConfig, SessionPersistencePlan,
     SessionPersistenceState, SessionResumePlan,
@@ -100,3 +116,7 @@ pub use tool_registry::{
 pub use tool_validation::{get_tool_schema, validate_tool_input};
 pub use transcript::{QueryTranscript, TranscriptEntry, TranscriptRole};
 pub use usage_tracker::{UsageSnapshot, UsageTotals, UsageTracker};
+pub use worker_boot::{
+    Worker, WorkerEvent, WorkerEventKind, WorkerFailure, WorkerFailureKind, WorkerRegistry,
+    WorkerStatus, global_worker_registry,
+};

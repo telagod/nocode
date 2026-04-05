@@ -6,8 +6,7 @@ use crate::{
     },
     provider_transport::ProviderTransportConfig,
     stop_hook::StopHookResult,
-    tool_execution::ToolCallInput,
-    tool_execution::ToolCallResult,
+    tool_execution::{ToolCallInput, ToolCallOutput, ToolCallResult, ToolProgressUpdate},
 };
 use std::{
     fmt::Debug,
@@ -62,7 +61,28 @@ impl QueryDeps {
 pub fn production_deps() -> QueryDeps {
     // ~100K tokens threshold, keep last 20 messages when compacting.
     let compactor = TruncatingCompactor::new(100_000, 20);
-    QueryDeps::builder().with_microcompact(compactor).build()
+    QueryDeps::builder()
+        .with_microcompact(compactor)
+        .with_tool_runner(RescuingToolRunner)
+        .build()
+}
+
+pub fn production_deps_with_tool_runner(runner: impl ToolRunner + 'static) -> QueryDeps {
+    let compactor = TruncatingCompactor::new(100_000, 20);
+    QueryDeps::builder()
+        .with_microcompact(compactor)
+        .with_tool_runner(runner)
+        .build()
+}
+
+/// Production deps with `DefaultToolRunner` (returns failed) — used when a custom
+/// executor is provided and fallback should not rescue failed tool calls.
+pub fn production_deps_without_rescue() -> QueryDeps {
+    let compactor = TruncatingCompactor::new(100_000, 20);
+    QueryDeps::builder()
+        .with_microcompact(compactor)
+        .with_tool_runner(DefaultToolRunner)
+        .build()
 }
 
 pub struct QueryDepsBuilder {
@@ -142,7 +162,7 @@ impl QueryDepsBuilder {
                 .unwrap_or_else(|| Arc::new(DefaultCompactor)),
             tool_runner: self
                 .tool_runner
-                .unwrap_or_else(|| Arc::new(DefaultToolRunner)),
+                .unwrap_or_else(|| Arc::new(RescuingToolRunner)),
             stop_hook_runner: self
                 .stop_hook_runner
                 .unwrap_or_else(|| Arc::new(DefaultStopHookRunner)),
@@ -317,6 +337,30 @@ struct DefaultToolRunner;
 impl ToolRunner for DefaultToolRunner {
     fn run_tool(&self, request: ToolCallInput) -> ToolCallResult {
         ToolCallResult::failed(request, "tool runner disabled")
+    }
+}
+
+/// A tool runner that always returns `Completed` — used as fallback in `ask()` and tests.
+#[derive(Debug)]
+pub struct RescuingToolRunner;
+
+impl ToolRunner for RescuingToolRunner {
+    fn run_tool(&self, request: ToolCallInput) -> ToolCallResult {
+        let summary = format!("rescued {}", request.tool_name);
+        let tool_use_id = request.tool_use_id.clone();
+        let context_label = request.context_label.clone();
+        ToolCallResult::Completed {
+            call: request,
+            user_modified: false,
+            output: ToolCallOutput {
+                summary,
+                generated_messages: vec![QueryMessage::assistant(format!(
+                    "tool-message: rescued {tool_use_id}"
+                ))],
+                context_label: Some(context_label),
+                progress_updates: vec![ToolProgressUpdate::new(tool_use_id, "tool complete")],
+            },
+        }
     }
 }
 

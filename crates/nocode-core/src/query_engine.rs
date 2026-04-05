@@ -544,7 +544,10 @@ pub fn ask_with_executor(
     options: SubmitMessageOptions,
     executor: &impl ToolExecutor,
 ) -> QuerySubmissionPlan {
-    let mut engine = QueryEngine::new(config);
+    // Use default deps (with DefaultToolRunner that returns failed) so the
+    // fallback path does not override the custom executor's results.
+    let deps = crate::query_deps::production_deps_without_rescue();
+    let mut engine = QueryEngine::with_deps(config, deps);
     engine.submit_message_with_executor(prompt, options, executor)
 }
 

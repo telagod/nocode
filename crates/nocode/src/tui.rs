@@ -1,4 +1,4 @@
-use crate::markdown_render::{render_line_to_string, render_markdown_to_lines};
+use crate::markdown_render::{LineSegment, render_markdown_to_lines};
 use crate::markdown_stream::MarkdownStreamState;
 use crate::repl::{ReplIntent, ReplSession};
 use crate::spinner::Spinner;
@@ -6,7 +6,7 @@ use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::execute;
 use crossterm::queue;
-use crossterm::style::{Color, Print, ResetColor, SetForegroundColor};
+use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor};
 use crossterm::terminal::{
     self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
     enable_raw_mode,
@@ -175,11 +175,34 @@ impl Drop for TuiTerminalGuard {
     }
 }
 
+/// A single line in the transcript/events log — either plain text or pre-styled segments.
+#[derive(Debug, Clone)]
+enum StyledContent {
+    Plain(String),
+    Styled(Vec<LineSegment>),
+}
+
+impl StyledContent {
+    /// Return the plain-text representation (for filtering / wrapping).
+    fn as_plain(&self) -> String {
+        match self {
+            Self::Plain(s) => s.clone(),
+            Self::Styled(segs) => segs.iter().map(|s| s.text.as_str()).collect(),
+        }
+    }
+}
+
+impl Default for StyledContent {
+    fn default() -> Self {
+        Self::Plain(String::new())
+    }
+}
+
 #[derive(Debug, Default)]
 struct TuiApp {
     input: String,
     cursor_chars: usize,
-    log_lines: Vec<String>,
+    styled_lines: Vec<StyledContent>,
     events_filter: TuiEventsFilter,
     active_pane: TuiPane,
     overlay: TuiOverlay,
@@ -365,7 +388,7 @@ impl TuiApp {
                 Ok(true)
             }
             (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
-                self.log_lines.clear();
+                self.styled_lines.clear();
                 self.mark_dirty();
                 Ok(true)
             }
@@ -590,28 +613,26 @@ impl TuiApp {
         if trimmed.is_empty() {
             return;
         }
-        self.log_lines
-            .extend(trimmed.lines().map(std::string::ToString::to_string));
-        if self.log_lines.len() > LOG_LIMIT {
-            let overflow = self.log_lines.len() - LOG_LIMIT;
-            self.log_lines.drain(0..overflow);
+        self.styled_lines
+            .extend(trimmed.lines().map(|l| StyledContent::Plain(l.to_string())));
+        if self.styled_lines.len() > LOG_LIMIT {
+            let overflow = self.styled_lines.len() - LOG_LIMIT;
+            self.styled_lines.drain(0..overflow);
         }
         self.mark_dirty();
     }
 
-    /// Push a block of markdown through the renderer, converting to plain text lines
-    /// with structural formatting (headings, code fences, bullets, etc.).
+    /// Push a block of markdown through the renderer, storing styled segments directly.
     fn push_markdown_block(&mut self, markdown: &str) {
         let rendered_lines = render_markdown_to_lines(markdown);
-        for line in &rendered_lines {
-            let text = render_line_to_string(line);
-            if !text.is_empty() {
-                self.log_lines.push(text);
+        for line in rendered_lines {
+            if !line.is_empty() {
+                self.styled_lines.push(StyledContent::Styled(line.segments));
             }
         }
-        if self.log_lines.len() > LOG_LIMIT {
-            let overflow = self.log_lines.len() - LOG_LIMIT;
-            self.log_lines.drain(0..overflow);
+        if self.styled_lines.len() > LOG_LIMIT {
+            let overflow = self.styled_lines.len() - LOG_LIMIT;
+            self.styled_lines.drain(0..overflow);
         }
         self.mark_dirty();
     }
@@ -699,11 +720,10 @@ impl TuiApp {
         }
     }
 
-    fn filtered_log_lines(&self) -> Vec<String> {
-        self.log_lines
+    fn filtered_log_lines(&self) -> Vec<&StyledContent> {
+        self.styled_lines
             .iter()
-            .filter(|line| self.events_filter.matches(line.as_str()))
-            .cloned()
+            .filter(|line| self.events_filter.matches(line.as_plain().as_str()))
             .collect()
     }
 
@@ -758,7 +778,7 @@ impl TuiApp {
                 "off"
             },
             self.events_filter.label(),
-            self.log_lines.len()
+            self.styled_lines.len()
         );
         self.draw_strip(stdout, 0, width, title.as_str())?;
         self.draw_strip(stdout, 1, width, snapshot.status_line.as_str())?;
@@ -800,14 +820,11 @@ impl TuiApp {
         )?;
 
         let filtered_log_lines = self.filtered_log_lines();
-        let events = if filtered_log_lines.is_empty() {
-            format!("events pane [{}]\nnone", self.events_filter.label())
+        let events_title = format!("events pane [{}]", self.events_filter.label());
+        let events_body: Vec<StyledContent> = if filtered_log_lines.is_empty() {
+            vec![StyledContent::Plain("none".to_string())]
         } else {
-            format!(
-                "events pane [{}]\n{}",
-                self.events_filter.label(),
-                filtered_log_lines.join("\n")
-            )
+            filtered_log_lines.into_iter().cloned().collect()
         };
         self.draw_panel(
             stdout,
@@ -815,7 +832,10 @@ impl TuiApp {
             events_top,
             width,
             events_height,
-            split_block(events.as_str()),
+            PaneBlock {
+                title: events_title,
+                body: events_body,
+            },
             self.active_pane == TuiPane::Events,
             ScrollAnchor::Bottom,
             self.events_scroll,
@@ -842,19 +862,24 @@ impl TuiApp {
     }
 
     fn overlay_block(&self, session: &ReplSession) -> Option<PaneBlock> {
+        let to_body = |s: String| -> Vec<StyledContent> {
+            s.lines()
+                .map(|l| StyledContent::Plain(l.to_string()))
+                .collect()
+        };
         match self.overlay {
             TuiOverlay::None => None,
             TuiOverlay::Help => Some(PaneBlock {
                 title: String::from("help overlay"),
-                body: session.render_tui_help_overlay(),
+                body: to_body(session.render_tui_help_overlay()),
             }),
             TuiOverlay::Inspector => Some(PaneBlock {
                 title: String::from("inspector overlay"),
-                body: session.render_tui_inspector_overlay(),
+                body: to_body(session.render_tui_inspector_overlay()),
             }),
             TuiOverlay::Permissions => Some(PaneBlock {
                 title: String::from("permission overlay"),
-                body: session.render_tui_permission_overlay(),
+                body: to_body(session.render_tui_permission_overlay()),
             }),
         }
     }
@@ -894,7 +919,14 @@ impl TuiApp {
         }
         let inner_width = width.saturating_sub(2) as usize;
         let inner_height = height.saturating_sub(2) as usize;
-        let body_lines = wrap_text(block.body.as_str(), inner_width);
+        let body_lines: Vec<StyledContent> = block
+            .body
+            .iter()
+            .flat_map(|sc| wrap_styled_content(sc, inner_width))
+            .collect();
+        if body_lines.is_empty() {
+            // ensure at least one empty line for viewport_summary
+        }
         let (start, end, total) = viewport_summary(body_lines.len(), inner_height, anchor, scroll);
         let title = if total == 0 {
             format!("{} {} [0-0/0]", if active { '*' } else { ' ' }, block.title)
@@ -922,18 +954,55 @@ impl TuiApp {
             ResetColor
         )?;
         for row in 0..inner_height {
-            let line = body_lines
-                .get(start + row)
-                .map(String::as_str)
-                .unwrap_or_default();
-            let line_color = classify_line_color(line);
+            let sc = body_lines.get(start + row);
             queue!(
                 stdout,
                 MoveTo(x, top + 1 + row as u16),
                 SetForegroundColor(border_color),
                 Print("|"),
-                SetForegroundColor(line_color),
-                Print(pad_line(line, inner_width)),
+            )?;
+            let chars_written = match sc {
+                Some(StyledContent::Styled(segs)) => {
+                    let mut written = 0usize;
+                    for seg in segs {
+                        if seg.bold {
+                            queue!(stdout, SetAttribute(Attribute::Bold))?;
+                        }
+                        if seg.italic {
+                            queue!(stdout, SetAttribute(Attribute::Italic))?;
+                        }
+                        queue!(
+                            stdout,
+                            SetForegroundColor(seg.color),
+                            Print(&seg.text),
+                        )?;
+                        written += seg.text.chars().count();
+                        if seg.bold || seg.italic {
+                            queue!(stdout, SetAttribute(Attribute::Reset))?;
+                        }
+                    }
+                    queue!(stdout, ResetColor)?;
+                    written
+                }
+                Some(StyledContent::Plain(line)) => {
+                    let line_color = classify_line_color(line);
+                    let display = pad_line(line, inner_width);
+                    queue!(
+                        stdout,
+                        SetForegroundColor(line_color),
+                        Print(display),
+                        ResetColor,
+                    )?;
+                    inner_width // pad_line always fills to inner_width
+                }
+                None => 0,
+            };
+            // Pad remaining space
+            if chars_written < inner_width {
+                queue!(stdout, Print(" ".repeat(inner_width - chars_written)))?;
+            }
+            queue!(
+                stdout,
                 SetForegroundColor(border_color),
                 Print("|"),
                 ResetColor
@@ -957,7 +1026,11 @@ impl TuiApp {
         block: PaneBlock,
     ) -> io::Result<()> {
         let overlay_width = ((width as usize * 4) / 5).clamp(48, width.saturating_sub(4) as usize);
-        let wrapped = wrap_text(block.body.as_str(), overlay_width.saturating_sub(2));
+        let wrapped: Vec<StyledContent> = block
+            .body
+            .iter()
+            .flat_map(|sc| wrap_styled_content(sc, overlay_width.saturating_sub(2)))
+            .collect();
         let overlay_height = (wrapped.len() + 2).clamp(8, height.saturating_sub(4) as usize);
         let overlay_x = (width.saturating_sub(overlay_width as u16)) / 2;
         let overlay_y = (height.saturating_sub(overlay_height as u16)) / 2;
@@ -1037,7 +1110,7 @@ impl TuiApp {
 #[derive(Debug, Clone)]
 struct PaneBlock {
     title: String,
-    body: String,
+    body: Vec<StyledContent>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1171,16 +1244,6 @@ fn char_to_byte_index(value: &str, char_index: usize) -> usize {
         .unwrap_or(value.len())
 }
 
-fn wrap_text(value: &str, width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    for line in value.lines() {
-        lines.extend(wrap_line(line, width));
-    }
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-    lines
-}
 
 fn wrap_line(value: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
@@ -1192,6 +1255,55 @@ fn wrap_line(value: &str, width: usize) -> Vec<String> {
         .chunks(width)
         .map(|chunk| chunk.iter().collect::<String>())
         .collect()
+}
+
+
+/// Wrap a `StyledContent` line to fit within `width` characters,
+/// splitting at segment boundaries and within segments as needed.
+fn wrap_styled_content(sc: &StyledContent, width: usize) -> Vec<StyledContent> {
+    let width = width.max(1);
+    match sc {
+        StyledContent::Plain(s) => wrap_line(s, width)
+            .into_iter()
+            .map(StyledContent::Plain)
+            .collect(),
+        StyledContent::Styled(segs) => {
+            let mut result: Vec<Vec<LineSegment>> = vec![Vec::new()];
+            let mut col = 0usize;
+            for seg in segs {
+                let mut remaining: &str = &seg.text;
+                while !remaining.is_empty() {
+#[allow(dead_code)]
+                    let avail = width.saturating_sub(col);
+                    if avail == 0 {
+                        result.push(Vec::new());
+                        col = 0;
+                        continue;
+                    }
+                    let take: String = remaining.chars().take(avail).collect();
+                    let taken_chars = take.chars().count();
+                    let taken_bytes: usize =
+                        remaining.chars().take(taken_chars).map(|c| c.len_utf8()).sum();
+                    remaining = &remaining[taken_bytes..];
+                    col += taken_chars;
+                    result.last_mut().unwrap().push(LineSegment {
+                        text: take,
+                        color: seg.color,
+                        bold: seg.bold,
+                        italic: seg.italic,
+                    });
+                    if col >= width && !remaining.is_empty() {
+                        result.push(Vec::new());
+                        col = 0;
+                    }
+                }
+            }
+            result
+                .into_iter()
+                .map(StyledContent::Styled)
+                .collect()
+        }
+    }
 }
 
 /// Classify a transcript/panel line and return its display color.
@@ -1240,11 +1352,14 @@ fn split_block(content: &str) -> PaneBlock {
     match content.split_once('\n') {
         Some((title, body)) => PaneBlock {
             title: title.to_string(),
-            body: body.to_string(),
+            body: body
+                .lines()
+                .map(|l| StyledContent::Plain(l.to_string()))
+                .collect(),
         },
         None => PaneBlock {
             title: content.to_string(),
-            body: String::new(),
+            body: Vec::new(),
         },
     }
 }

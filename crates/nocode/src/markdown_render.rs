@@ -51,7 +51,7 @@ impl RenderedLine {
         self.segments.push(segment);
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.segments.is_empty() || self.segments.iter().all(|s| s.text.is_empty())
     }
 }

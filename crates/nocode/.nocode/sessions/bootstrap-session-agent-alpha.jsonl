@@ -1,7 +1,7 @@
 1	conversation	system: You are nocode, a coding assistant running in a terminal.
 
 # Environment
-- Working directory: /home/telagod/project/redcode
+- Working directory: /home/telagod/project
 - Platform: linux
 
 # Available tools
@@ -723,11 +723,17 @@ CLI 工具可能运行在沙箱环境中，每次执行前先感知约束：
 1	conversation	user: process-host turn
 1	tool_request	Read#toolu-bootstrap-1(file_path=src/query.ts)
 1	tool_progress	reading src/query.ts
-1	tool_result	tool-failed:Read#toolu-bootstrap-1(file_path=src/query.ts) -> tool runner disabled
+1	tool_result	tool-result:Read#toolu-bootstrap-1(file_path=src/query.ts) -> rescued Read
+1	tool_progress	tool complete
+1	tool_message	assistant: tool-message: rescued toolu-bootstrap-1
 1	tool_request	Read#toolu-bootstrap-2(file_path=src/QueryEngine.ts)
 1	tool_progress	reading src/QueryEngine.ts
-1	tool_result	tool-failed:Read#toolu-bootstrap-2(file_path=src/QueryEngine.ts) -> tool runner disabled
+1	tool_result	tool-result:Read#toolu-bootstrap-2(file_path=src/QueryEngine.ts) -> rescued Read
+1	tool_progress	tool complete
+1	tool_message	assistant: tool-message: rescued toolu-bootstrap-2
 1	tool_request	Read#toolu-bootstrap-3(file_path=src/services/tools/toolExecution.ts)
 1	tool_progress	reading src/services/tools/toolExecution.ts
-1	tool_result	tool-failed:Read#toolu-bootstrap-3(file_path=src/services/tools/toolExecution.ts) -> tool runner disabled
+1	tool_result	tool-result:Read#toolu-bootstrap-3(file_path=src/services/tools/toolExecution.ts) -> rescued Read
+1	tool_progress	tool complete
+1	tool_message	assistant: tool-message: rescued toolu-bootstrap-3
 2	conversation	assistant: nocode response: process-host turn
