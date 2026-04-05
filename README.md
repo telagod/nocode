@@ -102,12 +102,12 @@ nocode auto-detects your provider from environment variables:
 
 | Provider | Required Variable | Default Model |
 |----------|-------------------|---------------|
-| Claude | `ANTHROPIC_API_KEY` | `claude-3-7-sonnet` |
-| OpenAI | `OPENAI_API_KEY` | `gpt-5.4` |
-| Bedrock | `AWS_ACCESS_KEY_ID` + `NOCODE_MODEL_PROVIDER=bedrock` | `anthropic.claude-3-5-sonnet-v2` |
-| Vertex | `GOOGLE_ACCESS_TOKEN` | `claude-3-5-sonnet-v2@20241022` |
+| Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
+| OpenAI | `OPENAI_API_KEY` | `gpt-4.1` |
+| Gemini | `GEMINI_API_KEY` | `gemini-2.5-flash` |
+| Custom | `ANTHROPIC_API_KEY` + `NOCODE_MODEL_PROVIDER=custom` | (user-specified) |
 
-Override with `NOCODE_MODEL_PROVIDER` and `NOCODE_MODEL`.
+Override with `NOCODE_MODEL_PROVIDER` and `NOCODE_MODEL`. Custom providers use `NOCODE_CUSTOM_BASE_URL` for endpoint override.
 
 ## Architecture
 

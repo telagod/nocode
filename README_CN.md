@@ -100,12 +100,12 @@ nocode 根据环境变量自动检测提供商：
 
 | 提供商 | 必需变量 | 默认模型 |
 |--------|----------|----------|
-| Claude | `ANTHROPIC_API_KEY` | `claude-3-7-sonnet` |
-| OpenAI | `OPENAI_API_KEY` | `gpt-5.4` |
-| Bedrock | `AWS_ACCESS_KEY_ID` + `NOCODE_MODEL_PROVIDER=bedrock` | `anthropic.claude-3-5-sonnet-v2` |
-| Vertex | `GOOGLE_ACCESS_TOKEN` | `claude-3-5-sonnet-v2@20241022` |
+| Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
+| OpenAI | `OPENAI_API_KEY` | `gpt-4.1` |
+| Gemini | `GEMINI_API_KEY` | `gemini-2.5-flash` |
+| Custom | `ANTHROPIC_API_KEY` + `NOCODE_MODEL_PROVIDER=custom` | （用户指定） |
 
-可通过 `NOCODE_MODEL_PROVIDER` 和 `NOCODE_MODEL` 覆盖。
+可通过 `NOCODE_MODEL_PROVIDER` 和 `NOCODE_MODEL` 覆盖。Custom 提供商使用 `NOCODE_CUSTOM_BASE_URL` 覆盖端点。
 
 ## 架构
 
