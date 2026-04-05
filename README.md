@@ -64,7 +64,7 @@ Use any OpenAI/Claude-compatible endpoint (Ollama, vLLM, LiteLLM, etc.):
 ```bash
 export NOCODE_MODEL_PROVIDER=custom
 export NOCODE_CUSTOM_BASE_URL=http://localhost:11434/v1
-export NOCODE_CUSTOM_API_FORMAT=openai   # or claude, gemini
+export NOCODE_CUSTOM_API_FORMAT=openai   # claude (Messages API) | openai (Chat/Responses) | gemini (generateContent)
 export NOCODE_MODEL=llama3
 ```
 
@@ -159,7 +159,7 @@ export NOCODE_MODEL=llama3
 | `NOCODE_MODEL_PROVIDER` | Force provider: `claude`, `openai`, `gemini`, `custom`, `mock` |
 | `NOCODE_MODEL` | Override model name |
 | `NOCODE_CUSTOM_BASE_URL` | Base URL for Custom provider |
-| `NOCODE_CUSTOM_API_FORMAT` | Wire format: `claude`, `openai`, `gemini` |
+| `NOCODE_CUSTOM_API_FORMAT` | API wire format: `claude` (Messages API), `openai` (Chat Completions / Responses), `gemini` (generateContent) |
 | `NOCODE_SYSTEM_PROMPT` | Override system prompt |
 | `NOCODE_MODEL_REASONING_EFFORT` | `low`, `medium`, `high` |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | Provider API keys |

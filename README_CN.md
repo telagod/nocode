@@ -64,7 +64,7 @@ export NOCODE_MODEL=gpt-5.4
 ```bash
 export NOCODE_MODEL_PROVIDER=custom
 export NOCODE_CUSTOM_BASE_URL=http://localhost:11434/v1
-export NOCODE_CUSTOM_API_FORMAT=openai   # 或 claude、gemini
+export NOCODE_CUSTOM_API_FORMAT=openai   # claude (Messages API) | openai (Chat/Responses) | gemini (generateContent)
 export NOCODE_MODEL=llama3
 ```
 
@@ -159,7 +159,7 @@ export NOCODE_MODEL=llama3
 | `NOCODE_MODEL_PROVIDER` | 强制提供商：`claude`、`openai`、`gemini`、`custom`、`mock` |
 | `NOCODE_MODEL` | 覆盖模型名 |
 | `NOCODE_CUSTOM_BASE_URL` | Custom 提供商端点 |
-| `NOCODE_CUSTOM_API_FORMAT` | 协议格式：`claude`、`openai`、`gemini` |
+| `NOCODE_CUSTOM_API_FORMAT` | API 协议格式：`claude`（Messages API）、`openai`（Chat Completions / Responses）、`gemini`（generateContent） |
 | `NOCODE_SYSTEM_PROMPT` | 覆盖系统提示词 |
 | `NOCODE_MODEL_REASONING_EFFORT` | `low`、`medium`、`high` |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | 提供商 API 密钥 |
