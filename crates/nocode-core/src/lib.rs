@@ -1,14 +1,18 @@
 pub mod assistant_turn;
+pub mod bash_validation;
 pub mod bridge_runtime;
 pub mod budget;
 pub mod budget_state;
 pub mod file_history;
 pub mod file_safety;
+pub mod global_registry;
 pub mod history_store;
+pub mod lsp_client;
 pub mod mcp_client;
 pub mod message;
 pub mod model_response;
 pub mod persistence_backend;
+pub mod plugin_system;
 pub mod policy_engine;
 pub mod provider;
 pub mod provider_transport;
@@ -102,16 +106,24 @@ pub use task_runtime::{
     TaskStatus, TaskType, stop_task,
 };
 pub use tool_execution::{
-    DefaultToolExecutor, LiveToolHost, ToolCallArgument, ToolCallInput, ToolCallOutput,
-    ToolCallResult, ToolCommandOutput, ToolExecutionContext, ToolExecutionModule,
-    ToolExecutionRequest, ToolExecutionTrace, ToolExecutor, ToolHost, ToolPermissionDecision,
-    ToolProgressUpdate,
+    DefaultToolExecutor, DeferredTool, DeferredToolRegistry, LiveToolHost, ToolCallArgument,
+    ToolCallInput, ToolCallOutput, ToolCallResult, ToolCommandOutput, ToolExecutionContext,
+    ToolExecutionModule, ToolExecutionRequest, ToolExecutionTrace, ToolExecutor, ToolHost,
+    ToolPermissionDecision, ToolProgressUpdate, ToolSearchResult,
 };
 pub use tool_execution::mcp_bridge::{McpToolBridge, McpToolInfo, execute_mcp_tool_bridged};
+pub use lsp_client::{
+    LspAction, LspCompletionItem, LspDiagnostic, LspHoverResult, LspLocation, LspRegistry,
+    LspResult, LspServer, LspServerStatus, LspSymbol, global_lsp_registry,
+};
 pub use tool_registry::{
     PermissionCondition, PermissionMode, PermissionRule, ToolDefinition, ToolKind,
     ToolPermissionContext, ToolRegistry, ToolRegistryModule, ToolRegistrySelection,
     ToolRuntimeMode, ToolSelectionIssue,
+};
+pub use plugin_system::{
+    HookEvent, Plugin, PluginHookResult, PluginKind, PluginMetadata, PluginRegistry,
+    PluginState, PluginToolManifest, global_plugin_registry,
 };
 pub use tool_validation::{get_tool_schema, validate_tool_input};
 pub use transcript::{QueryTranscript, TranscriptEntry, TranscriptRole};

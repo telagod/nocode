@@ -74,6 +74,24 @@ pub fn get_tool_schema(tool_name: &str) -> Option<Value> {
                 "prompt": { "type": "string" }
             }
         })),
+        "ToolSearch" => Some(json!({
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": { "type": "string" },
+                "max_results": { "type": "string" }
+            }
+        })),
+        "Lsp" => Some(json!({
+            "type": "object",
+            "required": ["action", "file_path"],
+            "properties": {
+                "action": { "type": "string" },
+                "file_path": { "type": "string" },
+                "line": { "type": "string" },
+                "column": { "type": "string" }
+            }
+        })),
         _ => None,
     }
 }

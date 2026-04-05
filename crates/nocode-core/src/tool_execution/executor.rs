@@ -2,6 +2,7 @@ use super::model::{
     ToolCallInput, ToolCallOutput, ToolCallResult, ToolExecutionRequest, ToolExecutionTrace,
     ToolPermissionDecision, ToolProgressUpdate,
 };
+use crate::bash_validation::validate_bash_command;
 use crate::file_safety::{validate_read_target, validate_write_target};
 use crate::message::QueryMessage;
 use crate::provider::ModelProvider;
@@ -312,7 +313,13 @@ impl<H: ToolHost> DefaultToolExecutor<H> {
         let command = command.to_string();
 
         // Bash sandbox: block dangerous commands.
-        if let Some(reason) = check_bash_safety(&command) {
+        let validation = validate_bash_command(
+            &command,
+            crate::tool_registry::PermissionMode::WorkspaceWrite,
+            &self.context.cwd,
+        );
+        if !validation.allowed {
+            let reason = validation.denial_reason.unwrap_or_else(|| "command blocked".to_string());
             return ToolExecutionTrace {
                 progress_updates: Vec::new(),
                 result: ToolCallResult::failed(call, format!("command blocked: {reason}")),
@@ -853,6 +860,8 @@ impl<H: ToolHost> ToolExecutor for DefaultToolExecutor<H> {
             "TaskUpdate" => super::task_tools::execute_task_update(request.call),
             "TaskStop" => super::task_tools::execute_task_stop(request.call),
             "TaskOutput" => super::task_tools::execute_task_output(request.call),
+            "ToolSearch" => super::tool_search::execute_tool_search(request.call),
+            "Lsp" => super::lsp_tools::execute_lsp(request.call),
             tool_name if tool_name.starts_with("mcp:") => self.execute_mcp_tool(request.call),
             _ => ToolExecutionTrace {
                 progress_updates: Vec::new(),
@@ -869,66 +878,6 @@ impl<H: ToolHost> ToolExecutor for DefaultToolExecutor<H> {
 /// Escape a string for safe use in a shell command.
 fn shell_escape(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-/// Check if a bash command is safe to execute. Returns `Some(reason)` if blocked.
-fn check_bash_safety(command: &str) -> Option<String> {
-    let normalized = command.to_ascii_lowercase();
-    let trimmed = normalized.trim();
-
-    // Block destructive filesystem commands.
-    static DANGEROUS_PATTERNS: &[(&str, &str)] = &[
-        ("rm -rf /", "recursive delete of root filesystem"),
-        ("rm -rf /*", "recursive delete of root filesystem"),
-        ("rm -rf ~", "recursive delete of home directory"),
-        ("mkfs", "filesystem format command"),
-        ("dd if=", "raw disk write command"),
-        (":(){:|:&};:", "fork bomb"),
-        ("chmod -r 777 /", "recursive permission change on root"),
-        ("chown -r", "recursive ownership change"),
-        ("> /dev/sda", "raw device write"),
-        ("mv / ", "move root filesystem"),
-    ];
-
-    for (pattern, reason) in DANGEROUS_PATTERNS {
-        if trimmed.contains(pattern) {
-            return Some((*reason).to_string());
-        }
-    }
-
-    // Block dangerous database commands without explicit backup context.
-    static DB_DANGEROUS: &[(&str, &str)] = &[
-        ("drop database", "database drop without backup"),
-        ("drop table", "table drop without backup"),
-        ("truncate table", "table truncate without backup"),
-        ("delete from", "bulk delete without where clause check"),
-    ];
-
-    for (pattern, reason) in DB_DANGEROUS {
-        if trimmed.contains(pattern) && !trimmed.contains("backup") && !trimmed.contains("--dry") {
-            return Some((*reason).to_string());
-        }
-    }
-
-    // Block commands that modify system-critical paths.
-    if (trimmed.starts_with("rm ") || trimmed.starts_with("mv "))
-        && (trimmed.contains("/etc/") || trimmed.contains("/boot/") || trimmed.contains("/usr/"))
-    {
-        return Some("modification of system-critical path".to_string());
-    }
-
-    // Block shutdown/reboot.
-    if trimmed.starts_with("shutdown")
-        || trimmed.starts_with("reboot")
-        || trimmed.starts_with("init 0")
-        || trimmed.starts_with("init 6")
-        || trimmed.starts_with("halt")
-        || trimmed.starts_with("poweroff")
-    {
-        return Some("system shutdown/reboot command".to_string());
-    }
-
-    None
 }
 
 #[cfg(test)]
@@ -1077,40 +1026,55 @@ mod tests {
 
     #[test]
     fn bash_sandbox_blocks_rm_rf_root() {
-        assert!(check_bash_safety("rm -rf /").is_some());
-        assert!(check_bash_safety("rm -rf /*").is_some());
-        assert!(check_bash_safety("rm -rf ~").is_some());
+        use crate::bash_validation::validate_bash_command;
+        use crate::tool_registry::PermissionMode;
+        assert!(!validate_bash_command("rm -rf /", PermissionMode::WorkspaceWrite, "/tmp").allowed);
+        assert!(!validate_bash_command("rm -rf /*", PermissionMode::WorkspaceWrite, "/tmp").allowed);
+        assert!(!validate_bash_command("rm -rf ~", PermissionMode::WorkspaceWrite, "/tmp").allowed);
     }
 
     #[test]
     fn bash_sandbox_blocks_dangerous_commands() {
-        assert!(check_bash_safety("mkfs.ext4 /dev/sda1").is_some());
-        assert!(check_bash_safety("dd if=/dev/zero of=/dev/sda").is_some());
-        assert!(check_bash_safety("shutdown -h now").is_some());
-        assert!(check_bash_safety("reboot").is_some());
-        assert!(check_bash_safety("halt").is_some());
-        assert!(check_bash_safety("poweroff").is_some());
+        use crate::bash_validation::validate_bash_command;
+        use crate::tool_registry::PermissionMode;
+        let m = PermissionMode::WorkspaceWrite;
+        assert!(!validate_bash_command("mkfs.ext4 /dev/sda1", m, "/tmp").allowed);
+        assert!(!validate_bash_command("dd if=/dev/zero of=/dev/sda", m, "/tmp").allowed);
+        assert!(!validate_bash_command("shutdown -h now", m, "/tmp").allowed);
+        assert!(!validate_bash_command("reboot", m, "/tmp").allowed);
+        assert!(!validate_bash_command("halt", m, "/tmp").allowed);
+        assert!(!validate_bash_command("poweroff", m, "/tmp").allowed);
     }
 
     #[test]
     fn bash_sandbox_blocks_db_destructive() {
-        assert!(check_bash_safety("psql -c 'DROP DATABASE prod'").is_some());
-        assert!(check_bash_safety("mysql -e 'TRUNCATE TABLE users'").is_some());
+        use crate::bash_validation::validate_bash_command;
+        use crate::tool_registry::PermissionMode;
+        let m = PermissionMode::WorkspaceWrite;
+        assert!(!validate_bash_command("psql -c 'DROP DATABASE prod'", m, "/tmp").allowed);
+        assert!(!validate_bash_command("mysql -e 'TRUNCATE TABLE users'", m, "/tmp").allowed);
     }
 
     #[test]
     fn bash_sandbox_blocks_system_path_modification() {
-        assert!(check_bash_safety("rm /etc/passwd").is_some());
-        assert!(check_bash_safety("mv /boot/vmlinuz /tmp/").is_some());
+        use crate::bash_validation::validate_bash_command;
+        use crate::tool_registry::PermissionMode;
+        let m = PermissionMode::WorkspaceWrite;
+        assert!(!validate_bash_command("rm /etc/passwd", m, "/tmp").allowed);
+        assert!(!validate_bash_command("mv /boot/vmlinuz /tmp/", m, "/tmp").allowed);
     }
 
     #[test]
     fn bash_sandbox_allows_safe_commands() {
-        assert!(check_bash_safety("ls -la").is_none());
-        assert!(check_bash_safety("cat README.md").is_none());
-        assert!(check_bash_safety("cargo test").is_none());
-        assert!(check_bash_safety("git status").is_none());
-        assert!(check_bash_safety("grep -rn pattern .").is_none());
-        assert!(check_bash_safety("rm src/temp.txt").is_none());
+        use crate::bash_validation::validate_bash_command;
+        use crate::tool_registry::PermissionMode;
+        let m = PermissionMode::WorkspaceWrite;
+        let cwd = "/home/user/project";
+        assert!(validate_bash_command("ls -la", m, cwd).allowed);
+        assert!(validate_bash_command("cat README.md", m, cwd).allowed);
+        assert!(validate_bash_command("cargo test", m, cwd).allowed);
+        assert!(validate_bash_command("git status", m, cwd).allowed);
+        assert!(validate_bash_command("grep -rn pattern .", m, cwd).allowed);
+        assert!(validate_bash_command("rm src/temp.txt", m, cwd).allowed);
     }
 }

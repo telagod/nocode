@@ -233,6 +233,10 @@ impl Default for ToolRegistry {
                     .with_permission(PermissionMode::WorkspaceWrite),
                 ToolDefinition::new("TeamDelete", ToolKind::Orchestration, false)
                     .with_permission(PermissionMode::WorkspaceWrite),
+                ToolDefinition::new("ToolSearch", ToolKind::ReadOnly, false)
+                    .with_permission(PermissionMode::ReadOnly),
+                ToolDefinition::new("Lsp", ToolKind::ReadOnly, false)
+                    .with_permission(PermissionMode::ReadOnly),
             ],
         }
     }
