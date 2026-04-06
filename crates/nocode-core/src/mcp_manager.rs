@@ -351,8 +351,7 @@ impl McpManager {
             .get_mut(name)
             .ok_or_else(|| format!("MCP server not registered: {name}"))?;
 
-        if entry.status != McpServerStatus::Connected
-            && entry.status != McpServerStatus::Unhealthy
+        if entry.status != McpServerStatus::Connected && entry.status != McpServerStatus::Unhealthy
         {
             return Err(format!(
                 "server '{name}' is {:?}, cannot health-check",
@@ -408,8 +407,7 @@ impl McpManager {
             .servers
             .values()
             .filter(|e| {
-                e.status == McpServerStatus::Connected
-                    || e.status == McpServerStatus::Unhealthy
+                e.status == McpServerStatus::Connected || e.status == McpServerStatus::Unhealthy
             })
             .map(|e| e.name.clone())
             .collect();
@@ -435,12 +433,8 @@ impl McpManager {
                 self.connect(name)
             }
             McpServerStatus::Disconnected => self.connect(name),
-            McpServerStatus::Connected => {
-                Err(format!("server '{name}' is already connected"))
-            }
-            McpServerStatus::Connecting => {
-                Err(format!("server '{name}' is currently connecting"))
-            }
+            McpServerStatus::Connected => Err(format!("server '{name}' is already connected")),
+            McpServerStatus::Connecting => Err(format!("server '{name}' is currently connecting")),
         }
     }
 
@@ -485,11 +479,7 @@ mod tests {
     #[test]
     fn register_and_connect_nonexistent_binary_fails() {
         let mut mgr = McpManager::new();
-        mgr.register_server(
-            "bad",
-            "__nonexistent_mcp_binary_99999__",
-            vec![],
-        );
+        mgr.register_server("bad", "__nonexistent_mcp_binary_99999__", vec![]);
 
         assert_eq!(mgr.get_status("bad"), Some(McpServerStatus::Disconnected));
 
@@ -717,8 +707,12 @@ mod tests {
 
         tracker.transition(McpLifecyclePhase::Spawning).unwrap();
         tracker.transition(McpLifecyclePhase::Handshake).unwrap();
-        tracker.transition(McpLifecyclePhase::CapabilityNegotiation).unwrap();
-        tracker.transition(McpLifecyclePhase::ToolDiscovery).unwrap();
+        tracker
+            .transition(McpLifecyclePhase::CapabilityNegotiation)
+            .unwrap();
+        tracker
+            .transition(McpLifecyclePhase::ToolDiscovery)
+            .unwrap();
         tracker.transition(McpLifecyclePhase::Connected).unwrap();
         assert_eq!(tracker.phase, McpLifecyclePhase::Connected);
         assert_eq!(tracker.transition_count(), 5);
@@ -728,7 +722,9 @@ mod tests {
     fn lifecycle_invalid_transition_rejected() {
         let mut tracker = McpLifecycleTracker::new();
         // Registered → Connected is not valid (must go through Spawning first)
-        let err = tracker.transition(McpLifecyclePhase::Connected).unwrap_err();
+        let err = tracker
+            .transition(McpLifecyclePhase::Connected)
+            .unwrap_err();
         assert!(err.contains("invalid"));
         assert_eq!(tracker.phase, McpLifecyclePhase::Registered);
     }

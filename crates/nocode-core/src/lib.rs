@@ -16,8 +16,8 @@ pub mod lane_events;
 pub mod lsp_client;
 pub mod mcp_client;
 pub mod mcp_manager;
-pub mod memory_store;
 pub mod memory_signals;
+pub mod memory_store;
 pub mod message;
 pub mod mock_service;
 pub mod model_pricing;
@@ -45,8 +45,8 @@ pub mod sql_store;
 pub mod stale_branch;
 pub mod stop_hook;
 pub mod summary_compression;
-pub mod task_runtime;
 pub mod task_packet;
+pub mod task_runtime;
 pub mod telemetry;
 pub mod tool_execution;
 pub mod tool_registry;
@@ -125,18 +125,16 @@ pub use session_compaction::{
     CompactionConfig, CompactionResult, LlmCompactionConfig, LlmCompactor, RichCompactor,
     compact_session, estimate_message_tokens, should_compact, summarize_messages,
 };
-pub use session_control::{
-    SessionCheckpoint, SessionControl, SessionMetadata, SessionStatus,
-};
-pub use task_packet::{
-    BudgetRangeValidator, FileExistenceValidator, TaskBudgetSpec, TaskPacket, TaskPacketError,
-    TaskPacketLimits, TaskPriority, TaskValidator, ValidatedPacket,
-};
+pub use session_control::{SessionCheckpoint, SessionControl, SessionMetadata, SessionStatus};
 pub use session_persistence::{
     ReadFileCacheState, SessionIdentity, SessionPersistenceConfig, SessionPersistencePlan,
     SessionPersistenceState, SessionResumePlan,
 };
 pub use stop_hook::{StopHookInfo, StopHookResult};
+pub use task_packet::{
+    BudgetRangeValidator, FileExistenceValidator, TaskBudgetSpec, TaskPacket, TaskPacketError,
+    TaskPacketLimits, TaskPriority, TaskValidator, ValidatedPacket,
+};
 pub use task_runtime::{
     AgentProgress, AgentStep, AgentTaskResult, BashTaskKind, CommandResult, DefaultDreamHost,
     DreamPhase, DreamStep, DreamTaskResult, DreamTurn, InProcessAgentHost, LiveTaskRuntimeDriver,
@@ -151,12 +149,12 @@ pub use task_runtime::{
 };
 pub use tool_execution::mcp_bridge::{McpToolBridge, McpToolInfo, execute_mcp_tool_bridged};
 pub use tool_execution::{
-    AutoApprovePrompter, AutoDenyPrompter, DefaultToolExecutor, DeferredTool,
-    DeferredToolRegistry, InteractivePrompter, LiveToolHost, PermissionAuditEntry,
-    PermissionAuditLog, PermissionPrompter, ToolCallArgument, ToolCallInput, ToolCallOutput,
-    ToolCallResult, ToolCommandOutput, ToolExecutionContext, ToolExecutionModule,
-    ToolExecutionRequest, ToolExecutionTrace, ToolExecutor, ToolHost, ToolPermissionDecision,
-    ToolProgressUpdate, ToolSearchResult,
+    AutoApprovePrompter, AutoDenyPrompter, DefaultToolExecutor, DeferredTool, DeferredToolRegistry,
+    InteractivePrompter, LiveToolHost, PermissionAuditEntry, PermissionAuditLog,
+    PermissionPrompter, ToolCallArgument, ToolCallInput, ToolCallOutput, ToolCallResult,
+    ToolCommandOutput, ToolExecutionContext, ToolExecutionModule, ToolExecutionRequest,
+    ToolExecutionTrace, ToolExecutor, ToolHost, ToolPermissionDecision, ToolProgressUpdate,
+    ToolSearchResult,
 };
 pub use tool_registry::{
     PermissionCondition, PermissionMode, PermissionRule, ToolDefinition, ToolKind,
@@ -167,7 +165,7 @@ pub use tool_validation::{get_tool_schema, validate_tool_input};
 pub use transcript::{QueryTranscript, TranscriptEntry, TranscriptRole};
 pub use usage_tracker::{UsageSnapshot, UsageTotals, UsageTracker};
 pub use worker_boot::{
-    AllowAllPolicy, PromptRequiredPolicy, RuleBasedPolicy, TrustChain, TrustContext,
-    TrustDecision, TrustPolicy, TrustResolver, Worker, WorkerEvent, WorkerEventKind,
-    WorkerFailure, WorkerFailureKind, WorkerRegistry, WorkerStatus, global_worker_registry,
+    AllowAllPolicy, PromptRequiredPolicy, RuleBasedPolicy, TrustChain, TrustContext, TrustDecision,
+    TrustPolicy, TrustResolver, Worker, WorkerEvent, WorkerEventKind, WorkerFailure,
+    WorkerFailureKind, WorkerRegistry, WorkerStatus, global_worker_registry,
 };

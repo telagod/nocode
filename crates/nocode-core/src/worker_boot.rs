@@ -480,10 +480,8 @@ mod tests {
 
     #[test]
     fn rule_based_policy_deny_takes_precedence() {
-        let resolver = RuleBasedPolicy::new(
-            vec!["trusted".to_string()],
-            vec!["blocked".to_string()],
-        );
+        let resolver =
+            RuleBasedPolicy::new(vec!["trusted".to_string()], vec!["blocked".to_string()]);
         let ctx = TrustContext::new("w1", "test")
             .with_label("trusted")
             .with_label("blocked");
@@ -492,20 +490,16 @@ mod tests {
 
     #[test]
     fn rule_based_policy_allow_on_match() {
-        let resolver = RuleBasedPolicy::new(
-            vec!["internal".to_string()],
-            vec!["blocked".to_string()],
-        );
+        let resolver =
+            RuleBasedPolicy::new(vec!["internal".to_string()], vec!["blocked".to_string()]);
         let ctx = TrustContext::new("w1", "test").with_label("internal");
         assert_eq!(resolver.resolve(&ctx), TrustDecision::Allow);
     }
 
     #[test]
     fn rule_based_policy_prompt_on_no_match() {
-        let resolver = RuleBasedPolicy::new(
-            vec!["internal".to_string()],
-            vec!["blocked".to_string()],
-        );
+        let resolver =
+            RuleBasedPolicy::new(vec!["internal".to_string()], vec!["blocked".to_string()]);
         let ctx = TrustContext::new("w1", "test").with_label("unknown");
         assert_eq!(resolver.resolve(&ctx), TrustDecision::PromptUser);
     }
@@ -539,7 +533,11 @@ mod tests {
         let decision = w.resolve_trust_with(&resolver, &ctx);
         assert_eq!(decision, TrustDecision::Allow);
         assert_eq!(w.status, WorkerStatus::ReadyForPrompt);
-        assert!(w.events.iter().any(|e| e.kind == WorkerEventKind::TrustResolved));
+        assert!(
+            w.events
+                .iter()
+                .any(|e| e.kind == WorkerEventKind::TrustResolved)
+        );
     }
 
     #[test]
@@ -597,9 +595,7 @@ mod tests {
     #[test]
     fn trust_chain_deny_short_circuits() {
         let deny_rule = RuleBasedPolicy::new(vec![], vec!["evil".to_string()]);
-        let chain = TrustChain::new()
-            .with(deny_rule)
-            .with(AllowAllPolicy);
+        let chain = TrustChain::new().with(deny_rule).with(AllowAllPolicy);
         let ctx = TrustContext::new("w1", "test").with_label("evil");
         assert_eq!(chain.resolve(&ctx), TrustDecision::Deny);
     }

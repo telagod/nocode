@@ -387,9 +387,9 @@ impl OAuthTokenManager {
 
     /// Build the Authorization header value for API requests.
     pub fn authorization_header(&self) -> Option<String> {
-        self.tokens.as_ref().map(|t| {
-            format!("{} {}", capitalize_first(&t.token_type), t.access_token)
-        })
+        self.tokens
+            .as_ref()
+            .map(|t| format!("{} {}", capitalize_first(&t.token_type), t.access_token))
     }
 
     /// Build the initial authorization code exchange request body.
@@ -658,7 +658,10 @@ mod tests {
         let mut mgr = OAuthTokenManager::new(sample_config(), path.to_str().unwrap());
         mgr.refresh_buffer_secs = 600;
 
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         mgr.set_tokens(OAuthTokenSet {
             access_token: "soon".into(),
             refresh_token: Some("ref".into()),

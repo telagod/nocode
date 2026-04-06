@@ -5,9 +5,9 @@
 // ---------------------------------------------------------------------------
 
 use nocode_core::worker_boot::{
-    AllowAllPolicy, PromptRequiredPolicy, RuleBasedPolicy, TrustChain, TrustContext,
-    TrustDecision, TrustPolicy, TrustResolver, Worker, WorkerEventKind, WorkerFailureKind,
-    WorkerRegistry, WorkerStatus,
+    AllowAllPolicy, PromptRequiredPolicy, RuleBasedPolicy, TrustChain, TrustContext, TrustDecision,
+    TrustPolicy, TrustResolver, Worker, WorkerEventKind, WorkerFailureKind, WorkerRegistry,
+    WorkerStatus,
 };
 
 #[test]
@@ -33,7 +33,10 @@ fn trust_chain_integration_deny_blocks_worker() {
     let d = w.resolve_trust_with(&chain, &ctx);
     assert_eq!(d, TrustDecision::Deny);
     assert_eq!(w.status, WorkerStatus::Failed);
-    assert_eq!(w.failure.as_ref().unwrap().kind, WorkerFailureKind::TrustGate);
+    assert_eq!(
+        w.failure.as_ref().unwrap().kind,
+        WorkerFailureKind::TrustGate
+    );
 }
 
 #[test]
@@ -57,7 +60,10 @@ fn trust_policy_enum_roundtrip() {
     assert_eq!(resolvers[1].resolve(&ctx_safe), TrustDecision::PromptUser);
     assert_eq!(resolvers[2].resolve(&ctx_safe), TrustDecision::Allow);
     assert_eq!(resolvers[2].resolve(&ctx_evil), TrustDecision::Deny);
-    assert_eq!(resolvers[2].resolve(&ctx_unknown), TrustDecision::PromptUser);
+    assert_eq!(
+        resolvers[2].resolve(&ctx_unknown),
+        TrustDecision::PromptUser
+    );
 }
 
 #[test]
@@ -81,13 +87,16 @@ fn worker_full_lifecycle_with_trust_chain() {
 
     // Verify event trail
     let kinds: Vec<_> = w.events.iter().map(|e| e.kind.clone()).collect();
-    assert_eq!(kinds, vec![
-        WorkerEventKind::Spawning,
-        WorkerEventKind::TrustRequired,
-        WorkerEventKind::TrustResolved,
-        WorkerEventKind::Running,
-        WorkerEventKind::Finished,
-    ]);
+    assert_eq!(
+        kinds,
+        vec![
+            WorkerEventKind::Spawning,
+            WorkerEventKind::TrustRequired,
+            WorkerEventKind::TrustResolved,
+            WorkerEventKind::Running,
+            WorkerEventKind::Finished,
+        ]
+    );
 }
 
 #[test]
@@ -123,10 +132,15 @@ use nocode_core::tool_execution::{
 #[test]
 fn permission_prompter_auto_approve_all_tools() {
     let p = AutoApprovePrompter;
-    let tools = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "WebFetch"];
+    let tools = [
+        "Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "WebFetch",
+    ];
     for tool in &tools {
         let d = p.check(tool, "");
-        assert!(matches!(d, ToolPermissionDecision::Allow { .. }), "auto-approve should allow {tool}");
+        assert!(
+            matches!(d, ToolPermissionDecision::Allow { .. }),
+            "auto-approve should allow {tool}"
+        );
     }
 }
 
@@ -136,7 +150,10 @@ fn permission_prompter_auto_deny_all_tools() {
     let tools = ["Read", "Write", "Edit", "Bash"];
     for tool in &tools {
         let d = p.check(tool, "");
-        assert!(matches!(d, ToolPermissionDecision::Deny { .. }), "auto-deny should deny {tool}");
+        assert!(
+            matches!(d, ToolPermissionDecision::Deny { .. }),
+            "auto-deny should deny {tool}"
+        );
     }
 }
 
@@ -144,16 +161,33 @@ fn permission_prompter_auto_deny_all_tools() {
 fn permission_prompter_interactive_classification() {
     let p = InteractivePrompter::default_dangerous();
     // Dangerous tools → Prompt
-    let dangerous = ["Bash", "Write", "Edit", "WebFetch", "WebSearch", "Agent", "TeamCreate", "TeamDelete", "CronCreate", "CronDelete"];
+    let dangerous = [
+        "Bash",
+        "Write",
+        "Edit",
+        "WebFetch",
+        "WebSearch",
+        "Agent",
+        "TeamCreate",
+        "TeamDelete",
+        "CronCreate",
+        "CronDelete",
+    ];
     for tool in &dangerous {
         let d = p.check(tool, "");
-        assert!(matches!(d, ToolPermissionDecision::Prompt { .. }), "{tool} should require prompt");
+        assert!(
+            matches!(d, ToolPermissionDecision::Prompt { .. }),
+            "{tool} should require prompt"
+        );
     }
     // Safe tools → Allow
     let safe = ["Read", "Glob", "Grep", "TaskGet", "TaskList", "MemoryList"];
     for tool in &safe {
         let d = p.check(tool, "");
-        assert!(matches!(d, ToolPermissionDecision::Allow { .. }), "{tool} should be allowed");
+        assert!(
+            matches!(d, ToolPermissionDecision::Allow { .. }),
+            "{tool} should be allowed"
+        );
     }
 }
 
@@ -236,8 +270,14 @@ fn session_control_multiple_forks() {
     assert_eq!(branches.len(), 2);
 
     assert_ne!(f1, f2);
-    assert_eq!(sc.get(&f1).unwrap().branch_name.as_deref(), Some("branch-a"));
-    assert_eq!(sc.get(&f2).unwrap().branch_name.as_deref(), Some("branch-b"));
+    assert_eq!(
+        sc.get(&f1).unwrap().branch_name.as_deref(),
+        Some("branch-a")
+    );
+    assert_eq!(
+        sc.get(&f2).unwrap().branch_name.as_deref(),
+        Some("branch-b")
+    );
 }
 
 #[test]
@@ -291,7 +331,10 @@ fn mcp_health_check_lifecycle() {
 
     // Set to Connected (no real client) to test health check path
     // Access internal state via the public API
-    assert_eq!(mgr.get_status("test-srv"), Some(McpServerStatus::Disconnected));
+    assert_eq!(
+        mgr.get_status("test-srv"),
+        Some(McpServerStatus::Disconnected)
+    );
 
     // Health check on disconnected should error
     assert!(mgr.health_check("test-srv").is_err());
@@ -372,7 +415,10 @@ fn recovery_all_scenarios_have_recipes() {
     ];
     for scenario in &scenarios {
         let recipe = recipe_for(*scenario);
-        assert!(!recipe.steps.is_empty(), "recipe for {scenario:?} should have steps");
+        assert!(
+            !recipe.steps.is_empty(),
+            "recipe for {scenario:?} should have steps"
+        );
         assert!(recipe.max_attempts > 0);
     }
 }
@@ -385,9 +431,12 @@ fn recovery_context_tracks_attempts() {
     assert_eq!(r1, RecoveryResult::Recovered);
 
     let r2 = ctx.attempt_recovery(FailureScenario::TrustPromptUnresolved);
-    assert_eq!(r2, RecoveryResult::EscalationRequired {
-        policy: EscalationPolicy::AlertHuman,
-    });
+    assert_eq!(
+        r2,
+        RecoveryResult::EscalationRequired {
+            policy: EscalationPolicy::AlertHuman,
+        }
+    );
 }
 
 #[test]
@@ -420,9 +469,12 @@ fn recovery_provider_failure_allows_multiple_attempts() {
     }
     // 4th attempt should escalate
     let r = ctx.attempt_recovery(FailureScenario::ProviderFailure);
-    assert_eq!(r, RecoveryResult::EscalationRequired {
-        policy: EscalationPolicy::Abort,
-    });
+    assert_eq!(
+        r,
+        RecoveryResult::EscalationRequired {
+            policy: EscalationPolicy::Abort,
+        }
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -560,10 +612,7 @@ fn policy_engine_chain_action() {
         name: "chain".into(),
         priority: 1,
         condition: PolicyCondition::LaneCompleted,
-        action: PolicyAction::Chain(vec![
-            PolicyAction::MergeToDev,
-            PolicyAction::CleanupSession,
-        ]),
+        action: PolicyAction::Chain(vec![PolicyAction::MergeToDev, PolicyAction::CleanupSession]),
     }];
     let engine = PolicyEngine::new(rules);
 
@@ -579,39 +628,94 @@ fn policy_engine_chain_action() {
 // Permission enforcer integration
 // ---------------------------------------------------------------------------
 
-use nocode_core::permission_enforcer::{check_tool_permission, check_workspace_write, PermissionCheckResult};
+use nocode_core::permission_enforcer::{
+    PermissionCheckResult, check_tool_permission, check_workspace_write,
+};
 use nocode_core::tool_registry::PermissionMode;
 
 #[test]
 fn permission_enforcer_readonly_tools() {
-    let readonly_tools = ["Read", "Glob", "Grep", "WebFetch", "TaskGet", "TaskList", "CronList", "ToolSearch", "Lsp", "MemoryList", "MemorySearch"];
+    let readonly_tools = [
+        "Read",
+        "Glob",
+        "Grep",
+        "WebFetch",
+        "TaskGet",
+        "TaskList",
+        "CronList",
+        "ToolSearch",
+        "Lsp",
+        "MemoryList",
+        "MemorySearch",
+    ];
     for tool in &readonly_tools {
         let r = check_tool_permission(tool, PermissionMode::ReadOnly);
-        assert_eq!(r, PermissionCheckResult::Allowed, "{tool} should be allowed in ReadOnly");
+        assert_eq!(
+            r,
+            PermissionCheckResult::Allowed,
+            "{tool} should be allowed in ReadOnly"
+        );
     }
 }
 
 #[test]
 fn permission_enforcer_write_tools_denied_in_readonly() {
-    let write_tools = ["Edit", "Write", "Bash", "Agent", "TaskUpdate", "TeamCreate", "CronCreate", "MemorySave", "MemoryDelete"];
+    let write_tools = [
+        "Edit",
+        "Write",
+        "Bash",
+        "Agent",
+        "TaskUpdate",
+        "TeamCreate",
+        "CronCreate",
+        "MemorySave",
+        "MemoryDelete",
+    ];
     for tool in &write_tools {
         let r = check_tool_permission(tool, PermissionMode::ReadOnly);
-        assert!(matches!(r, PermissionCheckResult::Denied { .. }), "{tool} should be denied in ReadOnly");
+        assert!(
+            matches!(r, PermissionCheckResult::Denied { .. }),
+            "{tool} should be denied in ReadOnly"
+        );
     }
 }
 
 #[test]
 fn permission_enforcer_workspace_write_allows_all_base_tools() {
     let all_tools = [
-        "Read", "Edit", "Write", "Bash", "Glob", "Grep", "Agent",
-        "WebFetch", "WebSearch", "TaskGet", "TaskList", "TaskUpdate",
-        "TaskStop", "TaskOutput", "TeamCreate", "TeamDelete",
-        "CronCreate", "CronDelete", "CronList", "ToolSearch", "Lsp",
-        "MemorySave", "MemoryList", "MemorySearch", "MemoryDelete",
+        "Read",
+        "Edit",
+        "Write",
+        "Bash",
+        "Glob",
+        "Grep",
+        "Agent",
+        "WebFetch",
+        "WebSearch",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "TaskStop",
+        "TaskOutput",
+        "TeamCreate",
+        "TeamDelete",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "ToolSearch",
+        "Lsp",
+        "MemorySave",
+        "MemoryList",
+        "MemorySearch",
+        "MemoryDelete",
     ];
     for tool in &all_tools {
         let r = check_tool_permission(tool, PermissionMode::WorkspaceWrite);
-        assert_eq!(r, PermissionCheckResult::Allowed, "{tool} should be allowed in WorkspaceWrite");
+        assert_eq!(
+            r,
+            PermissionCheckResult::Allowed,
+            "{tool} should be allowed in WorkspaceWrite"
+        );
     }
 }
 
@@ -732,9 +836,21 @@ fn make_reg_tool(name: &str, source: ToolSource, desc: &str) -> RegisteredTool {
 #[test]
 fn global_registry_register_and_search() {
     let mut reg = GlobalToolRegistry::new();
-    reg.register(make_reg_tool("Read", ToolSource::Base, "Read files from disk"));
-    reg.register(make_reg_tool("Edit", ToolSource::Base, "Edit files on disk"));
-    reg.register(make_reg_tool("mcp:fs:read", ToolSource::Mcp, "MCP file read"));
+    reg.register(make_reg_tool(
+        "Read",
+        ToolSource::Base,
+        "Read files from disk",
+    ));
+    reg.register(make_reg_tool(
+        "Edit",
+        ToolSource::Base,
+        "Edit files on disk",
+    ));
+    reg.register(make_reg_tool(
+        "mcp:fs:read",
+        ToolSource::Mcp,
+        "MCP file read",
+    ));
 
     let results = reg.search("read");
     assert!(results.len() >= 2);
@@ -767,11 +883,11 @@ fn global_registry_empty_search() {
 // Session compaction integration
 // ---------------------------------------------------------------------------
 
+use nocode_core::message::QueryMessage;
+use nocode_core::query_deps::Compactor;
 use nocode_core::session_compaction::{
     CompactionConfig, RichCompactor, estimate_message_tokens, should_compact,
 };
-use nocode_core::message::QueryMessage;
-use nocode_core::query_deps::Compactor;
 
 #[test]
 fn compaction_under_threshold_passes_through() {
@@ -823,9 +939,7 @@ fn should_compact_over_threshold() {
 #[test]
 fn trust_chain_with_rule_based_and_prompt_fallback() {
     let rule = RuleBasedPolicy::new(vec!["internal".into()], vec!["banned".into()]);
-    let chain = TrustChain::new()
-        .with(rule)
-        .with(PromptRequiredPolicy);
+    let chain = TrustChain::new().with(rule).with(PromptRequiredPolicy);
 
     // internal label → Allow via rule
     let ctx = TrustContext::new("w1", "test").with_label("internal");
@@ -853,7 +967,11 @@ fn compaction_preserves_system_messages() {
     ];
     let result = compactor.compact(&messages);
     // Under threshold — all preserved
-    assert!(result.iter().any(|m| m.content.contains("important system prompt")));
+    assert!(
+        result
+            .iter()
+            .any(|m| m.content.contains("important system prompt"))
+    );
 }
 
 #[test]
@@ -890,7 +1008,9 @@ fn policy_engine_timed_out_condition() {
     let rules = vec![PolicyRule {
         name: "timeout".into(),
         priority: 1,
-        condition: PolicyCondition::TimedOut { duration: Duration::from_secs(600) },
+        condition: PolicyCondition::TimedOut {
+            duration: Duration::from_secs(600),
+        },
         action: PolicyAction::Escalate,
     }];
     let engine = PolicyEngine::new(rules);

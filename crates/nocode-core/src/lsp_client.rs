@@ -314,49 +314,33 @@ impl LspRegistry {
             }
         }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         // If we found a definition, extract doc comments above it
         let mut hover_content = String::new();
         if let Some(def_loc) = def_locations.first()
             && let Ok(def_content) = std::fs::read_to_string(&def_loc.file)
         {
-                let def_lines: Vec<&str> = def_content.lines().collect();
-                let def_line_idx = def_loc.line.saturating_sub(1) as usize;
-                // Collect /// doc comments above the definition
-                let mut doc_lines = Vec::new();
-                let mut check_idx = def_line_idx;
-                while check_idx > 0 {
-                    check_idx -= 1;
-                    let trimmed = def_lines.get(check_idx).map(|l| l.trim()).unwrap_or("");
-                    if let Some(doc) = trimmed.strip_prefix("///") {
-                        doc_lines.push(doc.trim().to_string());
-                    } else {
-                        break;
-                    }
+            let def_lines: Vec<&str> = def_content.lines().collect();
+            let def_line_idx = def_loc.line.saturating_sub(1) as usize;
+            // Collect /// doc comments above the definition
+            let mut doc_lines = Vec::new();
+            let mut check_idx = def_line_idx;
+            while check_idx > 0 {
+                check_idx -= 1;
+                let trimmed = def_lines.get(check_idx).map(|l| l.trim()).unwrap_or("");
+                if let Some(doc) = trimmed.strip_prefix("///") {
+                    doc_lines.push(doc.trim().to_string());
+                } else {
+                    break;
                 }
-                doc_lines.reverse();
-                if !doc_lines.is_empty() {
-                    hover_content.push_str(&doc_lines.join("\n"));
-                    hover_content.push('\n');
-                }
-                if let Some(def_line) = def_lines.get(def_line_idx) {
-                    hover_content.push_str(def_line.trim());
-                }
+            }
+            doc_lines.reverse();
+            if !doc_lines.is_empty() {
+                hover_content.push_str(&doc_lines.join("\n"));
+                hover_content.push('\n');
+            }
+            if let Some(def_line) = def_lines.get(def_line_idx) {
+                hover_content.push_str(def_line.trim());
+            }
         }
 
         if hover_content.is_empty() {
@@ -457,8 +441,21 @@ impl LspRegistry {
                 "const", "static", "async", "await", "where", "type",
             ],
             "ts" | "js" => &[
-                "function", "const", "let", "var", "class", "interface", "import", "export",
-                "async", "await", "return", "if", "else", "for", "while",
+                "function",
+                "const",
+                "let",
+                "var",
+                "class",
+                "interface",
+                "import",
+                "export",
+                "async",
+                "await",
+                "return",
+                "if",
+                "else",
+                "for",
+                "while",
             ],
             "py" => &[
                 "def", "class", "import", "from", "return", "if", "else", "elif", "for", "while",
@@ -610,7 +607,11 @@ fn extract_symbol_at_position(line: &str, column: u32) -> Option<String> {
         end += 1;
     }
     let token = &line[start..end];
-    if token.is_empty() { None } else { Some(token.to_string()) }
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
+    }
 }
 
 /// Search a file for definition patterns of the given symbol.
@@ -621,7 +622,9 @@ fn find_definitions_in_file(file_path: &str, symbol: &str) -> Vec<LspLocation> {
         Ok(c) => c,
         Err(_) => return vec![],
     };
-    let def_patterns: &[&str] = &["fn ", "struct ", "enum ", "trait ", "type ", "const ", "static "];
+    let def_patterns: &[&str] = &[
+        "fn ", "struct ", "enum ", "trait ", "type ", "const ", "static ",
+    ];
     let mut locations = Vec::new();
     for (i, line_str) in content.lines().enumerate() {
         let trimmed = line_str.trim();
@@ -678,8 +681,7 @@ fn find_references_in_file(file_path: &str, symbol: &str) -> Vec<LspLocation> {
                         && bytes[abs_idx - 1] != b'_');
                 let after_idx = abs_idx + sym_bytes.len();
                 let after_ok = after_idx >= bytes.len()
-                    || (!(bytes[after_idx] as char).is_alphanumeric()
-                        && bytes[after_idx] != b'_');
+                    || (!(bytes[after_idx] as char).is_alphanumeric() && bytes[after_idx] != b'_');
                 if before_ok && after_ok {
                     locations.push(LspLocation {
                         file: file_path.to_string(),
@@ -952,11 +954,7 @@ mod tests {
     fn diagnostics_detects_unmatched_brackets() {
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("brackets.rs");
-        std::fs::write(
-            &file_path,
-            "fn main() {\n    let v = vec![1, 2;\n}\n",
-        )
-        .unwrap();
+        std::fs::write(&file_path, "fn main() {\n    let v = vec![1, 2;\n}\n").unwrap();
 
         let mut reg = LspRegistry::new();
         reg.register("ra", vec!["rust".into()]);
@@ -1154,9 +1152,7 @@ mod tests {
         reg.register("ra", vec!["rust".into()]);
         reg.connect("ra").unwrap();
         let file_str = file_path.to_str().unwrap();
-        let result = reg
-            .execute("ra", LspAction::Hover, file_str, 6, 4)
-            .unwrap();
+        let result = reg.execute("ra", LspAction::Hover, file_str, 6, 4).unwrap();
         match result {
             LspResult::Hover(Some(hover)) => {
                 assert!(

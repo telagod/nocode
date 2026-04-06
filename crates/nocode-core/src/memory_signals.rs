@@ -149,21 +149,55 @@ fn infer_memory_type(content: &str) -> SuggestedMemoryType {
 
     // Feedback cues: preferences, corrections, workflow guidance
     const FEEDBACK_CUES: &[&str] = &[
-        "prefer", "always use", "never use", "don't use", "do not use",
-        "stop ", "avoid ", "instead of", "rather than", "keep doing",
+        "prefer",
+        "always use",
+        "never use",
+        "don't use",
+        "do not use",
+        "stop ",
+        "avoid ",
+        "instead of",
+        "rather than",
+        "keep doing",
     ];
     // Project cues: team context, deadlines, goals, infrastructure
     const PROJECT_CUES: &[&str] = &[
-        "we use", "we're using", "the project", "the team", "the deadline",
-        "the goal", "we need", "we have", "our ", "the repo", "the codebase",
-        "the database", "the server", "the api", "the service", "version",
-        "deploy", "migration", "sprint", "release",
+        "we use",
+        "we're using",
+        "the project",
+        "the team",
+        "the deadline",
+        "the goal",
+        "we need",
+        "we have",
+        "our ",
+        "the repo",
+        "the codebase",
+        "the database",
+        "the server",
+        "the api",
+        "the service",
+        "version",
+        "deploy",
+        "migration",
+        "sprint",
+        "release",
     ];
     // Reference cues: external systems, URLs, dashboards
     const REFERENCE_CUES: &[&str] = &[
-        "tracked in", "dashboard", "http://", "https://", "slack",
-        "linear", "jira", "grafana", "confluence", "notion",
-        "the docs at", "the board", "the channel",
+        "tracked in",
+        "dashboard",
+        "http://",
+        "https://",
+        "slack",
+        "linear",
+        "jira",
+        "grafana",
+        "confluence",
+        "notion",
+        "the docs at",
+        "the board",
+        "the channel",
     ];
 
     // Score each type by counting cue matches
@@ -177,7 +211,10 @@ fn infer_memory_type(content: &str) -> SuggestedMemoryType {
         .filter(|c| lower.contains(*c))
         .count();
 
-    let max = feedback_score.max(project_score).max(reference_score).max(user_score);
+    let max = feedback_score
+        .max(project_score)
+        .max(reference_score)
+        .max(user_score);
     if max == 0 {
         return SuggestedMemoryType::User; // no cues → default
     }
@@ -344,7 +381,13 @@ pub fn process_signals(
 
 fn sanitize_filename(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect::<String>()
         .trim_matches('_')
         .to_string()
@@ -362,13 +405,18 @@ fn truncate(s: &str, max: usize) -> String {
 fn extract_forget_query(text: &str) -> String {
     let lower = text.to_lowercase();
     const FORGET_PREFIXES: &[&str] = &[
-        "forget about ", "forget that ", "forget ",
-        "remove the memory about ", "remove the memory of ", "remove the memory ",
+        "forget about ",
+        "forget that ",
+        "forget ",
+        "remove the memory about ",
+        "remove the memory of ",
+        "remove the memory ",
         "don't remember ",
     ];
     for prefix in FORGET_PREFIXES {
         if let Some(rest) = lower.strip_prefix(prefix) {
-            let trimmed = rest.trim_start_matches("the ")
+            let trimmed = rest
+                .trim_start_matches("the ")
                 .trim_start_matches("old ")
                 .trim();
             if !trimmed.is_empty() {
@@ -377,18 +425,21 @@ fn extract_forget_query(text: &str) -> String {
         }
     }
     // Fallback: use individual words (3+ chars) as search terms
-    lower.split_whitespace()
-        .filter(|w| w.len() >= 3 && !["forget", "about", "that", "the", "don't", "remember", "remove", "memory"].contains(w))
+    lower
+        .split_whitespace()
+        .filter(|w| {
+            w.len() >= 3
+                && ![
+                    "forget", "about", "that", "the", "don't", "remember", "remove", "memory",
+                ]
+                .contains(w)
+        })
         .collect::<Vec<_>>()
         .join(" ")
 }
 
 /// Extract surrounding context (up to 100 chars each side) around a match.
-pub fn extract_signal_context(
-    text: &str,
-    pattern_start: usize,
-    pattern_end: usize,
-) -> String {
+pub fn extract_signal_context(text: &str, pattern_start: usize, pattern_end: usize) -> String {
     let start = text[..pattern_start]
         .char_indices()
         .rev()
@@ -520,7 +571,10 @@ mod tests {
         assert_eq!(sigs[0].suggested_memory_type, SuggestedMemoryType::Project);
 
         let sigs = detect_memory_signals("Bugs are in Linear");
-        assert_eq!(sigs[0].suggested_memory_type, SuggestedMemoryType::Reference);
+        assert_eq!(
+            sigs[0].suggested_memory_type,
+            SuggestedMemoryType::Reference
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -694,16 +748,26 @@ mod tests {
     #[test]
     fn explicit_remember_infers_feedback_type() {
         let sigs = detect_memory_signals("Remember that you should always use snake_case");
-        let remember_sig = sigs.iter().find(|s| s.signal_type == MemorySignalType::ExplicitRemember)
+        let remember_sig = sigs
+            .iter()
+            .find(|s| s.signal_type == MemorySignalType::ExplicitRemember)
             .expect("should detect ExplicitRemember");
-        assert_eq!(remember_sig.suggested_memory_type, SuggestedMemoryType::Feedback);
+        assert_eq!(
+            remember_sig.suggested_memory_type,
+            SuggestedMemoryType::Feedback
+        );
     }
 
     #[test]
     fn explicit_forget_infers_reference_type() {
         let sigs = detect_memory_signals("Forget about the old Grafana board");
-        let forget_sig = sigs.iter().find(|s| s.signal_type == MemorySignalType::ExplicitForget)
+        let forget_sig = sigs
+            .iter()
+            .find(|s| s.signal_type == MemorySignalType::ExplicitForget)
             .expect("should detect ExplicitForget");
-        assert_eq!(forget_sig.suggested_memory_type, SuggestedMemoryType::Reference);
+        assert_eq!(
+            forget_sig.suggested_memory_type,
+            SuggestedMemoryType::Reference
+        );
     }
 }

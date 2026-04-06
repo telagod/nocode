@@ -1007,8 +1007,7 @@ impl<H: ToolHost> ToolExecutor for DefaultToolExecutor<H> {
             request.call.tool_name.as_str(),
             active_mode,
         );
-        if let crate::permission_enforcer::PermissionCheckResult::Denied { reason, .. } =
-            perm_check
+        if let crate::permission_enforcer::PermissionCheckResult::Denied { reason, .. } = perm_check
         {
             return ToolExecutionTrace {
                 progress_updates: Vec::new(),
@@ -1399,7 +1398,8 @@ mod tests {
 
     #[test]
     fn check_command_paths_allows_workspace_paths() {
-        let result = check_command_paths("cat /home/user/project/src/main.rs", "/home/user/project");
+        let result =
+            check_command_paths("cat /home/user/project/src/main.rs", "/home/user/project");
         assert!(result.is_none());
     }
 

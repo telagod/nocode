@@ -300,10 +300,14 @@ mod tests {
             ..Default::default()
         };
 
-        unsafe { std::env::set_var("NOCODE_MODEL", "from-env"); }
+        unsafe {
+            std::env::set_var("NOCODE_MODEL", "from-env");
+        }
         apply_env_overrides(&mut rc);
         assert_eq!(rc.model.as_deref(), Some("from-env"));
-        unsafe { std::env::remove_var("NOCODE_MODEL"); }
+        unsafe {
+            std::env::remove_var("NOCODE_MODEL");
+        }
     }
 
     #[test]
@@ -319,7 +323,10 @@ mod tests {
 
         assert_eq!(rc.sandbox.enabled, Some(true));
         assert_eq!(rc.sandbox.network_isolation, Some(false));
-        assert_eq!(rc.sandbox.filesystem_mode.as_deref(), Some("workspace-only"));
+        assert_eq!(
+            rc.sandbox.filesystem_mode.as_deref(),
+            Some("workspace-only")
+        );
 
         unsafe {
             std::env::remove_var("NOCODE_SANDBOX_ENABLED");
@@ -373,18 +380,26 @@ mod tests {
     fn test_env_overrides_sandbox_boolean_parsing() {
         let mut rc = RuntimeConfig::default();
 
-        unsafe { std::env::set_var("NOCODE_SANDBOX_ENABLED", "1"); }
+        unsafe {
+            std::env::set_var("NOCODE_SANDBOX_ENABLED", "1");
+        }
         apply_env_overrides(&mut rc);
         assert_eq!(rc.sandbox.enabled, Some(true));
 
-        unsafe { std::env::set_var("NOCODE_SANDBOX_ENABLED", "0"); }
+        unsafe {
+            std::env::set_var("NOCODE_SANDBOX_ENABLED", "0");
+        }
         apply_env_overrides(&mut rc);
         assert_eq!(rc.sandbox.enabled, Some(false));
 
-        unsafe { std::env::set_var("NOCODE_SANDBOX_ENABLED", "false"); }
+        unsafe {
+            std::env::set_var("NOCODE_SANDBOX_ENABLED", "false");
+        }
         apply_env_overrides(&mut rc);
         assert_eq!(rc.sandbox.enabled, Some(false));
 
-        unsafe { std::env::remove_var("NOCODE_SANDBOX_ENABLED"); }
+        unsafe {
+            std::env::remove_var("NOCODE_SANDBOX_ENABLED");
+        }
     }
 }

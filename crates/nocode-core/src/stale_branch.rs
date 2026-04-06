@@ -160,12 +160,18 @@ pub fn execute_policy(
         StaleBranchActionKind::Warn => PolicyExecutionResult {
             action: StaleBranchActionKind::Warn,
             success: true,
-            message: action.detail.clone().unwrap_or_else(|| "stale branch warning".to_string()),
+            message: action
+                .detail
+                .clone()
+                .unwrap_or_else(|| "stale branch warning".to_string()),
         },
         StaleBranchActionKind::Block => PolicyExecutionResult {
             action: StaleBranchActionKind::Block,
             success: false,
-            message: action.detail.clone().unwrap_or_else(|| "blocked by stale branch policy".to_string()),
+            message: action
+                .detail
+                .clone()
+                .unwrap_or_else(|| "blocked by stale branch policy".to_string()),
         },
         StaleBranchActionKind::Rebase => {
             let result = run_git(cwd, &["rebase", base]);

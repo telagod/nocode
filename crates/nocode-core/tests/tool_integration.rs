@@ -21,7 +21,10 @@ fn live_executor_in(dir: &std::path::Path) -> DefaultToolExecutor<LiveToolHost> 
     }
 }
 
-fn run_allowed(executor: &DefaultToolExecutor<LiveToolHost>, call: ToolCallInput) -> ToolCallResult {
+fn run_allowed(
+    executor: &DefaultToolExecutor<LiveToolHost>,
+    call: ToolCallInput,
+) -> ToolCallResult {
     executor.execute(ToolExecutionRequest::allowed(call)).result
 }
 
@@ -72,7 +75,10 @@ fn read_edit_write_roundtrip() {
             .map(|m| m.content.as_str())
             .collect::<Vec<_>>()
             .join("");
-        assert!(msg_text.contains("REPLACED"), "edit should be visible in re-read");
+        assert!(
+            msg_text.contains("REPLACED"),
+            "edit should be visible in re-read"
+        );
         assert!(!msg_text.contains("beta"), "old text should be gone");
     } else {
         panic!("expected Completed");
@@ -86,7 +92,10 @@ fn read_edit_write_roundtrip() {
             .with_argument("content", "fresh content"),
     );
     assert_eq!(result.status_label(), "completed");
-    assert_eq!(fs::read_to_string(dir.join("new_file.txt")).unwrap(), "fresh content");
+    assert_eq!(
+        fs::read_to_string(dir.join("new_file.txt")).unwrap(),
+        "fresh content"
+    );
 }
 
 #[test]
@@ -106,7 +115,10 @@ fn bash_captures_stdout_and_stderr() {
             .map(|m| m.content.as_str())
             .collect::<Vec<_>>()
             .join("");
-        assert!(msg_text.contains("hello_world"), "stdout should be captured");
+        assert!(
+            msg_text.contains("hello_world"),
+            "stdout should be captured"
+        );
     } else {
         panic!("expected Completed");
     }
@@ -138,7 +150,10 @@ fn glob_finds_files_in_directory() {
             .join("");
         assert!(msg_text.contains("main.rs"), "glob should find main.rs");
         assert!(msg_text.contains("lib.rs"), "glob should find lib.rs");
-        assert!(!msg_text.contains("README.md"), "glob should not match README.md");
+        assert!(
+            !msg_text.contains("README.md"),
+            "glob should not match README.md"
+        );
     } else {
         panic!("expected Completed");
     }
@@ -168,8 +183,14 @@ fn grep_finds_pattern_in_files() {
             .map(|m| m.content.as_str())
             .collect::<Vec<_>>()
             .join("");
-        assert!(msg_text.contains("hello world"), "grep should find the pattern");
-        assert!(!msg_text.contains("no match"), "grep should not include non-matching lines");
+        assert!(
+            msg_text.contains("hello world"),
+            "grep should find the pattern"
+        );
+        assert!(
+            !msg_text.contains("no match"),
+            "grep should not include non-matching lines"
+        );
     } else {
         panic!("expected Completed");
     }
@@ -224,7 +245,12 @@ fn bash_blocks_destructive_commands() {
     let tmp = tempfile::tempdir().unwrap();
     let exec = live_executor_in(tmp.path());
 
-    let dangerous = ["rm -rf /", "mkfs.ext4 /dev/sda1", "shutdown -h now", "reboot"];
+    let dangerous = [
+        "rm -rf /",
+        "mkfs.ext4 /dev/sda1",
+        "shutdown -h now",
+        "reboot",
+    ];
     for cmd in &dangerous {
         let result = run_allowed(
             &exec,
@@ -341,7 +367,10 @@ fn query_engine_respects_max_turns() {
 
     // Run a simple text scenario — should complete in 1 request.
     let result = runner.run_scenario("streaming_text").unwrap();
-    assert_eq!(result.request_count, 1, "single-turn scenario should use exactly 1 request");
+    assert_eq!(
+        result.request_count, 1,
+        "single-turn scenario should use exactly 1 request"
+    );
     assert!(result.response_matched);
 }
 

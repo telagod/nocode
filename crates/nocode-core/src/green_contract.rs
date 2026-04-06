@@ -405,6 +405,9 @@ mod tests {
             name: "basic-gate".into(),
             required_level: PACKAGE,
         };
-        assert_eq!(contract2.evaluate(result.achieved_level), ContractOutcome::Met);
+        assert_eq!(
+            contract2.evaluate(result.achieved_level),
+            ContractOutcome::Met
+        );
     }
 }

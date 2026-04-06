@@ -59,9 +59,7 @@ impl PermissionPrompter for TuiPermissionPrompter {
         // Block until user responds or timeout.
         match response_rx.recv_timeout(self.timeout) {
             Ok(true) => ToolPermissionDecision::allow(true),
-            Ok(false) => ToolPermissionDecision::deny(format!(
-                "user denied {tool_name} via TUI"
-            )),
+            Ok(false) => ToolPermissionDecision::deny(format!("user denied {tool_name} via TUI")),
             Err(mpsc::RecvTimeoutError::Timeout) => ToolPermissionDecision::deny(format!(
                 "permission timeout for {tool_name} ({}s)",
                 self.timeout.as_secs()
@@ -95,7 +93,12 @@ mod tests {
         });
 
         let decision = prompter.check("Bash", "command=ls");
-        assert!(matches!(decision, ToolPermissionDecision::Allow { user_modified: true }));
+        assert!(matches!(
+            decision,
+            ToolPermissionDecision::Allow {
+                user_modified: true
+            }
+        ));
     }
 
     #[test]

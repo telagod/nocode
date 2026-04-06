@@ -75,10 +75,17 @@ impl ToolCallInput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolPermissionDecision {
-    Allow { user_modified: bool },
-    Deny { reason: String },
+    Allow {
+        user_modified: bool,
+    },
+    Deny {
+        reason: String,
+    },
     /// Requires interactive user approval before proceeding.
-    Prompt { tool_name: String, reason: String },
+    Prompt {
+        tool_name: String,
+        reason: String,
+    },
 }
 
 impl ToolPermissionDecision {
@@ -327,8 +334,7 @@ mod tests {
 
     #[test]
     fn tool_call_argument_not_found() {
-        let call = ToolCallInput::new("Read", "toolu-s2")
-            .with_argument("file_path", "foo.rs");
+        let call = ToolCallInput::new("Read", "toolu-s2").with_argument("file_path", "foo.rs");
         assert!(call.argument("nonexistent").is_none());
     }
 

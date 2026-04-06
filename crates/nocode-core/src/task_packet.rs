@@ -110,7 +110,10 @@ impl TaskPacket {
     }
 
     /// Validate this packet against the given limits.
-    pub fn validate(&self, limits: &TaskPacketLimits) -> Result<ValidatedPacket, Vec<TaskPacketError>> {
+    pub fn validate(
+        &self,
+        limits: &TaskPacketLimits,
+    ) -> Result<ValidatedPacket, Vec<TaskPacketError>> {
         let mut errors = Vec::new();
 
         if self.goal.trim().is_empty() {
@@ -253,7 +256,10 @@ impl TaskValidator for BudgetRangeValidator {
                 && tokens > self.max_tokens_limit
             {
                 errors.push(TaskPacketError::InvalidBudget {
-                    reason: format!("max_tokens {tokens} exceeds limit {}", self.max_tokens_limit),
+                    reason: format!(
+                        "max_tokens {tokens} exceeds limit {}",
+                        self.max_tokens_limit
+                    ),
                 });
             }
         }
@@ -287,14 +293,22 @@ mod tests {
     fn empty_goal_rejected() {
         let packet = TaskPacket::new("");
         let errors = packet.validate(&TaskPacketLimits::default()).unwrap_err();
-        assert!(errors.iter().any(|e| matches!(e, TaskPacketError::EmptyGoal)));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, TaskPacketError::EmptyGoal))
+        );
     }
 
     #[test]
     fn whitespace_goal_rejected() {
         let packet = TaskPacket::new("   ");
         let errors = packet.validate(&TaskPacketLimits::default()).unwrap_err();
-        assert!(errors.iter().any(|e| matches!(e, TaskPacketError::EmptyGoal)));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, TaskPacketError::EmptyGoal))
+        );
     }
 
     #[test]
@@ -302,7 +316,11 @@ mod tests {
         let long_goal = "x".repeat(3000);
         let packet = TaskPacket::new(long_goal);
         let errors = packet.validate(&TaskPacketLimits::default()).unwrap_err();
-        assert!(errors.iter().any(|e| matches!(e, TaskPacketError::GoalTooLong { .. })));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, TaskPacketError::GoalTooLong { .. }))
+        );
     }
 
     #[test]
@@ -312,7 +330,11 @@ mod tests {
             packet.constraints.push(format!("constraint {i}"));
         }
         let errors = packet.validate(&TaskPacketLimits::default()).unwrap_err();
-        assert!(errors.iter().any(|e| matches!(e, TaskPacketError::TooManyConstraints { .. })));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, TaskPacketError::TooManyConstraints { .. }))
+        );
     }
 
     #[test]
@@ -322,7 +344,11 @@ mod tests {
             packet.target_files.push(format!("file_{i}.rs"));
         }
         let errors = packet.validate(&TaskPacketLimits::default()).unwrap_err();
-        assert!(errors.iter().any(|e| matches!(e, TaskPacketError::TooManyFiles { .. })));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, TaskPacketError::TooManyFiles { .. }))
+        );
     }
 
     #[test]
@@ -333,7 +359,11 @@ mod tests {
             max_tool_calls: None,
         });
         let errors = packet.validate(&TaskPacketLimits::default()).unwrap_err();
-        assert!(errors.iter().any(|e| matches!(e, TaskPacketError::InvalidBudget { .. })));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, TaskPacketError::InvalidBudget { .. }))
+        );
     }
 
     #[test]
@@ -415,13 +445,23 @@ mod tests {
             .with_constraint("b")
             .with_constraint("c");
         let errors = packet.validate(&limits).unwrap_err();
-        assert!(errors.iter().any(|e| matches!(e, TaskPacketError::TooManyConstraints { .. })));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, TaskPacketError::TooManyConstraints { .. }))
+        );
     }
 
     #[test]
     fn error_display() {
-        assert_eq!(TaskPacketError::EmptyGoal.to_string(), "task goal must not be empty");
-        let e = TaskPacketError::GoalTooLong { len: 3000, max: 2000 };
+        assert_eq!(
+            TaskPacketError::EmptyGoal.to_string(),
+            "task goal must not be empty"
+        );
+        let e = TaskPacketError::GoalTooLong {
+            len: 3000,
+            max: 2000,
+        };
         assert!(e.to_string().contains("3000"));
     }
 }
