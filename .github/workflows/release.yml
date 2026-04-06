@@ -12,6 +12,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   BINARY_NAME: nocode
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
@@ -121,7 +122,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
       - name: Download all npm platform packages
@@ -132,6 +133,8 @@ jobs:
           merge-multiple: false
 
       - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for pkg_dir in npm-packages/npm-nocode-*/; do
             echo "Publishing from $pkg_dir..."
@@ -141,6 +144,8 @@ jobs:
           done
 
       - name: Publish main package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           cd npm/nocode
           npm publish --access public --provenance || echo "Skipped (already published or error)"
