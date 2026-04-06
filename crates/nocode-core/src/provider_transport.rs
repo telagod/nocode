@@ -386,6 +386,13 @@ fn provider_timeout_secs() -> u64 {
         .unwrap_or(60)
 }
 
+fn stream_read_timeout_secs() -> u64 {
+    env_var_optional("NOCODE_STREAM_READ_TIMEOUT_SECS")
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(120)
+}
+
 fn execute_with_retry<F, S>(
     retry_config: RetryConfig,
     mut execute: F,
@@ -498,8 +505,18 @@ where
     let mut current_event: Option<String> = None;
     let mut current_data = Vec::new();
     let mut line = String::new();
+    let timeout = std::time::Duration::from_secs(stream_read_timeout_secs());
+    let mut last_data_at = std::time::Instant::now();
 
     loop {
+        // Check if we've stalled between frames.
+        if last_data_at.elapsed() > timeout {
+            return Err(ModelError::stream_timeout(format!(
+                "no data received for {}s during SSE stream",
+                timeout.as_secs()
+            )));
+        }
+
         line.clear();
         let bytes_read = reader.read_line(&mut line).map_err(map_io_error)?;
         if bytes_read == 0 {
@@ -511,6 +528,8 @@ where
             )?;
             break;
         }
+
+        last_data_at = std::time::Instant::now();
 
         process_sse_line(
             line.trim_end_matches(['\n', '\r']),
