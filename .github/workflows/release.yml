@@ -12,7 +12,6 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   BINARY_NAME: nocode
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
@@ -41,7 +40,7 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -90,7 +89,7 @@ jobs:
           cp npm/${{ matrix.npm_pkg }}/package.json "$PKG_DIR/package.json"
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: binary-${{ matrix.target }}
           path: |
@@ -99,7 +98,7 @@ jobs:
           retention-days: 5
 
       - name: Upload npm platform package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: npm-${{ matrix.npm_pkg }}
           path: npm-stage/${{ matrix.npm_pkg }}/
@@ -109,10 +108,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download all binary artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           pattern: binary-*
           path: dist/
@@ -130,15 +129,15 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
       - name: Download all npm platform packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           pattern: npm-*
           path: npm-packages/
