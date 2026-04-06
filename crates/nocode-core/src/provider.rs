@@ -862,6 +862,9 @@ pub enum ModelErrorKind {
     HttpStatus,
     InvalidProviderResponse,
     ProviderFailure,
+    StreamInterrupted,
+    StreamTimeout,
+    StreamDecodeFailed,
 }
 
 impl ModelErrorKind {
@@ -874,6 +877,9 @@ impl ModelErrorKind {
             Self::HttpStatus => "http_status",
             Self::InvalidProviderResponse => "invalid_provider_response",
             Self::ProviderFailure => "provider_failure",
+            Self::StreamInterrupted => "stream_interrupted",
+            Self::StreamTimeout => "stream_timeout",
+            Self::StreamDecodeFailed => "stream_decode_failed",
         }
     }
 }
@@ -945,6 +951,39 @@ impl ModelError {
             kind: ModelErrorKind::ProviderFailure,
             message: message.into(),
             retryable,
+            provider: None,
+            status_code: None,
+            status_class: None,
+        }
+    }
+
+    pub fn stream_interrupted(message: impl Into<String>) -> Self {
+        Self {
+            kind: ModelErrorKind::StreamInterrupted,
+            message: message.into(),
+            retryable: true,
+            provider: None,
+            status_code: None,
+            status_class: None,
+        }
+    }
+
+    pub fn stream_timeout(message: impl Into<String>) -> Self {
+        Self {
+            kind: ModelErrorKind::StreamTimeout,
+            message: message.into(),
+            retryable: true,
+            provider: None,
+            status_code: None,
+            status_class: None,
+        }
+    }
+
+    pub fn stream_decode_failed(message: impl Into<String>) -> Self {
+        Self {
+            kind: ModelErrorKind::StreamDecodeFailed,
+            message: message.into(),
+            retryable: false,
             provider: None,
             status_code: None,
             status_class: None,
@@ -1046,6 +1085,9 @@ impl ModelError {
                 .status_class
                 .map(HttpStatusClass::as_str)
                 .unwrap_or("http_status"),
+            ModelErrorKind::StreamInterrupted => "stream_interrupted",
+            ModelErrorKind::StreamTimeout => "stream_timeout",
+            ModelErrorKind::StreamDecodeFailed => "stream_decode_failed",
         }
     }
 }
@@ -1513,6 +1555,7 @@ pub(crate) struct StreamingModelParser<'a> {
     text: String,
     fallback_payload: Option<Value>,
     delta_sequence: u32,
+    cancelled: bool,
 }
 
 impl<'a> StreamingModelParser<'a> {
@@ -1527,7 +1570,19 @@ impl<'a> StreamingModelParser<'a> {
             text: String::new(),
             fallback_payload: None,
             delta_sequence: 0,
+            cancelled: false,
         }
+    }
+
+    /// Signal the parser to stop processing further frames.
+    #[allow(dead_code)]
+    pub(crate) fn cancel(&mut self) {
+        self.cancelled = true;
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled
     }
 
     pub(crate) fn push_frame(
@@ -1535,14 +1590,14 @@ impl<'a> StreamingModelParser<'a> {
         frame: &SseFrame,
         stream: &mut dyn ModelStreamSink,
     ) -> Result<(), ModelError> {
+        if self.cancelled {
+            return Err(ModelError::stream_interrupted("stream cancelled by caller"));
+        }
         if frame.data.trim() == "[DONE]" {
             return Ok(());
         }
         let payload: Value = serde_json::from_str(frame.data.as_str()).map_err(|error| {
-            ModelError::invalid_provider_response(
-                self.request.selection.provider,
-                format!("stream event was not valid JSON: {error}"),
-            )
+            ModelError::stream_decode_failed(format!("stream event was not valid JSON: {error}"))
         })?;
 
         match self.request.selection.provider {
