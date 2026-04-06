@@ -272,6 +272,161 @@ pub fn load_tokens(path: &str) -> Result<Option<OAuthTokenSet>, String> {
 }
 
 // ---------------------------------------------------------------------------
+// OAuthTokenManager — auto-refresh + auth header
+// ---------------------------------------------------------------------------
+
+/// Manages OAuth tokens with automatic refresh and persistence.
+#[derive(Debug)]
+pub struct OAuthTokenManager {
+    pub config: OAuthConfig,
+    pub credentials_path: String,
+    tokens: Option<OAuthTokenSet>,
+    /// Buffer in seconds before actual expiry to trigger refresh (default 300s = 5min).
+    pub refresh_buffer_secs: u64,
+}
+
+/// Result of a token refresh attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenRefreshResult {
+    /// Token was still valid, no refresh needed.
+    StillValid,
+    /// Token was refreshed successfully.
+    Refreshed,
+    /// No refresh token available — user must re-authenticate.
+    NoRefreshToken,
+    /// Refresh failed with an error.
+    Failed { reason: String },
+}
+
+impl OAuthTokenManager {
+    pub fn new(config: OAuthConfig, credentials_path: &str) -> Self {
+        Self {
+            config,
+            credentials_path: credentials_path.to_string(),
+            tokens: None,
+            refresh_buffer_secs: 300,
+        }
+    }
+
+    /// Load tokens from disk. Returns true if tokens were found.
+    pub fn load(&mut self) -> Result<bool, String> {
+        match load_tokens(&self.credentials_path)? {
+            Some(tokens) => {
+                self.tokens = Some(tokens);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// Save current tokens to disk.
+    pub fn save(&self) -> Result<(), String> {
+        match &self.tokens {
+            Some(tokens) => persist_tokens(&self.credentials_path, tokens),
+            None => Err("no tokens to save".to_string()),
+        }
+    }
+
+    /// Set tokens directly (e.g. after initial authorization code exchange).
+    pub fn set_tokens(&mut self, tokens: OAuthTokenSet) {
+        self.tokens = Some(tokens);
+    }
+
+    /// Get the current access token, if available and not expired.
+    pub fn access_token(&self) -> Option<&str> {
+        self.tokens.as_ref().and_then(|t| {
+            if token_is_expired(t) {
+                None
+            } else {
+                Some(t.access_token.as_str())
+            }
+        })
+    }
+
+    /// Check if the token needs refresh (expired or within buffer).
+    pub fn needs_refresh(&self) -> bool {
+        match &self.tokens {
+            None => true,
+            Some(t) => match t.expires_at {
+                None => false,
+                Some(exp) => {
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    now + self.refresh_buffer_secs >= exp
+                }
+            },
+        }
+    }
+
+    /// Check if a refresh token is available.
+    pub fn has_refresh_token(&self) -> bool {
+        self.tokens
+            .as_ref()
+            .is_some_and(|t| t.refresh_token.is_some())
+    }
+
+    /// Build the token refresh HTTP request body.
+    /// Returns None if no refresh token is available.
+    pub fn build_refresh_request(&self) -> Option<String> {
+        let tokens = self.tokens.as_ref()?;
+        let refresh_token = tokens.refresh_token.as_ref()?;
+        Some(format!(
+            "grant_type=refresh_token&client_id={}&refresh_token={}",
+            url_encode(&self.config.client_id),
+            url_encode(refresh_token),
+        ))
+    }
+
+    /// Apply a refreshed token set (from HTTP response parsing).
+    pub fn apply_refresh(&mut self, new_tokens: OAuthTokenSet) -> Result<(), String> {
+        self.tokens = Some(new_tokens);
+        self.save()
+    }
+
+    /// Build the Authorization header value for API requests.
+    pub fn authorization_header(&self) -> Option<String> {
+        self.tokens.as_ref().map(|t| {
+            format!("{} {}", capitalize_first(&t.token_type), t.access_token)
+        })
+    }
+
+    /// Build the initial authorization code exchange request body.
+    pub fn build_token_exchange_request(&self, code: &str, pkce_verifier: &str) -> String {
+        format!(
+            "grant_type=authorization_code&client_id={}&code={}&redirect_uri={}&code_verifier={}",
+            url_encode(&self.config.client_id),
+            url_encode(code),
+            url_encode(&self.config.redirect_uri),
+            url_encode(pkce_verifier),
+        )
+    }
+
+    /// Get the token URL for HTTP requests.
+    pub fn token_url(&self) -> &str {
+        &self.config.token_url
+    }
+
+    /// Clear stored tokens (logout).
+    pub fn clear(&mut self) -> Result<(), String> {
+        self.tokens = None;
+        if std::path::Path::new(&self.credentials_path).exists() {
+            fs::remove_file(&self.credentials_path).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+}
+
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Minimal percent-encoding for URL query values
 // ---------------------------------------------------------------------------
 
@@ -421,7 +576,6 @@ mod tests {
 
     #[test]
     fn sha256_known_vector() {
-        // SHA-256("abc") = ba7816bf...
         let digest = sha256(b"abc");
         assert_eq!(
             digest,
@@ -431,5 +585,200 @@ mod tests {
                 0xf2, 0x00, 0x15, 0xad,
             ]
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // OAuthTokenManager tests
+    // -----------------------------------------------------------------------
+
+    fn sample_config() -> OAuthConfig {
+        OAuthConfig {
+            client_id: "test-client".into(),
+            redirect_uri: "http://localhost:8080/callback".into(),
+            auth_url: "https://auth.example.com/authorize".into(),
+            token_url: "https://auth.example.com/token".into(),
+            scopes: vec!["openid".into()],
+        }
+    }
+
+    fn future_expiry() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 7200
+    }
+
+    #[test]
+    fn token_manager_load_save_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("creds.json");
+        let mut mgr = OAuthTokenManager::new(sample_config(), path.to_str().unwrap());
+
+        assert!(!mgr.load().unwrap());
+        assert!(mgr.access_token().is_none());
+
+        mgr.set_tokens(OAuthTokenSet {
+            access_token: "tok-1".into(),
+            refresh_token: Some("ref-1".into()),
+            expires_at: Some(future_expiry()),
+            token_type: "Bearer".into(),
+        });
+        mgr.save().unwrap();
+
+        let mut mgr2 = OAuthTokenManager::new(sample_config(), path.to_str().unwrap());
+        assert!(mgr2.load().unwrap());
+        assert_eq!(mgr2.access_token(), Some("tok-1"));
+    }
+
+    #[test]
+    fn token_manager_needs_refresh_expired() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("creds.json");
+        let mut mgr = OAuthTokenManager::new(sample_config(), path.to_str().unwrap());
+
+        // No tokens → needs refresh
+        assert!(mgr.needs_refresh());
+
+        // Expired token → needs refresh
+        mgr.set_tokens(OAuthTokenSet {
+            access_token: "old".into(),
+            refresh_token: None,
+            expires_at: Some(1),
+            token_type: "Bearer".into(),
+        });
+        assert!(mgr.needs_refresh());
+        assert!(mgr.access_token().is_none()); // expired
+    }
+
+    #[test]
+    fn token_manager_needs_refresh_within_buffer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("creds.json");
+        let mut mgr = OAuthTokenManager::new(sample_config(), path.to_str().unwrap());
+        mgr.refresh_buffer_secs = 600;
+
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        mgr.set_tokens(OAuthTokenSet {
+            access_token: "soon".into(),
+            refresh_token: Some("ref".into()),
+            expires_at: Some(now + 300), // expires in 5min, buffer is 10min
+            token_type: "Bearer".into(),
+        });
+        assert!(mgr.needs_refresh());
+    }
+
+    #[test]
+    fn token_manager_no_refresh_needed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("creds.json");
+        let mut mgr = OAuthTokenManager::new(sample_config(), path.to_str().unwrap());
+
+        mgr.set_tokens(OAuthTokenSet {
+            access_token: "fresh".into(),
+            refresh_token: None,
+            expires_at: Some(future_expiry()),
+            token_type: "Bearer".into(),
+        });
+        assert!(!mgr.needs_refresh());
+    }
+
+    #[test]
+    fn token_manager_authorization_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("creds.json");
+        let mut mgr = OAuthTokenManager::new(sample_config(), path.to_str().unwrap());
+
+        assert!(mgr.authorization_header().is_none());
+
+        mgr.set_tokens(OAuthTokenSet {
+            access_token: "my-token".into(),
+            refresh_token: None,
+            expires_at: Some(future_expiry()),
+            token_type: "bearer".into(),
+        });
+        assert_eq!(mgr.authorization_header(), Some("Bearer my-token".into()));
+    }
+
+    #[test]
+    fn token_manager_build_refresh_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("creds.json");
+        let mut mgr = OAuthTokenManager::new(sample_config(), path.to_str().unwrap());
+
+        // No tokens → None
+        assert!(mgr.build_refresh_request().is_none());
+
+        // No refresh token → None
+        mgr.set_tokens(OAuthTokenSet {
+            access_token: "a".into(),
+            refresh_token: None,
+            expires_at: None,
+            token_type: "Bearer".into(),
+        });
+        assert!(mgr.build_refresh_request().is_none());
+        assert!(!mgr.has_refresh_token());
+
+        // With refresh token → Some
+        mgr.set_tokens(OAuthTokenSet {
+            access_token: "a".into(),
+            refresh_token: Some("ref-tok".into()),
+            expires_at: None,
+            token_type: "Bearer".into(),
+        });
+        assert!(mgr.has_refresh_token());
+        let body = mgr.build_refresh_request().unwrap();
+        assert!(body.contains("grant_type=refresh_token"));
+        assert!(body.contains("refresh_token=ref-tok"));
+        assert!(body.contains("client_id=test-client"));
+    }
+
+    #[test]
+    fn token_manager_build_exchange_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("creds.json");
+        let mgr = OAuthTokenManager::new(sample_config(), path.to_str().unwrap());
+
+        let body = mgr.build_token_exchange_request("auth-code-123", "verifier-456");
+        assert!(body.contains("grant_type=authorization_code"));
+        assert!(body.contains("code=auth-code-123"));
+        assert!(body.contains("code_verifier=verifier-456"));
+        assert!(body.contains("client_id=test-client"));
+    }
+
+    #[test]
+    fn token_manager_clear() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("creds.json");
+        let mut mgr = OAuthTokenManager::new(sample_config(), path.to_str().unwrap());
+
+        mgr.set_tokens(OAuthTokenSet {
+            access_token: "x".into(),
+            refresh_token: None,
+            expires_at: Some(future_expiry()),
+            token_type: "Bearer".into(),
+        });
+        mgr.save().unwrap();
+        assert!(path.exists());
+
+        mgr.clear().unwrap();
+        assert!(mgr.access_token().is_none());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn token_manager_token_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("creds.json");
+        let mgr = OAuthTokenManager::new(sample_config(), path.to_str().unwrap());
+        assert_eq!(mgr.token_url(), "https://auth.example.com/token");
+    }
+
+    #[test]
+    fn capitalize_first_works() {
+        assert_eq!(capitalize_first("bearer"), "Bearer");
+        assert_eq!(capitalize_first("Bearer"), "Bearer");
+        assert_eq!(capitalize_first(""), "");
+        assert_eq!(capitalize_first("a"), "A");
     }
 }

@@ -196,6 +196,84 @@ fn now_ms() -> u64 {
 }
 
 // ---------------------------------------------------------------------------
+// SqlTelemetrySink — persists events to sql_store
+// ---------------------------------------------------------------------------
+
+/// Telemetry sink that writes events as JSON to the sql_store telemetry_events table.
+#[derive(Debug)]
+pub struct SqlTelemetrySink {
+    session_id: String,
+}
+
+impl SqlTelemetrySink {
+    pub fn new(session_id: &str) -> Self {
+        Self {
+            session_id: session_id.to_string(),
+        }
+    }
+
+    fn event_to_json(event: &TelemetryEvent) -> String {
+        // Manual JSON serialization to avoid serde dependency on the enum.
+        match event {
+            TelemetryEvent::SessionStarted { session_id, model } => {
+                format!(r#"{{"type":"session_started","session_id":"{session_id}","model":"{model}"}}"#)
+            }
+            TelemetryEvent::SessionEnded { session_id, total_turns, total_tokens } => {
+                format!(r#"{{"type":"session_ended","session_id":"{session_id}","total_turns":{total_turns},"total_tokens":{total_tokens}}}"#)
+            }
+            TelemetryEvent::TurnStarted { session_id, turn } => {
+                format!(r#"{{"type":"turn_started","session_id":"{session_id}","turn":{turn}}}"#)
+            }
+            TelemetryEvent::TurnCompleted { session_id, turn, input_tokens, output_tokens, duration_ms } => {
+                format!(r#"{{"type":"turn_completed","session_id":"{session_id}","turn":{turn},"input_tokens":{input_tokens},"output_tokens":{output_tokens},"duration_ms":{duration_ms}}}"#)
+            }
+            TelemetryEvent::ToolExecuted { session_id, tool_name, success, duration_ms } => {
+                format!(r#"{{"type":"tool_executed","session_id":"{session_id}","tool_name":"{tool_name}","success":{success},"duration_ms":{duration_ms}}}"#)
+            }
+            TelemetryEvent::ModelError { session_id, error_type, retryable } => {
+                format!(r#"{{"type":"model_error","session_id":"{session_id}","error_type":"{error_type}","retryable":{retryable}}}"#)
+            }
+            TelemetryEvent::CompactionTriggered { session_id, removed_messages } => {
+                format!(r#"{{"type":"compaction_triggered","session_id":"{session_id}","removed_messages":{removed_messages}}}"#)
+            }
+            TelemetryEvent::MemorySaved { memory_type, name } => {
+                format!(r#"{{"type":"memory_saved","memory_type":"{memory_type}","name":"{name}"}}"#)
+            }
+            TelemetryEvent::HookExecuted { event, tool_name, denied } => {
+                format!(r#"{{"type":"hook_executed","event":"{event}","tool_name":"{tool_name}","denied":{denied}}}"#)
+            }
+        }
+    }
+}
+
+impl TelemetrySink for SqlTelemetrySink {
+    fn record(&self, record: &TelemetryRecord) {
+        let json = Self::event_to_json(&record.event);
+        let event_type = Self::event_type_label(&record.event);
+        let store = crate::sql_store::global_sql_store();
+        if let Ok(s) = store.lock() {
+            let _ = s.insert_telemetry(Some(&self.session_id), event_type, &json);
+        }
+    }
+}
+
+impl SqlTelemetrySink {
+    fn event_type_label(event: &TelemetryEvent) -> &'static str {
+        match event {
+            TelemetryEvent::SessionStarted { .. } => "session_started",
+            TelemetryEvent::SessionEnded { .. } => "session_ended",
+            TelemetryEvent::TurnStarted { .. } => "turn_started",
+            TelemetryEvent::TurnCompleted { .. } => "turn_completed",
+            TelemetryEvent::ToolExecuted { .. } => "tool_executed",
+            TelemetryEvent::ModelError { .. } => "model_error",
+            TelemetryEvent::CompactionTriggered { .. } => "compaction_triggered",
+            TelemetryEvent::MemorySaved { .. } => "memory_saved",
+            TelemetryEvent::HookExecuted { .. } => "hook_executed",
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -357,5 +435,45 @@ mod tests {
             // Debug must not panic.
             let _ = format!("{e:?}");
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // SqlTelemetrySink tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sql_sink_event_to_json_all_variants() {
+        let events = vec![
+            TelemetryEvent::SessionStarted { session_id: "s1".into(), model: "opus".into() },
+            TelemetryEvent::SessionEnded { session_id: "s1".into(), total_turns: 5, total_tokens: 1000 },
+            TelemetryEvent::TurnStarted { session_id: "s1".into(), turn: 1 },
+            TelemetryEvent::TurnCompleted { session_id: "s1".into(), turn: 1, input_tokens: 100, output_tokens: 200, duration_ms: 500 },
+            TelemetryEvent::ToolExecuted { session_id: "s1".into(), tool_name: "Bash".into(), success: true, duration_ms: 42 },
+            TelemetryEvent::ModelError { session_id: "s1".into(), error_type: "timeout".into(), retryable: true },
+            TelemetryEvent::CompactionTriggered { session_id: "s1".into(), removed_messages: 10 },
+            TelemetryEvent::MemorySaved { memory_type: "user".into(), name: "role".into() },
+            TelemetryEvent::HookExecuted { event: "pre_tool".into(), tool_name: "Read".into(), denied: false },
+        ];
+        for event in &events {
+            let json = SqlTelemetrySink::event_to_json(event);
+            assert!(json.starts_with('{'));
+            assert!(json.ends_with('}'));
+            assert!(json.contains("\"type\":"));
+        }
+    }
+
+    #[test]
+    fn sql_sink_event_type_labels() {
+        assert_eq!(SqlTelemetrySink::event_type_label(&TelemetryEvent::SessionStarted { session_id: "s".into(), model: "m".into() }), "session_started");
+        assert_eq!(SqlTelemetrySink::event_type_label(&TelemetryEvent::ToolExecuted { session_id: "s".into(), tool_name: "t".into(), success: true, duration_ms: 0 }), "tool_executed");
+        assert_eq!(SqlTelemetrySink::event_type_label(&TelemetryEvent::HookExecuted { event: "e".into(), tool_name: "t".into(), denied: false }), "hook_executed");
+    }
+
+    #[test]
+    fn sql_sink_new() {
+        let sink = SqlTelemetrySink::new("test-session");
+        assert_eq!(sink.session_id, "test-session");
+        let debug = format!("{sink:?}");
+        assert!(debug.contains("SqlTelemetrySink"));
     }
 }
