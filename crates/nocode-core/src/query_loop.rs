@@ -356,4 +356,431 @@ impl QueryLoopRunner {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use crate::message::QueryMessage;
+    use crate::stop_hook::StopHookResult;
+
+    fn sample_params() -> QueryLoopParams {
+        QueryLoopParams {
+            messages: vec![QueryMessage::user("hello")],
+            system_prompt: vec![QueryMessage::system("you are helpful")],
+            user_context_keys: vec![],
+            system_context_keys: vec![],
+            fallback_model: None,
+            query_source: QuerySource::Repl,
+            max_output_tokens_override: None,
+            max_turns: None,
+            task_budget: None,
+        }
+    }
+
+    fn sample_tool_call() -> ToolCallInput {
+        ToolCallInput::new("Read", "toolu-1")
+            .with_argument("file_path", "src/main.rs")
+            .with_context_label("test")
+    }
+
+    fn completed_result(call: ToolCallInput, summary: &str) -> ToolCallResult {
+        ToolCallResult::Completed {
+            call,
+            user_modified: false,
+            output: crate::tool_execution::ToolCallOutput {
+                summary: summary.to_string(),
+                generated_messages: Vec::new(),
+                context_label: None,
+                progress_updates: Vec::new(),
+            },
+        }
+    }
+
+    fn blocking_stop_hook() -> StopHookResult {
+        StopHookResult {
+            prevent_continuation: true,
+            stop_reason: Some(String::from("blocked by hook")),
+            ..StopHookResult::default()
+        }
+    }
+
+    fn permissive_stop_hook() -> StopHookResult {
+        StopHookResult {
+            prevent_continuation: false,
+            ..StopHookResult::default()
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Construction & initial state
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn runner_initializes_with_correct_state() {
+        let runner = QueryLoopRunner::new(sample_params());
+        let state = runner.state();
+        assert_eq!(state.turn_count, 1);
+        assert!(state.pending_turn_messages.is_empty());
+        assert!(state.tool_results.is_empty());
+        assert!(!state.auto_compact_active);
+        assert!(!state.stop_hook_active);
+        assert!(state.pending_tool_call.is_none());
+        assert!(state.budget_tracker.is_none());
+        assert!(state.transition.is_none());
+        assert_eq!(state.tool_use_context_label, "unbound");
+    }
+
+    #[test]
+    fn state_new_merges_system_and_user_messages_into_transcript() {
+        let params = sample_params();
+        let state = QueryLoopState::new(&params);
+        // Transcript should contain both system prompt and user messages
+        assert!(state.transcript.len() >= 2);
+    }
+
+    #[test]
+    fn params_accessible_after_construction() {
+        let runner = QueryLoopRunner::new(sample_params());
+        assert_eq!(runner.params().query_source, QuerySource::Repl);
+        assert!(runner.params().max_turns.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // QueryLoopAction::BindToolUseContext
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn bind_tool_use_context_updates_label() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        let outcome = runner.apply(QueryLoopAction::BindToolUseContext {
+            label: String::from("agent-task"),
+        });
+        assert!(matches!(outcome, QueryLoopOutcome::Continue(_)));
+        assert_eq!(runner.state().tool_use_context_label, "agent-task");
+    }
+
+    // -----------------------------------------------------------------------
+    // QueryLoopAction::RequestTool
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn request_tool_sets_pending_call() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        let call = sample_tool_call();
+        let outcome = runner.apply(QueryLoopAction::RequestTool { call: call.clone() });
+        assert!(matches!(outcome, QueryLoopOutcome::Continue(_)));
+        assert!(runner.state().pending_tool_call.is_some());
+        assert!(runner.state().pending_tool_use_summary);
+        assert_eq!(
+            runner.state().pending_tool_call.as_ref().unwrap().tool_name,
+            "Read"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // QueryLoopAction::ResolveTool
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resolve_tool_clears_pending_and_records_result() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        let call = sample_tool_call();
+        runner.apply(QueryLoopAction::RequestTool { call: call.clone() });
+
+        let result = completed_result(call, "file contents here");
+        let outcome = runner.apply(QueryLoopAction::ResolveTool { result });
+        assert!(matches!(outcome, QueryLoopOutcome::Continue(_)));
+        assert!(runner.state().pending_tool_call.is_none());
+        assert_eq!(runner.state().tool_results.len(), 1);
+        assert!(!runner.state().pending_turn_messages.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // QueryLoopAction::FlushToolBatch → AdvanceTurn
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn flush_tool_batch_advances_turn() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        let call = sample_tool_call();
+        runner.apply(QueryLoopAction::RequestTool { call: call.clone() });
+        runner.apply(QueryLoopAction::ResolveTool {
+            result: completed_result(call, "ok"),
+        });
+
+        let outcome = runner.apply(QueryLoopAction::FlushToolBatch);
+        assert!(matches!(outcome, QueryLoopOutcome::Continue(_)));
+        assert_eq!(runner.state().turn_count, 2);
+        assert!(runner.state().pending_turn_messages.is_empty());
+        assert_eq!(
+            runner.state().transition,
+            Some(QueryLoopContinueReason::NextTurn)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Max turns enforcement
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn max_turns_terminates_when_exceeded() {
+        let mut params = sample_params();
+        params.max_turns = Some(2);
+        let mut runner = QueryLoopRunner::new(params);
+
+        // Turn 1 → 2
+        runner.apply(QueryLoopAction::AdvanceTurn {
+            next_messages: vec![QueryMessage::user("turn 2")],
+        });
+        assert_eq!(runner.state().turn_count, 2);
+
+        // Turn 2 → 3 should hit max_turns
+        let outcome = runner.apply(QueryLoopAction::AdvanceTurn {
+            next_messages: vec![QueryMessage::user("turn 3")],
+        });
+        assert!(matches!(
+            outcome,
+            QueryLoopOutcome::Terminal(QueryLoopTerminal::MaxTurns { turn_count: 3 })
+        ));
+    }
+
+    #[test]
+    fn no_max_turns_allows_unlimited_advancement() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        for i in 0..10 {
+            let outcome = runner.apply(QueryLoopAction::AdvanceTurn {
+                next_messages: vec![QueryMessage::user(format!("turn {i}"))],
+            });
+            assert!(matches!(outcome, QueryLoopOutcome::Continue(_)));
+        }
+        assert_eq!(runner.state().turn_count, 11);
+    }
+
+    // -----------------------------------------------------------------------
+    // QueryLoopAction::Complete / Fail
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn complete_returns_terminal_completed() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        let outcome = runner.apply(QueryLoopAction::Complete);
+        assert!(matches!(
+            outcome,
+            QueryLoopOutcome::Terminal(QueryLoopTerminal::Completed)
+        ));
+    }
+
+    #[test]
+    fn fail_returns_terminal_with_reason() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        let outcome = runner.apply(QueryLoopAction::Fail(QueryLoopTerminal::PromptTooLong));
+        assert!(matches!(
+            outcome,
+            QueryLoopOutcome::Terminal(QueryLoopTerminal::PromptTooLong)
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // QueryLoopAction::PushAssistantMessage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn push_assistant_message_appends_to_messages() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        let initial_len = runner.state().messages.len();
+        runner.apply(QueryLoopAction::PushAssistantMessage {
+            message: QueryMessage::assistant("I will help"),
+        });
+        assert_eq!(runner.state().messages.len(), initial_len + 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // QueryLoopAction::SetPendingToolUseSummary / SetStopHookActive
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn set_pending_tool_use_summary_toggles_flag() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        assert!(!runner.state().pending_tool_use_summary);
+        runner.apply(QueryLoopAction::SetPendingToolUseSummary(true));
+        assert!(runner.state().pending_tool_use_summary);
+        runner.apply(QueryLoopAction::SetPendingToolUseSummary(false));
+        assert!(!runner.state().pending_tool_use_summary);
+    }
+
+    #[test]
+    fn set_stop_hook_active_toggles_flag() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        assert!(!runner.state().stop_hook_active);
+        runner.apply(QueryLoopAction::SetStopHookActive(true));
+        assert!(runner.state().stop_hook_active);
+    }
+
+    // -----------------------------------------------------------------------
+    // QueryLoopAction::Continue
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn continue_action_sets_transition_reason() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        runner.apply(QueryLoopAction::Continue(
+            QueryLoopContinueReason::ReactiveCompactRetry,
+        ));
+        assert_eq!(
+            runner.state().transition,
+            Some(QueryLoopContinueReason::ReactiveCompactRetry)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // QueryLoopAction::PushToolProgress
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn push_tool_progress_records_update() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        let update = ToolProgressUpdate::new(String::from("toolu-1"), String::from("reading file"));
+        runner.apply(QueryLoopAction::PushToolProgress { update });
+        assert_eq!(runner.state().tool_progress_log.len(), 1);
+        assert_eq!(runner.state().tool_progress_log[0].message, "reading file");
+    }
+
+    // -----------------------------------------------------------------------
+    // QueryLoopAction::RecordStopHookResult
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn record_stop_hook_result_stores_and_sets_active() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        let hook_result = blocking_stop_hook();
+        runner.apply(QueryLoopAction::RecordStopHookResult {
+            result: hook_result,
+        });
+        assert!(runner.state().stop_hook_active);
+        assert!(runner.state().last_stop_hook_result.is_some());
+        assert!(
+            runner
+                .state()
+                .last_stop_hook_result
+                .as_ref()
+                .unwrap()
+                .prevent_continuation
+        );
+    }
+
+    #[test]
+    fn record_non_blocking_stop_hook_does_not_activate() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        let hook_result = permissive_stop_hook();
+        runner.apply(QueryLoopAction::RecordStopHookResult {
+            result: hook_result,
+        });
+        assert!(!runner.state().stop_hook_active);
+    }
+
+    // -----------------------------------------------------------------------
+    // QueryLoopAction::CheckTokenBudget
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn check_token_budget_without_budget_is_noop() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        runner.apply(QueryLoopAction::CheckTokenBudget {
+            global_turn_tokens: 1000,
+            now_ms: 100_000,
+        });
+        assert!(runner.state().token_budget_decision.is_none());
+    }
+
+    #[test]
+    fn check_token_budget_with_budget_produces_decision() {
+        let mut params = sample_params();
+        params.task_budget = Some(TaskBudget { total: 50_000 });
+        let mut runner = QueryLoopRunner::new(params);
+        runner.apply(QueryLoopAction::CheckTokenBudget {
+            global_turn_tokens: 1000,
+            now_ms: 100_000,
+        });
+        assert!(runner.state().token_budget_decision.is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // into_state
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn into_state_consumes_runner() {
+        let runner = QueryLoopRunner::new(sample_params());
+        let state = runner.into_state();
+        assert_eq!(state.turn_count, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // QuerySource
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn query_source_as_str() {
+        assert_eq!(QuerySource::Sdk.as_str(), "sdk");
+        assert_eq!(QuerySource::Repl.as_str(), "repl");
+        assert_eq!(QuerySource::Print.as_str(), "print");
+    }
+
+    // -----------------------------------------------------------------------
+    // QueryLoopContinueReason
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn continue_reason_as_str_covers_all_variants() {
+        let reasons = [
+            (QueryLoopContinueReason::NextTurn, "next_turn"),
+            (
+                QueryLoopContinueReason::ReactiveCompactRetry,
+                "reactive_compact_retry",
+            ),
+            (
+                QueryLoopContinueReason::MaxOutputTokensEscalate,
+                "max_output_tokens_escalate",
+            ),
+            (
+                QueryLoopContinueReason::MaxOutputTokensRecovery,
+                "max_output_tokens_recovery",
+            ),
+            (
+                QueryLoopContinueReason::StopHookBlocking,
+                "stop_hook_blocking",
+            ),
+            (
+                QueryLoopContinueReason::TokenBudgetContinuation,
+                "token_budget_continuation",
+            ),
+            (
+                QueryLoopContinueReason::CollapseDrainRetry,
+                "collapse_drain_retry",
+            ),
+        ];
+        for (reason, expected) in reasons {
+            assert_eq!(reason.as_str(), expected);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Turn advancement resets recovery state
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn advance_turn_resets_recovery_counters() {
+        let mut runner = QueryLoopRunner::new(sample_params());
+        // Simulate some recovery state
+        runner.apply(QueryLoopAction::Continue(
+            QueryLoopContinueReason::MaxOutputTokensRecovery,
+        ));
+
+        runner.apply(QueryLoopAction::AdvanceTurn {
+            next_messages: vec![QueryMessage::user("next")],
+        });
+
+        let state = runner.state();
+        assert_eq!(state.max_output_tokens_recovery_count, 0);
+        assert!(!state.has_attempted_reactive_compact);
+        assert!(state.max_output_tokens_override.is_none());
+    }
+}
