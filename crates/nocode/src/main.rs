@@ -1176,7 +1176,7 @@ mod tests {
 
         assert!(rendered.contains("caps=stream(request=yes,live=no,sse=no)"));
         assert!(rendered.contains("matrix=mock[stream(request=yes,live=no,sse=no)"));
-        assert!(rendered.contains("claude[stream(request=yes,live=yes,sse=yes)"));
+        assert!(rendered.contains("anthropic[stream(request=yes,live=yes,sse=yes)"));
         assert!(
             rendered.contains(
                 "openai[stream(request=yes,live=yes,sse=yes) tool-use=yes json-schema=yes"
@@ -1184,7 +1184,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "gemini[stream(request=yes,live=yes,sse=yes) tool-use=yes json-schema=yes"
+                "google[stream(request=yes,live=yes,sse=yes) tool-use=yes json-schema=yes"
             )
         );
         assert!(rendered.contains("stream=total=3 delta=1 chars="));

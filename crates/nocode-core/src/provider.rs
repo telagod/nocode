@@ -17,17 +17,17 @@ pub enum ApiFormat {
 impl ApiFormat {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Claude => "claude",
+            Self::Claude => "anthropic",
             Self::OpenAi => "openai",
-            Self::Gemini => "gemini",
+            Self::Gemini => "google",
         }
     }
 
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
-            "claude" | "anthropic" => Some(Self::Claude),
-            "openai" | "gpt" => Some(Self::OpenAi),
-            "gemini" | "google" => Some(Self::Gemini),
+            "claude" | "anthropic" | "messages" => Some(Self::Claude),
+            "openai" | "gpt" | "chat" | "responses" => Some(Self::OpenAi),
+            "gemini" | "google" | "generatecontent" => Some(Self::Gemini),
             _ => None,
         }
     }
@@ -57,9 +57,9 @@ impl ModelProvider {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Mock => "mock",
-            Self::Claude => "claude",
+            Self::Claude => "anthropic",
             Self::OpenAi => "openai",
-            Self::Gemini => "gemini",
+            Self::Gemini => "google",
             Self::Custom => "custom",
         }
     }
@@ -1743,9 +1743,9 @@ mod tests {
             "stream(request=yes,live=yes,sse=yes) tool-use=yes json-schema=yes reasoning=no"
         );
         assert!(ModelProvider::capability_matrix_summary().contains("mock["));
-        assert!(ModelProvider::capability_matrix_summary().contains("claude["));
+        assert!(ModelProvider::capability_matrix_summary().contains("anthropic["));
         assert!(ModelProvider::capability_matrix_summary().contains("openai["));
-        assert!(ModelProvider::capability_matrix_summary().contains("gemini["));
+        assert!(ModelProvider::capability_matrix_summary().contains("google["));
     }
 
     #[test]

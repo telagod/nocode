@@ -42,20 +42,20 @@ nocode --bridge-remote-once "提示词"  # 单轮远程执行
 
 ## 提供商
 
-根据环境变量自动检测。优先级：显式覆盖 > Gemini > OpenAI > Claude > Mock。
+根据环境变量自动检测。优先级：显式覆盖 > Google > OpenAI > Anthropic > Mock。
 
 | 提供商 | API 密钥 | 默认模型 |
 |--------|----------|----------|
-| Claude | `ANTHROPIC_API_KEY` | `claude-opus-4-6` |
-| OpenAI | `OPENAI_API_KEY` | `gpt-5.4` |
-| Gemini | `GEMINI_API_KEY` | `gemini-3.1-pro` |
+| Anthropic (Claude) | `ANTHROPIC_API_KEY` | `claude-opus-4-6` |
+| OpenAI (GPT) | `OPENAI_API_KEY` | `gpt-5.4` |
+| Google (Gemini) | `GEMINI_API_KEY` | `gemini-3.1-pro` |
 | Custom | `NOCODE_CUSTOM_BASE_URL` | 用户指定 |
 | Mock | （无，兜底） | `sonnet` |
 
 覆盖提供商或模型：
 
 ```bash
-export NOCODE_MODEL_PROVIDER=openai
+export NOCODE_MODEL_PROVIDER=anthropic
 export NOCODE_MODEL=gpt-5.4
 ```
 
@@ -64,7 +64,7 @@ export NOCODE_MODEL=gpt-5.4
 ```bash
 export NOCODE_MODEL_PROVIDER=custom
 export NOCODE_CUSTOM_BASE_URL=http://localhost:11434/v1
-export NOCODE_CUSTOM_API_FORMAT=openai   # claude (Messages API) | openai (Chat/Responses) | gemini (generateContent)
+export NOCODE_CUSTOM_API_FORMAT=openai   # anthropic (Messages API) | openai (Chat/Responses) | google (generateContent)
 export NOCODE_MODEL=llama3
 ```
 
@@ -156,10 +156,10 @@ export NOCODE_MODEL=llama3
 
 | 变量 | 用途 |
 |------|------|
-| `NOCODE_MODEL_PROVIDER` | 强制提供商：`claude`、`openai`、`gemini`、`custom`、`mock` |
+| `NOCODE_MODEL_PROVIDER` | 强制提供商：`anthropic`、`openai`、`google`、`custom`、`mock` |
 | `NOCODE_MODEL` | 覆盖模型名 |
 | `NOCODE_CUSTOM_BASE_URL` | Custom 提供商端点 |
-| `NOCODE_CUSTOM_API_FORMAT` | API 协议格式：`claude`（Messages API）、`openai`（Chat Completions / Responses）、`gemini`（generateContent） |
+| `NOCODE_CUSTOM_API_FORMAT` | API 协议格式：`anthropic`（Messages API）、`openai`（Chat Completions / Responses）、`google`（generateContent） |
 | `NOCODE_SYSTEM_PROMPT` | 覆盖系统提示词 |
 | `NOCODE_MODEL_REASONING_EFFORT` | `low`、`medium`、`high` |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | 提供商 API 密钥 |

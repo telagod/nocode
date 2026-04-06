@@ -150,9 +150,9 @@ Modules:
 
 ## Environment Variables
 
-- `NOCODE_MODEL_PROVIDER` — force provider (`claude`, `openai`, `gemini`, `custom`, `mock`)
+- `NOCODE_MODEL_PROVIDER` — force provider (`anthropic`, `openai`, `google`, `custom`, `mock`)
 - `NOCODE_MODEL` — override model name
-- `NOCODE_CUSTOM_BASE_URL` / `NOCODE_CUSTOM_API_FORMAT` — Custom provider config (`claude`=Messages API, `openai`=Chat Completions/Responses, `gemini`=generateContent)
+- `NOCODE_CUSTOM_BASE_URL` / `NOCODE_CUSTOM_API_FORMAT` — Custom provider config (`anthropic`=Messages API, `openai`=Chat Completions/Responses, `google`=generateContent)
 - `NOCODE_SYSTEM_PROMPT` — override system prompt
 - `NOCODE_MODEL_REASONING_EFFORT` — `low`, `medium`, `high`
 - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` — provider API keys

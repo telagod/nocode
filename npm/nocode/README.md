@@ -40,7 +40,7 @@ export GEMINI_API_KEY=...          # Gemini
 Override provider or model:
 
 ```bash
-export NOCODE_MODEL_PROVIDER=claude   # claude|openai|gemini|custom
+export NOCODE_MODEL_PROVIDER=anthropic   # anthropic|openai|google|custom
 export NOCODE_MODEL=claude-opus-4-6
 ```
 

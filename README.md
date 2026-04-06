@@ -42,20 +42,20 @@ nocode --bridge-remote-once "prompt" # single-turn remote execution
 
 ## Providers
 
-Auto-detected from environment variables. Priority: explicit override > Gemini > OpenAI > Claude > Mock.
+Auto-detected from environment variables. Priority: explicit override > Google > OpenAI > Anthropic > Mock.
 
 | Provider | API Key | Default Model |
 |----------|---------|---------------|
-| Claude | `ANTHROPIC_API_KEY` | `claude-opus-4-6` |
-| OpenAI | `OPENAI_API_KEY` | `gpt-5.4` |
-| Gemini | `GEMINI_API_KEY` | `gemini-3.1-pro` |
+| Anthropic (Claude) | `ANTHROPIC_API_KEY` | `claude-opus-4-6` |
+| OpenAI (GPT) | `OPENAI_API_KEY` | `gpt-5.4` |
+| Google (Gemini) | `GEMINI_API_KEY` | `gemini-3.1-pro` |
 | Custom | `NOCODE_CUSTOM_BASE_URL` | user-specified |
 | Mock | (none, fallback) | `sonnet` |
 
 Override provider or model:
 
 ```bash
-export NOCODE_MODEL_PROVIDER=openai
+export NOCODE_MODEL_PROVIDER=anthropic
 export NOCODE_MODEL=gpt-5.4
 ```
 
@@ -64,7 +64,7 @@ Use any OpenAI/Claude-compatible endpoint (Ollama, vLLM, LiteLLM, etc.):
 ```bash
 export NOCODE_MODEL_PROVIDER=custom
 export NOCODE_CUSTOM_BASE_URL=http://localhost:11434/v1
-export NOCODE_CUSTOM_API_FORMAT=openai   # claude (Messages API) | openai (Chat/Responses) | gemini (generateContent)
+export NOCODE_CUSTOM_API_FORMAT=openai   # anthropic (Messages API) | openai (Chat/Responses) | google (generateContent)
 export NOCODE_MODEL=llama3
 ```
 
@@ -156,10 +156,10 @@ export NOCODE_MODEL=llama3
 
 | Variable | Purpose |
 |----------|---------|
-| `NOCODE_MODEL_PROVIDER` | Force provider: `claude`, `openai`, `gemini`, `custom`, `mock` |
+| `NOCODE_MODEL_PROVIDER` | Force provider: `anthropic`, `openai`, `google`, `custom`, `mock` |
 | `NOCODE_MODEL` | Override model name |
 | `NOCODE_CUSTOM_BASE_URL` | Base URL for Custom provider |
-| `NOCODE_CUSTOM_API_FORMAT` | API wire format: `claude` (Messages API), `openai` (Chat Completions / Responses), `gemini` (generateContent) |
+| `NOCODE_CUSTOM_API_FORMAT` | API wire format: `anthropic` (Messages API), `openai` (Chat Completions / Responses), `google` (generateContent) |
 | `NOCODE_SYSTEM_PROMPT` | Override system prompt |
 | `NOCODE_MODEL_REASONING_EFFORT` | `low`, `medium`, `high` |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | Provider API keys |
