@@ -48,6 +48,27 @@ pub struct CommandRow {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskRow {
+    pub id: String,
+    pub session_id: String,
+    pub task_type: String,
+    pub status: String,
+    pub description: String,
+    pub payload_json: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskEventRow {
+    pub id: i64,
+    pub task_id: String,
+    pub event_type: String,
+    pub event_data: Option<String>,
+    pub created_at: String,
+}
+
 // ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------
@@ -94,6 +115,25 @@ CREATE TABLE IF NOT EXISTS command_history (
 CREATE TABLE IF NOT EXISTS telemetry_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT,
+    event_type TEXT NOT NULL,
+    event_data TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    task_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    description TEXT NOT NULL DEFAULT '',
+    payload_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS task_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
     event_data TEXT,
     created_at TEXT NOT NULL
@@ -549,6 +589,143 @@ impl SqlStore {
         .map_err(|e| e.to_string())?;
         Ok(())
     }
+
+    // -----------------------------------------------------------------------
+    // Task CRUD
+    // -----------------------------------------------------------------------
+
+    pub fn insert_task(
+        &self,
+        task_id: &str,
+        session_id: &str,
+        task_type: &str,
+        description: &str,
+        payload_json: Option<&str>,
+    ) -> Result<(), String> {
+        let conn = self.connection()?;
+        let now = Local::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO tasks (id, session_id, task_type, status, description, payload_json, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, 'pending', ?4, ?5, ?6, ?7)",
+            params![task_id, session_id, task_type, description, payload_json, now, now],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn update_task_status(&self, task_id: &str, status: &str) -> Result<(), String> {
+        let conn = self.connection()?;
+        let now = Local::now().to_rfc3339();
+        let updated = conn
+            .execute(
+                "UPDATE tasks SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                params![status, now, task_id],
+            )
+            .map_err(|e| e.to_string())?;
+        if updated == 0 {
+            return Err(format!("task not found: {task_id}"));
+        }
+        Ok(())
+    }
+
+    pub fn get_task(&self, task_id: &str) -> Result<Option<TaskRow>, String> {
+        let conn = self.connection()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, session_id, task_type, status, description, payload_json, created_at, updated_at \
+                 FROM tasks WHERE id = ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let mut rows = stmt
+            .query_map(params![task_id], |row| {
+                Ok(TaskRow {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    task_type: row.get(2)?,
+                    status: row.get(3)?,
+                    description: row.get(4)?,
+                    payload_json: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        match rows.next() {
+            Some(Ok(row)) => Ok(Some(row)),
+            Some(Err(e)) => Err(e.to_string()),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_tasks(&self, session_id: &str) -> Result<Vec<TaskRow>, String> {
+        let conn = self.connection()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, session_id, task_type, status, description, payload_json, created_at, updated_at \
+                 FROM tasks WHERE session_id = ?1 ORDER BY created_at ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![session_id], |row| {
+                Ok(TaskRow {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    task_type: row.get(2)?,
+                    status: row.get(3)?,
+                    description: row.get(4)?,
+                    payload_json: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    // -----------------------------------------------------------------------
+    // Task Events
+    // -----------------------------------------------------------------------
+
+    pub fn insert_task_event(
+        &self,
+        task_id: &str,
+        event_type: &str,
+        event_data: Option<&str>,
+    ) -> Result<(), String> {
+        let conn = self.connection()?;
+        let now = Local::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO task_events (task_id, event_type, event_data, created_at) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![task_id, event_type, event_data, now],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn list_task_events(&self, task_id: &str) -> Result<Vec<TaskEventRow>, String> {
+        let conn = self.connection()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, task_id, event_type, event_data, created_at \
+                 FROM task_events WHERE task_id = ?1 ORDER BY id ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![task_id], |row| {
+                Ok(TaskEventRow {
+                    id: row.get(0)?,
+                    task_id: row.get(1)?,
+                    event_type: row.get(2)?,
+                    event_data: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -761,5 +938,82 @@ mod tests {
         // Most recent first
         assert_eq!(limited[0].id, "c");
         assert_eq!(limited[1].id, "b");
+    }
+
+    #[test]
+    fn task_crud_lifecycle() {
+        let (_tmp, store) = make_store();
+        store
+            .insert_task(
+                "t1",
+                "s1",
+                "shell",
+                "run tests",
+                Some(r#"{"cmd":"cargo test"}"#),
+            )
+            .unwrap();
+        store
+            .insert_task("t2", "s1", "agent", "refactor module", None)
+            .unwrap();
+
+        // get
+        let task = store.get_task("t1").unwrap().unwrap();
+        assert_eq!(task.id, "t1");
+        assert_eq!(task.session_id, "s1");
+        assert_eq!(task.task_type, "shell");
+        assert_eq!(task.status, "pending");
+        assert_eq!(task.description, "run tests");
+        assert_eq!(
+            task.payload_json.as_deref(),
+            Some(r#"{"cmd":"cargo test"}"#)
+        );
+
+        // list by session
+        let tasks = store.list_tasks("s1").unwrap();
+        assert_eq!(tasks.len(), 2);
+
+        // update status
+        store.update_task_status("t1", "running").unwrap();
+        let updated = store.get_task("t1").unwrap().unwrap();
+        assert_eq!(updated.status, "running");
+
+        store.update_task_status("t1", "completed").unwrap();
+        let completed = store.get_task("t1").unwrap().unwrap();
+        assert_eq!(completed.status, "completed");
+
+        // not found
+        let err = store.update_task_status("nonexistent", "failed");
+        assert!(err.is_err());
+
+        // get nonexistent
+        assert!(store.get_task("nonexistent").unwrap().is_none());
+    }
+
+    #[test]
+    fn task_events_lifecycle() {
+        let (_tmp, store) = make_store();
+        store
+            .insert_task("t1", "s1", "shell", "run tests", None)
+            .unwrap();
+
+        store
+            .insert_task_event("t1", "spawned", Some(r#"{"pid":1234}"#))
+            .unwrap();
+        store.insert_task_event("t1", "started", None).unwrap();
+        store
+            .insert_task_event("t1", "completed", Some(r#"{"exit_code":0}"#))
+            .unwrap();
+
+        let events = store.list_task_events("t1").unwrap();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].event_type, "spawned");
+        assert_eq!(events[0].event_data.as_deref(), Some(r#"{"pid":1234}"#));
+        assert_eq!(events[1].event_type, "started");
+        assert!(events[1].event_data.is_none());
+        assert_eq!(events[2].event_type, "completed");
+
+        // empty for unknown task
+        let empty = store.list_task_events("nonexistent").unwrap();
+        assert!(empty.is_empty());
     }
 }
