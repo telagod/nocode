@@ -13,6 +13,7 @@ const PLATFORMS = {
   "darwin-x64": "@telagod/nocode-darwin-x64",
   "darwin-arm64": "@telagod/nocode-darwin-arm64",
   "win32-x64": "@telagod/nocode-win32-x64",
+  "win32-arm64": "@telagod/nocode-win32-arm64",
 };
 
 const key = `${os.platform()}-${os.arch()}`;

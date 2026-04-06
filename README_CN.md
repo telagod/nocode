@@ -177,6 +177,7 @@ export NOCODE_MODEL=llama3
 | macOS x64 | `@telagod/nocode-darwin-x64` |
 | macOS ARM64 | `@telagod/nocode-darwin-arm64` |
 | Windows x64 | `@telagod/nocode-win32-x64` |
+| Windows ARM64 | `@telagod/nocode-win32-arm64` |
 
 ## 许可证
 

@@ -20,7 +20,8 @@
     "@telagod/nocode-linux-arm64": "0.1.3",
     "@telagod/nocode-darwin-x64": "0.1.3",
     "@telagod/nocode-darwin-arm64": "0.1.3",
-    "@telagod/nocode-win32-x64": "0.1.3"
+    "@telagod/nocode-win32-x64": "0.1.3",
+    "@telagod/nocode-win32-arm64": "0.1.3"
   },
   "engines": {
     "node": ">=16"

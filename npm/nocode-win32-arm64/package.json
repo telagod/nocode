@@ -1,0 +1,15 @@
+{
+  "name": "@telagod/nocode-win32-arm64",
+  "version": "0.1.3",
+  "description": "nocode platform binary for Windows ARM64",
+  "os": ["win32"],
+  "cpu": ["arm64"],
+  "license": "MIT",
+  "author": "telagod",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/telagod/nocode"
+  },
+  "files": ["bin/"],
+  "preferUnplugged": true
+}
