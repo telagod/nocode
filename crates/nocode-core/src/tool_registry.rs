@@ -2,20 +2,15 @@
 ///
 /// Ordering: `ReadOnly < WorkspaceWrite < DangerFullAccess`.
 /// A tool whose `required_permission` exceeds the active mode is rejected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PermissionMode {
     /// Only read-oriented tools (Read, Glob, Grep, WebFetch, WebSearch).
     ReadOnly = 0,
     /// Allows workspace-scoped writes (Edit, Write, Bash, Agent, Task).
+    #[default]
     WorkspaceWrite = 1,
     /// No restrictions whatsoever.
     DangerFullAccess = 2,
-}
-
-impl Default for PermissionMode {
-    fn default() -> Self {
-        Self::WorkspaceWrite
-    }
 }
 
 impl PartialOrd for PermissionMode {
