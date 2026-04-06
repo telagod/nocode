@@ -4,11 +4,11 @@ use super::model::{
 };
 use crate::bash_validation::validate_bash_command;
 use crate::file_safety::{validate_read_target, validate_write_target};
-use crate::sandbox::{FilesystemIsolationMode, SandboxRequest, resolve_sandbox_status};
 use crate::message::QueryMessage;
 use crate::provider::ModelProvider;
 use crate::query_engine::QueryEngineConfig;
 use crate::query_engine::ThinkingMode;
+use crate::sandbox::{FilesystemIsolationMode, SandboxRequest, resolve_sandbox_status};
 use crate::task_runtime::{InProcessAgentHost, TaskAgentHost, TaskId};
 use crate::tool_registry::ToolRuntimeMode;
 use std::fs;
@@ -320,7 +320,9 @@ impl<H: ToolHost> DefaultToolExecutor<H> {
             &self.context.cwd,
         );
         if !validation.allowed {
-            let reason = validation.denial_reason.unwrap_or_else(|| "command blocked".to_string());
+            let reason = validation
+                .denial_reason
+                .unwrap_or_else(|| "command blocked".to_string());
             return ToolExecutionTrace {
                 progress_updates: Vec::new(),
                 result: ToolCallResult::failed(call, format!("command blocked: {reason}")),
@@ -351,10 +353,7 @@ impl<H: ToolHost> DefaultToolExecutor<H> {
         {
             return ToolExecutionTrace {
                 progress_updates,
-                result: ToolCallResult::failed(
-                    call,
-                    format!("sandbox blocked: {reason}"),
-                ),
+                result: ToolCallResult::failed(call, format!("sandbox blocked: {reason}")),
                 permission_denial: Some(reason),
             };
         }
@@ -863,10 +862,9 @@ impl<H: ToolHost> ToolExecutor for DefaultToolExecutor<H> {
             .iter()
             .map(|a| (a.key.clone(), a.value.clone()))
             .collect();
-        if let Err(error) = crate::tool_validation::validate_tool_input(
-            &request.call.tool_name,
-            &arg_pairs,
-        ) {
+        if let Err(error) =
+            crate::tool_validation::validate_tool_input(&request.call.tool_name, &arg_pairs)
+        {
             return ToolExecutionTrace {
                 progress_updates: Vec::new(),
                 result: ToolCallResult::failed(request.call, error),
@@ -921,10 +919,7 @@ fn shell_escape(value: &str) -> String {
 /// Check whether any absolute path tokens in a command fall outside the workspace.
 fn check_command_paths(command: &str, cwd: &str) -> Option<String> {
     for token in command.split_whitespace() {
-        if token.starts_with('/')
-            && !token.starts_with(cwd)
-            && !is_safe_system_path(token)
-        {
+        if token.starts_with('/') && !token.starts_with(cwd) && !is_safe_system_path(token) {
             return Some(format!("path {token} is outside workspace {cwd}"));
         }
     }
@@ -1090,7 +1085,9 @@ mod tests {
         use crate::bash_validation::validate_bash_command;
         use crate::tool_registry::PermissionMode;
         assert!(!validate_bash_command("rm -rf /", PermissionMode::WorkspaceWrite, "/tmp").allowed);
-        assert!(!validate_bash_command("rm -rf /*", PermissionMode::WorkspaceWrite, "/tmp").allowed);
+        assert!(
+            !validate_bash_command("rm -rf /*", PermissionMode::WorkspaceWrite, "/tmp").allowed
+        );
         assert!(!validate_bash_command("rm -rf ~", PermissionMode::WorkspaceWrite, "/tmp").allowed);
     }
 

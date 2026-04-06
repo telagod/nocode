@@ -49,22 +49,34 @@ mod tests {
 
     #[test]
     fn contract_met_when_observed_equals_required() {
-        let c = GreenContract { name: "ci".into(), required_level: PACKAGE };
+        let c = GreenContract {
+            name: "ci".into(),
+            required_level: PACKAGE,
+        };
         assert_eq!(c.evaluate(PACKAGE), ContractOutcome::Met);
     }
 
     #[test]
     fn contract_met_when_observed_exceeds_required() {
-        let c = GreenContract { name: "ci".into(), required_level: TARGETED_TESTS };
+        let c = GreenContract {
+            name: "ci".into(),
+            required_level: TARGETED_TESTS,
+        };
         assert_eq!(c.evaluate(WORKSPACE), ContractOutcome::Met);
     }
 
     #[test]
     fn contract_not_met_when_observed_below_required() {
-        let c = GreenContract { name: "merge".into(), required_level: MERGE_READY };
+        let c = GreenContract {
+            name: "merge".into(),
+            required_level: MERGE_READY,
+        };
         assert_eq!(
             c.evaluate(PACKAGE),
-            ContractOutcome::NotMet { required: MERGE_READY, observed: PACKAGE },
+            ContractOutcome::NotMet {
+                required: MERGE_READY,
+                observed: PACKAGE
+            },
         );
     }
 

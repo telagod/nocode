@@ -154,29 +154,29 @@ fn format_bash_result(output: &str) -> Vec<String> {
         if let Some(stdout) = parsed.get("stdout").and_then(Value::as_str)
             && !stdout.is_empty()
         {
-                let truncated =
-                    tool_truncate::truncate_output(stdout, &TruncateConfig::for_tool_output());
-                lines.push(String::from("stdout:"));
-                for line in truncated.content.lines() {
-                    lines.push(format!("  {line}"));
-                }
-                if let Some(msg) = truncated.truncation_message {
-                    lines.push(msg);
-                }
+            let truncated =
+                tool_truncate::truncate_output(stdout, &TruncateConfig::for_tool_output());
+            lines.push(String::from("stdout:"));
+            for line in truncated.content.lines() {
+                lines.push(format!("  {line}"));
             }
+            if let Some(msg) = truncated.truncation_message {
+                lines.push(msg);
+            }
+        }
         if let Some(stderr) = parsed.get("stderr").and_then(Value::as_str)
             && !stderr.is_empty()
         {
-                let truncated =
-                    tool_truncate::truncate_output(stderr, &TruncateConfig::for_tool_output());
-                lines.push(String::from("stderr:"));
-                for line in truncated.content.lines() {
-                    lines.push(format!("  {line}"));
-                }
-                if let Some(msg) = truncated.truncation_message {
-                    lines.push(msg);
-                }
+            let truncated =
+                tool_truncate::truncate_output(stderr, &TruncateConfig::for_tool_output());
+            lines.push(String::from("stderr:"));
+            for line in truncated.content.lines() {
+                lines.push(format!("  {line}"));
             }
+            if let Some(msg) = truncated.truncation_message {
+                lines.push(msg);
+            }
+        }
         if !lines.is_empty() {
             return lines;
         }

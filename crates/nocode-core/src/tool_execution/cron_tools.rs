@@ -94,8 +94,14 @@ pub fn execute_cron_create(call: ToolCallInput) -> ToolExecutionTrace {
     );
 
     let registry = global_cron_registry();
-    let entry = registry.lock().expect("lock poisoned").create(&schedule, &command);
-    let summary = format!("created cron {} ({} -> {})", entry.id, entry.schedule, entry.command);
+    let entry = registry
+        .lock()
+        .expect("lock poisoned")
+        .create(&schedule, &command);
+    let summary = format!(
+        "created cron {} ({} -> {})",
+        entry.id, entry.schedule, entry.command
+    );
 
     ToolExecutionTrace {
         progress_updates: vec![progress],
@@ -132,7 +138,10 @@ pub fn execute_cron_delete(call: ToolCallInput) -> ToolExecutionTrace {
 
     match result {
         Some(entry) => {
-            let summary = format!("deleted cron {} ({} -> {})", entry.id, entry.schedule, entry.command);
+            let summary = format!(
+                "deleted cron {} ({} -> {})",
+                entry.id, entry.schedule, entry.command
+            );
             ToolExecutionTrace {
                 progress_updates: vec![progress],
                 result: ToolPermissionDecision::allow(false).settle(
@@ -244,6 +253,11 @@ mod tests {
             .with_context_label("test");
         let trace = execute_cron_create(call);
         assert_eq!(trace.result.status_label(), "failed");
-        assert!(trace.result.message().contains("missing required argument: schedule"));
+        assert!(
+            trace
+                .result
+                .message()
+                .contains("missing required argument: schedule")
+        );
     }
 }

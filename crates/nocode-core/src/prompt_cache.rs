@@ -137,13 +137,16 @@ impl PromptCache {
         if self.entries.len() >= self.max_entries {
             self.evict_oldest();
         }
-        self.entries.insert(fingerprint, CacheEntry {
+        self.entries.insert(
             fingerprint,
-            response,
-            created_at_ms: now_ms(),
-            ttl_ms: ttl,
-            hit_count: 0,
-        });
+            CacheEntry {
+                fingerprint,
+                response,
+                created_at_ms: now_ms(),
+                ttl_ms: ttl,
+                hit_count: 0,
+            },
+        );
     }
 
     /// Remove a specific entry. Returns `true` if it existed.
@@ -167,7 +170,8 @@ impl PromptCache {
     pub fn evict_expired(&mut self) -> usize {
         let now = now_ms();
         let before = self.entries.len();
-        self.entries.retain(|_, e| now.saturating_sub(e.created_at_ms) <= e.ttl_ms);
+        self.entries
+            .retain(|_, e| now.saturating_sub(e.created_at_ms) <= e.ttl_ms);
         let evicted = before - self.entries.len();
         self.stats.evictions += evicted as u64;
         evicted

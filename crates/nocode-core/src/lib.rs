@@ -39,9 +39,9 @@ pub mod sandbox;
 pub mod session_compaction;
 pub mod session_persistence;
 pub mod sql_store;
-pub mod summary_compression;
 pub mod stale_branch;
 pub mod stop_hook;
+pub mod summary_compression;
 pub mod task_runtime;
 pub mod telemetry;
 pub mod tool_execution;
@@ -66,15 +66,26 @@ pub use command_registry::{
 };
 pub use file_history::{FileHistoryConfig, FileHistoryPlan, FileHistoryState};
 pub use file_safety::{
-    check_file_size, check_symlink_escape, is_binary_file, validate_read_target,
-    validate_write_target, BINARY_CHECK_SIZE, MAX_FILE_SIZE,
+    BINARY_CHECK_SIZE, MAX_FILE_SIZE, check_file_size, check_symlink_escape, is_binary_file,
+    validate_read_target, validate_write_target,
 };
 pub use history_store::{HistoryEntry, HistoryStore, HistoryStoreConfig, HistoryStorePlan};
+pub use lsp_client::{
+    LspAction, LspCompletionItem, LspDiagnostic, LspHoverResult, LspLocation, LspRegistry,
+    LspResult, LspServer, LspServerStatus, LspSymbol, global_lsp_registry,
+};
+pub use mcp_manager::{
+    McpDiscoveredTool, McpManager, McpServerEntry, McpServerStatus, global_mcp_manager,
+};
 pub use message::{QueryMessage, QueryMessageRole};
 pub use model_response::{ModelResponse, ModelResponseStopReason, ModelResponseToolPhase};
 pub use persistence_backend::{
     FileHistorySnapshot, LocalPersistenceBackend, NoopPersistenceBackend, NoopPersistenceReader,
     PersistedTranscriptEntry, PersistenceBackend, PersistenceDispatchResult, PersistenceReader,
+};
+pub use plugin_system::{
+    HookEvent, Plugin, PluginHookResult, PluginKind, PluginMetadata, PluginRegistry, PluginState,
+    PluginToolManifest, global_plugin_registry,
 };
 pub use policy_engine::{
     DiffScope, GreenLevel, LaneBlocker, LaneContext, PolicyAction, PolicyCondition, PolicyEngine,
@@ -100,11 +111,11 @@ pub use query_loop::{
     QueryLoopAction, QueryLoopContinueReason, QueryLoopModule, QueryLoopOutcome, QueryLoopParams,
     QueryLoopRunner, QueryLoopState, QueryLoopTerminal, QuerySource,
 };
-pub use roadmap::{MigrationSurface, RewriteRoadmap, RewriteStage, default_roadmap, render_status};
 pub use recovery::{
     EscalationPolicy, FailureScenario, RecoveryContext, RecoveryEvent, RecoveryRecipe,
     RecoveryResult, RecoveryStep, recipe_for,
 };
+pub use roadmap::{MigrationSurface, RewriteRoadmap, RewriteStage, default_roadmap, render_status};
 pub use session_compaction::{
     CompactionConfig, CompactionResult, RichCompactor, compact_session, estimate_message_tokens,
     should_compact, summarize_messages,
@@ -126,28 +137,17 @@ pub use task_runtime::{
     TaskPayload, TaskRecord, TaskResult, TaskRuntimeDriver, TaskShellHost, TaskStateBase,
     TaskStatus, TaskType, stop_task,
 };
+pub use tool_execution::mcp_bridge::{McpToolBridge, McpToolInfo, execute_mcp_tool_bridged};
 pub use tool_execution::{
     DefaultToolExecutor, DeferredTool, DeferredToolRegistry, LiveToolHost, ToolCallArgument,
     ToolCallInput, ToolCallOutput, ToolCallResult, ToolCommandOutput, ToolExecutionContext,
     ToolExecutionModule, ToolExecutionRequest, ToolExecutionTrace, ToolExecutor, ToolHost,
     ToolPermissionDecision, ToolProgressUpdate, ToolSearchResult,
 };
-pub use tool_execution::mcp_bridge::{McpToolBridge, McpToolInfo, execute_mcp_tool_bridged};
-pub use mcp_manager::{
-    McpDiscoveredTool, McpManager, McpServerEntry, McpServerStatus, global_mcp_manager,
-};
-pub use lsp_client::{
-    LspAction, LspCompletionItem, LspDiagnostic, LspHoverResult, LspLocation, LspRegistry,
-    LspResult, LspServer, LspServerStatus, LspSymbol, global_lsp_registry,
-};
 pub use tool_registry::{
     PermissionCondition, PermissionMode, PermissionRule, ToolDefinition, ToolKind,
     ToolPermissionContext, ToolRegistry, ToolRegistryModule, ToolRegistrySelection,
     ToolRuntimeMode, ToolSelectionIssue,
-};
-pub use plugin_system::{
-    HookEvent, Plugin, PluginHookResult, PluginKind, PluginMetadata, PluginRegistry,
-    PluginState, PluginToolManifest, global_plugin_registry,
 };
 pub use tool_validation::{get_tool_schema, validate_tool_input};
 pub use transcript::{QueryTranscript, TranscriptEntry, TranscriptRole};

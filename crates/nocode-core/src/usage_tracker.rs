@@ -166,7 +166,10 @@ mod tests {
         assert!(totals.input_tokens > snap1.input_tokens);
         assert!(totals.output_tokens > snap1.output_tokens);
         assert_eq!(totals.input_tokens, snap1.input_tokens + snap2.input_tokens);
-        assert_eq!(totals.output_tokens, snap1.output_tokens + snap2.output_tokens);
+        assert_eq!(
+            totals.output_tokens,
+            snap1.output_tokens + snap2.output_tokens
+        );
     }
 
     #[test]
@@ -179,12 +182,7 @@ mod tests {
             &[],
             1,
         );
-        let snapshot = tracker.record_turn(
-            &[QueryMessage::user("query")],
-            &[],
-            &turn,
-            &[],
-        );
+        let snapshot = tracker.record_turn(&[QueryMessage::user("query")], &[], &turn, &[]);
         assert_eq!(&snapshot.total_usage, tracker.totals());
     }
 }

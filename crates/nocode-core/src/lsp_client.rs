@@ -292,9 +292,7 @@ impl LspRegistry {
         {
             start -= 1;
         }
-        while end < bytes.len()
-            && ((bytes[end] as char).is_alphanumeric() || bytes[end] == b'_')
-        {
+        while end < bytes.len() && ((bytes[end] as char).is_alphanumeric() || bytes[end] == b'_') {
             end += 1;
         }
         let token = &target_line[start..end];
@@ -363,19 +361,30 @@ impl LspRegistry {
             .unwrap_or("");
         let keywords: &[&str] = match ext {
             "rs" => &[
-                "fn", "pub", "struct", "impl", "let", "mut", "use", "mod",
-                "enum", "trait", "const", "static", "async", "await",
-                "match", "if", "else", "for", "while", "loop", "return",
+                "fn", "pub", "struct", "impl", "let", "mut", "use", "mod", "enum", "trait",
+                "const", "static", "async", "await", "match", "if", "else", "for", "while", "loop",
+                "return",
             ],
             "ts" | "js" => &[
-                "function", "const", "let", "var", "class", "interface",
-                "import", "export", "async", "await", "return", "if",
-                "else", "for", "while",
+                "function",
+                "const",
+                "let",
+                "var",
+                "class",
+                "interface",
+                "import",
+                "export",
+                "async",
+                "await",
+                "return",
+                "if",
+                "else",
+                "for",
+                "while",
             ],
             "py" => &[
-                "def", "class", "import", "from", "return", "if", "else",
-                "elif", "for", "while", "with", "as", "try", "except",
-                "async", "await", "yield",
+                "def", "class", "import", "from", "return", "if", "else", "elif", "for", "while",
+                "with", "as", "try", "except", "async", "await", "yield",
             ],
             _ => &[],
         };
@@ -462,9 +471,7 @@ impl LspRegistry {
         {
             start -= 1;
         }
-        while end < bytes.len()
-            && ((bytes[end] as char).is_alphanumeric() || bytes[end] == b'_')
-        {
+        while end < bytes.len() && ((bytes[end] as char).is_alphanumeric() || bytes[end] == b'_') {
             end += 1;
         }
         let token = &target_line[start..end];
@@ -575,11 +582,23 @@ mod tests {
 
     #[test]
     fn parse_lsp_action() {
-        assert_eq!(LspAction::parse("diagnostics").unwrap(), LspAction::Diagnostics);
+        assert_eq!(
+            LspAction::parse("diagnostics").unwrap(),
+            LspAction::Diagnostics
+        );
         assert_eq!(LspAction::parse("hover").unwrap(), LspAction::Hover);
-        assert_eq!(LspAction::parse("definition").unwrap(), LspAction::Definition);
-        assert_eq!(LspAction::parse("references").unwrap(), LspAction::References);
-        assert_eq!(LspAction::parse("completion").unwrap(), LspAction::Completion);
+        assert_eq!(
+            LspAction::parse("definition").unwrap(),
+            LspAction::Definition
+        );
+        assert_eq!(
+            LspAction::parse("references").unwrap(),
+            LspAction::References
+        );
+        assert_eq!(
+            LspAction::parse("completion").unwrap(),
+            LspAction::Completion
+        );
         assert_eq!(LspAction::parse("symbols").unwrap(), LspAction::Symbols);
         assert!(LspAction::parse("unknown").is_err());
     }
@@ -597,7 +616,9 @@ mod tests {
     fn global_singleton_works() {
         let reg1 = global_lsp_registry();
         let reg2 = global_lsp_registry();
-        reg1.lock().unwrap().register("test-lsp", vec!["test".into()]);
+        reg1.lock()
+            .unwrap()
+            .register("test-lsp", vec!["test".into()]);
         assert!(reg2.lock().unwrap().get("test-lsp").is_some());
     }
 
@@ -621,7 +642,10 @@ mod tests {
         match result {
             LspResult::Symbols(syms) => {
                 let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
-                assert!(names.contains(&"hello_world"), "missing hello_world: {names:?}");
+                assert!(
+                    names.contains(&"hello_world"),
+                    "missing hello_world: {names:?}"
+                );
                 assert!(names.contains(&"MyStruct"), "missing MyStruct: {names:?}");
                 assert!(names.contains(&"Color"), "missing Color: {names:?}");
                 assert!(names.contains(&"Drawable"), "missing Drawable: {names:?}");
@@ -656,7 +680,9 @@ mod tests {
         match result {
             LspResult::Diagnostics(diags) => {
                 assert!(
-                    diags.iter().any(|d| d.message.contains("unbalanced braces")),
+                    diags
+                        .iter()
+                        .any(|d| d.message.contains("unbalanced braces")),
                     "expected unbalanced braces diagnostic: {diags:?}"
                 );
             }
@@ -698,9 +724,7 @@ mod tests {
         reg.register("ra", vec!["rust".into()]);
         reg.connect("ra").unwrap();
         let file_str = file_path.to_str().unwrap();
-        let result = reg
-            .execute("ra", LspAction::Hover, file_str, 1, 3)
-            .unwrap();
+        let result = reg.execute("ra", LspAction::Hover, file_str, 1, 3).unwrap();
         match result {
             LspResult::Hover(Some(hover)) => {
                 assert!(

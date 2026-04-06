@@ -83,7 +83,10 @@ pub fn compress_summary(
         compressed_lines.push(truncate_line(&normalized.lines[0], budget.max_chars));
     }
 
-    let omitted_lines = normalized.lines.len().saturating_sub(compressed_lines.len());
+    let omitted_lines = normalized
+        .lines
+        .len()
+        .saturating_sub(compressed_lines.len());
 
     if omitted_lines > 0 {
         let notice = format!("- ... {omitted_lines} additional line(s) omitted.");
@@ -296,7 +299,11 @@ mod tests {
         };
         let r = compress_summary(&input, &budget);
         for line in r.summary.lines() {
-            assert!(line.chars().count() <= 50, "line too long: {}", line.chars().count());
+            assert!(
+                line.chars().count() <= 50,
+                "line too long: {}",
+                line.chars().count()
+            );
         }
     }
 

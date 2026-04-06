@@ -192,9 +192,7 @@ impl PluginRegistry {
     }
 
     fn find_mut(&mut self, plugin_id: &str) -> Option<&mut Plugin> {
-        self.plugins
-            .iter_mut()
-            .find(|p| p.metadata.id == plugin_id)
+        self.plugins.iter_mut().find(|p| p.metadata.id == plugin_id)
     }
 }
 
@@ -391,7 +389,11 @@ mod tests {
         let mut reg = PluginRegistry::new();
         let mut p = make_plugin("x");
         p.metadata.id = String::new();
-        assert!(reg.register(p).unwrap_err().contains("id must not be empty"));
+        assert!(
+            reg.register(p)
+                .unwrap_err()
+                .contains("id must not be empty")
+        );
     }
 
     #[test]

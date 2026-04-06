@@ -202,7 +202,12 @@ mod tests {
         assert_eq!(f.message, "timeout");
 
         let last = w.events.last().unwrap();
-        assert_eq!(last.kind, WorkerEventKind::Failed { kind: WorkerFailureKind::Provider });
+        assert_eq!(
+            last.kind,
+            WorkerEventKind::Failed {
+                kind: WorkerFailureKind::Provider
+            }
+        );
         assert_eq!(last.status, WorkerStatus::Failed);
     }
 
@@ -216,11 +221,14 @@ mod tests {
         assert_eq!(w.status, WorkerStatus::ReadyForPrompt);
 
         let kinds: Vec<_> = w.events.iter().map(|e| e.kind.clone()).collect();
-        assert_eq!(kinds, vec![
-            WorkerEventKind::Spawning,
-            WorkerEventKind::TrustRequired,
-            WorkerEventKind::TrustResolved,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                WorkerEventKind::Spawning,
+                WorkerEventKind::TrustRequired,
+                WorkerEventKind::TrustResolved,
+            ]
+        );
     }
 
     #[test]

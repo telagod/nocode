@@ -167,10 +167,7 @@ pub fn summarize_messages(messages: &[QueryMessage]) -> String {
 }
 
 /// Run compaction: preserve recent messages, summarize the rest, insert continuation marker.
-pub fn compact_session(
-    messages: &[QueryMessage],
-    config: &CompactionConfig,
-) -> CompactionResult {
+pub fn compact_session(messages: &[QueryMessage], config: &CompactionConfig) -> CompactionResult {
     if messages.is_empty() || !should_compact(messages, config) {
         return CompactionResult {
             summary: String::new(),
@@ -231,8 +228,16 @@ fn extract_file_paths(content: &str, extensions: &[&str], out: &mut BTreeSet<Str
     for word in content.split_whitespace() {
         // Strip common surrounding punctuation
         let cleaned = word.trim_matches(|c: char| {
-            c == '(' || c == ')' || c == '[' || c == ']' || c == '`' || c == '\'' || c == '"'
-                || c == ',' || c == ';' || c == ':'
+            c == '('
+                || c == ')'
+                || c == '['
+                || c == ']'
+                || c == '`'
+                || c == '\''
+                || c == '"'
+                || c == ','
+                || c == ';'
+                || c == ':'
         });
         if cleaned.is_empty() {
             continue;
@@ -271,7 +276,7 @@ mod tests {
     #[test]
     fn token_estimation() {
         let msgs = vec![
-            QueryMessage::user("hello world"),       // 11 / 4 + 1 = 3
+            QueryMessage::user("hello world"),          // 11 / 4 + 1 = 3
             QueryMessage::assistant("hi there friend"), // 15 / 4 + 1 = 4
         ];
         assert_eq!(estimate_message_tokens(&msgs), 7);

@@ -1,5 +1,5 @@
-use nocode_core::mock_service::{ParityTestRunner};
 use nocode_core::memory_store::{MemoryEntry, MemoryStore, MemoryType};
+use nocode_core::mock_service::ParityTestRunner;
 
 // ---------------------------------------------------------------------------
 // MockAnthropicService parity scenarios

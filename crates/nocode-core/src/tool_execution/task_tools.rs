@@ -4,7 +4,7 @@ use super::model::{
 };
 use crate::message::QueryMessage;
 use crate::task_runtime::{
-    global_task_coordinator, stop_task, TaskId, TaskPayload, TaskRecord, TaskStatus,
+    TaskId, TaskPayload, TaskRecord, TaskStatus, global_task_coordinator, stop_task,
 };
 
 fn missing_argument(call: ToolCallInput, key: &str) -> ToolExecutionTrace {
@@ -254,13 +254,17 @@ mod tests {
         let call = ToolCallInput::new("TaskGet", "t2");
         let trace = execute_task_get(call);
         assert_eq!(trace.result.status_label(), "failed");
-        assert!(trace.result.message().contains("missing required argument: task_id"));
+        assert!(
+            trace
+                .result
+                .message()
+                .contains("missing required argument: task_id")
+        );
     }
 
     #[test]
     fn task_get_not_found() {
-        let call = ToolCallInput::new("TaskGet", "t1")
-            .with_argument("task_id", "nonexistent_id");
+        let call = ToolCallInput::new("TaskGet", "t1").with_argument("task_id", "nonexistent_id");
         let trace = execute_task_get(call);
         assert_eq!(trace.result.status_label(), "completed");
         assert!(trace.result.message().contains("not found"));
@@ -271,10 +275,13 @@ mod tests {
         let coordinator = global_task_coordinator();
         let tid = {
             let mut guard = coordinator.lock().unwrap();
-            guard.spawn_local_shell("echo hello".to_string(), Some("test task".to_string()), None)
+            guard.spawn_local_shell(
+                "echo hello".to_string(),
+                Some("test task".to_string()),
+                None,
+            )
         };
-        let call = ToolCallInput::new("TaskGet", "tg1")
-            .with_argument("task_id", tid.as_str());
+        let call = ToolCallInput::new("TaskGet", "tg1").with_argument("task_id", tid.as_str());
         let trace = execute_task_get(call);
         assert_eq!(trace.result.status_label(), "completed");
         let msg = trace.result.message();
@@ -294,8 +301,7 @@ mod tests {
 
     #[test]
     fn task_list_with_filter() {
-        let call = ToolCallInput::new("TaskList", "t4")
-            .with_argument("filter", "running");
+        let call = ToolCallInput::new("TaskList", "t4").with_argument("filter", "running");
         let trace = execute_task_list(call);
         assert_eq!(trace.result.status_label(), "completed");
     }
@@ -313,8 +319,7 @@ mod tests {
             guard.complete_task(&tid);
             tid
         };
-        let call = ToolCallInput::new("TaskList", "tl_filter")
-            .with_argument("filter", "completed");
+        let call = ToolCallInput::new("TaskList", "tl_filter").with_argument("filter", "completed");
         let trace = execute_task_list(call);
         let msg = trace.result.message();
         assert!(msg.contains(tid.as_str()));
@@ -324,8 +329,7 @@ mod tests {
     // --- TaskUpdate ---
     #[test]
     fn task_update_missing_task_id() {
-        let call = ToolCallInput::new("TaskUpdate", "t6")
-            .with_argument("status", "completed");
+        let call = ToolCallInput::new("TaskUpdate", "t6").with_argument("status", "completed");
         let trace = execute_task_update(call);
         assert_eq!(trace.result.status_label(), "failed");
         assert!(trace.result.message().contains("task_id"));
@@ -333,8 +337,8 @@ mod tests {
 
     #[test]
     fn task_update_missing_status() {
-        let call = ToolCallInput::new("TaskUpdate", "t7")
-            .with_argument("task_id", "a0000000000000001");
+        let call =
+            ToolCallInput::new("TaskUpdate", "t7").with_argument("task_id", "a0000000000000001");
         let trace = execute_task_update(call);
         assert_eq!(trace.result.status_label(), "failed");
         assert!(trace.result.message().contains("status"));
@@ -361,8 +365,7 @@ mod tests {
 
     #[test]
     fn task_stop_not_found() {
-        let call = ToolCallInput::new("TaskStop", "ts1")
-            .with_argument("task_id", "nonexistent");
+        let call = ToolCallInput::new("TaskStop", "ts1").with_argument("task_id", "nonexistent");
         let trace = execute_task_stop(call);
         assert_eq!(trace.result.status_label(), "completed");
         assert!(trace.result.message().contains("not found"));
@@ -379,8 +382,7 @@ mod tests {
 
     #[test]
     fn task_output_not_found() {
-        let call = ToolCallInput::new("TaskOutput", "to1")
-            .with_argument("task_id", "nonexistent");
+        let call = ToolCallInput::new("TaskOutput", "to1").with_argument("task_id", "nonexistent");
         let trace = execute_task_output(call);
         assert_eq!(trace.result.status_label(), "completed");
         assert!(trace.result.message().contains("not found"));
@@ -397,8 +399,7 @@ mod tests {
                 None,
             )
         };
-        let call = ToolCallInput::new("TaskOutput", "to2")
-            .with_argument("task_id", tid.as_str());
+        let call = ToolCallInput::new("TaskOutput", "to2").with_argument("task_id", tid.as_str());
         let trace = execute_task_output(call);
         assert_eq!(trace.result.status_label(), "completed");
         assert!(trace.result.message().contains("shell: no result yet"));

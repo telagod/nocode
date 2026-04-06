@@ -9,10 +9,10 @@ mod spinner;
 #[allow(dead_code)]
 mod status_hud;
 mod task_panel;
-#[allow(dead_code, clippy::empty_line_after_doc_comments)]
-mod tool_truncate;
 #[allow(dead_code)]
 mod tool_render;
+#[allow(dead_code, clippy::empty_line_after_doc_comments)]
+mod tool_truncate;
 mod tui;
 
 use nocode_core::{
@@ -77,8 +77,9 @@ fn env_default_provider() -> ModelProvider {
 fn env_default_model(provider: ModelProvider) -> Option<String> {
     env_var_optional("NOCODE_MODEL").or_else(|| match provider {
         ModelProvider::Mock => Some(String::from("sonnet")),
-        ModelProvider::Claude | ModelProvider::Custom => env_var_optional("ANTHROPIC_MODEL")
-            .or_else(|| Some(String::from("claude-opus-4-6"))),
+        ModelProvider::Claude | ModelProvider::Custom => {
+            env_var_optional("ANTHROPIC_MODEL").or_else(|| Some(String::from("claude-opus-4-6")))
+        }
         ModelProvider::OpenAi => {
             env_var_optional("OPENAI_MODEL").or_else(|| Some(String::from("gpt-5.4")))
         }

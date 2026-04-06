@@ -470,11 +470,7 @@ mod tests {
     fn danger_mode_allows_all() {
         let registry = ToolRegistry::default();
         let ctx = ToolPermissionContext::default().with_mode(PermissionMode::DangerFullAccess);
-        let selection = registry.select_tools(
-            &[],
-            ToolRuntimeMode::Standard,
-            &ctx,
-        );
+        let selection = registry.select_tools(&[], ToolRuntimeMode::Standard, &ctx);
 
         // All base tools should be available.
         assert_eq!(selection.available_tools.len(), registry.base_tools.len());

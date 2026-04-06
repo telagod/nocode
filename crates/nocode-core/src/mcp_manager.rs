@@ -114,9 +114,10 @@ impl McpManager {
             .ok_or_else(|| format!("MCP tool not found: {tool_name}"))?;
 
         let server_name = &tool.server_name;
-        let entry = self.servers.get(server_name).ok_or_else(|| {
-            format!("MCP server '{server_name}' not registered")
-        })?;
+        let entry = self
+            .servers
+            .get(server_name)
+            .ok_or_else(|| format!("MCP server '{server_name}' not registered"))?;
 
         match entry.status {
             McpServerStatus::Connected => {

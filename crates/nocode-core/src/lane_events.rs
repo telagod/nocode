@@ -92,11 +92,21 @@ impl LaneEvent {
     }
 
     pub fn blocked(class: LaneFailureClass, detail: impl Into<String>) -> Self {
-        Self::with_failure(LaneEventName::Blocked, LaneEventStatus::Blocked, class, detail)
+        Self::with_failure(
+            LaneEventName::Blocked,
+            LaneEventStatus::Blocked,
+            class,
+            detail,
+        )
     }
 
     pub fn failed(class: LaneFailureClass, detail: impl Into<String>) -> Self {
-        Self::with_failure(LaneEventName::Failed, LaneEventStatus::Failed, class, detail)
+        Self::with_failure(
+            LaneEventName::Failed,
+            LaneEventStatus::Failed,
+            class,
+            detail,
+        )
     }
 }
 

@@ -2,7 +2,7 @@ use std::fs;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::Local;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 // ---------------------------------------------------------------------------
 // Row types
@@ -110,8 +110,7 @@ pub struct SqlStore {
 
 impl SqlStore {
     pub fn new(base_dir: &str) -> Result<Self, String> {
-        fs::create_dir_all(base_dir)
-            .map_err(|e| format!("failed to create data dir: {e}"))?;
+        fs::create_dir_all(base_dir).map_err(|e| format!("failed to create data dir: {e}"))?;
         Ok(Self {
             base_dir: base_dir.to_string(),
         })
@@ -140,8 +139,8 @@ impl SqlStore {
     }
 
     pub fn list_volumes(&self) -> Result<Vec<String>, String> {
-        let dir = fs::read_dir(&self.base_dir)
-            .map_err(|e| format!("failed to read data dir: {e}"))?;
+        let dir =
+            fs::read_dir(&self.base_dir).map_err(|e| format!("failed to read data dir: {e}"))?;
         let mut dates: Vec<String> = Vec::new();
         for entry in dir {
             let entry = entry.map_err(|e| e.to_string())?;
@@ -231,7 +230,8 @@ impl SqlStore {
                 })
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     pub fn list_sessions_for_date(&self, date: &str) -> Result<Vec<SessionRow>, String> {
@@ -255,7 +255,8 @@ impl SqlStore {
                 })
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     // -----------------------------------------------------------------------
@@ -275,7 +276,14 @@ impl SqlStore {
         conn.execute(
             "INSERT INTO messages (session_id, role, content, turn, created_at, token_count) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![session_id, role, content, turn as i64, now, token_count as i64],
+            params![
+                session_id,
+                role,
+                content,
+                turn as i64,
+                now,
+                token_count as i64
+            ],
         )
         .map_err(|e| e.to_string())?;
         Ok(conn.last_insert_rowid())
@@ -302,7 +310,8 @@ impl SqlStore {
                 })
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     pub fn get_messages_since(
@@ -330,7 +339,8 @@ impl SqlStore {
                 })
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     pub fn count_messages(&self, session_id: &str) -> Result<usize, String> {
@@ -482,7 +492,8 @@ impl SqlStore {
                 })
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     // -----------------------------------------------------------------------
@@ -518,7 +529,8 @@ impl SqlStore {
                 })
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     pub fn insert_telemetry(
@@ -593,7 +605,9 @@ mod tests {
         store.create_session("s1", "test-model").unwrap();
 
         let id1 = store.insert_message("s1", "user", "hello", 0, 5).unwrap();
-        let id2 = store.insert_message("s1", "assistant", "hi there", 1, 10).unwrap();
+        let id2 = store
+            .insert_message("s1", "assistant", "hi there", 1, 10)
+            .unwrap();
         assert!(id2 > id1);
 
         let msgs = store.get_messages("s1").unwrap();
@@ -731,9 +745,7 @@ mod tests {
         store
             .insert_telemetry(Some("s1"), "model_call", r#"{"tokens": 100}"#)
             .unwrap();
-        store
-            .insert_telemetry(None, "startup", "{}")
-            .unwrap();
+        store.insert_telemetry(None, "startup", "{}").unwrap();
         // No read API required by spec, just verify no errors
     }
 

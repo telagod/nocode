@@ -95,11 +95,17 @@ impl MemoryTelemetrySink {
     }
 
     pub fn records(&self) -> Vec<TelemetryRecord> {
-        self.records.lock().expect("telemetry lock poisoned").clone()
+        self.records
+            .lock()
+            .expect("telemetry lock poisoned")
+            .clone()
     }
 
     pub fn clear(&self) {
-        self.records.lock().expect("telemetry lock poisoned").clear();
+        self.records
+            .lock()
+            .expect("telemetry lock poisoned")
+            .clear();
     }
 
     pub fn count(&self) -> usize {
@@ -132,11 +138,7 @@ pub struct SessionTracer {
 }
 
 impl SessionTracer {
-    pub fn new(
-        session_id: &str,
-        identity: ClientIdentity,
-        sink: Arc<dyn TelemetrySink>,
-    ) -> Self {
+    pub fn new(session_id: &str, identity: ClientIdentity, sink: Arc<dyn TelemetrySink>) -> Self {
         Self {
             session_id: session_id.to_owned(),
             identity,
@@ -212,8 +214,7 @@ mod tests {
     #[test]
     fn emit_records_event() {
         let sink = Arc::new(MemoryTelemetrySink::new());
-        let mut tracer =
-            SessionTracer::new("s1", sample_identity(), sink.clone());
+        let mut tracer = SessionTracer::new("s1", sample_identity(), sink.clone());
 
         tracer.emit(TelemetryEvent::SessionStarted {
             session_id: "s1".into(),
@@ -232,8 +233,7 @@ mod tests {
     #[test]
     fn sequence_increments() {
         let sink = Arc::new(MemoryTelemetrySink::new());
-        let mut tracer =
-            SessionTracer::new("s2", sample_identity(), sink.clone());
+        let mut tracer = SessionTracer::new("s2", sample_identity(), sink.clone());
 
         for i in 0..5 {
             tracer.emit(TelemetryEvent::TurnStarted {
@@ -250,8 +250,7 @@ mod tests {
     #[test]
     fn multiple_events_tracked() {
         let sink = Arc::new(MemoryTelemetrySink::new());
-        let mut tracer =
-            SessionTracer::new("s3", sample_identity(), sink.clone());
+        let mut tracer = SessionTracer::new("s3", sample_identity(), sink.clone());
 
         tracer.emit(TelemetryEvent::SessionStarted {
             session_id: "s3".into(),
@@ -277,8 +276,7 @@ mod tests {
     #[test]
     fn session_tracer_emits_to_sink() {
         let sink = Arc::new(MemoryTelemetrySink::new());
-        let mut tracer =
-            SessionTracer::new("sess-abc", sample_identity(), sink.clone());
+        let mut tracer = SessionTracer::new("sess-abc", sample_identity(), sink.clone());
 
         assert_eq!(tracer.session_id(), "sess-abc");
 

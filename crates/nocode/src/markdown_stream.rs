@@ -185,10 +185,7 @@ mod tests {
         assert!(state.push("fn main() {\n\n").is_none());
         assert!(state.push("}\n").is_none());
         let out = state.push("```\n");
-        assert_eq!(
-            out.as_deref(),
-            Some("```rust\nfn main() {\n\n}\n```\n")
-        );
+        assert_eq!(out.as_deref(), Some("```rust\nfn main() {\n\n}\n```\n"));
     }
 
     #[test]

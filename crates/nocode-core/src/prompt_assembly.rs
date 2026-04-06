@@ -148,10 +148,7 @@ impl SystemPromptBuilder {
             if section.label.is_empty() {
                 out.push_str(&section.content);
             } else if section.is_dynamic {
-                out.push_str(&format!(
-                    "# {}\n{}",
-                    section.label, section.content
-                ));
+                out.push_str(&format!("# {}\n{}", section.label, section.content));
             } else {
                 out.push_str(&section.content);
             }
@@ -260,9 +257,21 @@ mod tests {
     fn instruction_dedup_by_hash() {
         let h = simple_hash("same content");
         let files = vec![
-            InstructionFile { path: "a.md".into(), content: "same content".into(), content_hash: h },
-            InstructionFile { path: "b.md".into(), content: "same content".into(), content_hash: h },
-            InstructionFile { path: "c.md".into(), content: "different".into(), content_hash: simple_hash("different") },
+            InstructionFile {
+                path: "a.md".into(),
+                content: "same content".into(),
+                content_hash: h,
+            },
+            InstructionFile {
+                path: "b.md".into(),
+                content: "same content".into(),
+                content_hash: h,
+            },
+            InstructionFile {
+                path: "c.md".into(),
+                content: "different".into(),
+                content_hash: simple_hash("different"),
+            },
         ];
         let mut b = SystemPromptBuilder::new();
         b.add_instructions(&files);
@@ -301,7 +310,10 @@ mod tests {
         // The merged instructions section must not exceed the budget
         // (the "# instructions\n" label adds a few chars, but the content itself is capped)
         // At most 2 files can fit within the budget
-        let count = files.iter().filter(|f| out.contains(&format!("# {}", f.path))).count();
+        let count = files
+            .iter()
+            .filter(|f| out.contains(&format!("# {}", f.path)))
+            .count();
         assert!(count <= 3, "too many files included: {}", count);
     }
 

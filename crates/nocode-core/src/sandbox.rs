@@ -115,9 +115,8 @@ pub fn resolve_sandbox_status(request: &SandboxRequest) -> SandboxStatus {
     // Inside a container we may lack CAP_SYS_ADMIN for nested namespaces.
     if container.in_container && ns_support {
         // We can still *try*, but flag the risk.
-        fallback_reasons.push(
-            "running inside a container — nested namespace support may be limited".into(),
-        );
+        fallback_reasons
+            .push("running inside a container — nested namespace support may be limited".into());
     }
 
     SandboxStatus {

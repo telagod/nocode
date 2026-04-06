@@ -140,7 +140,10 @@ mod tests {
 
     #[test]
     fn stop_reason_labels_are_stable() {
-        assert_eq!(ModelResponseStopReason::ToolBatchFlushed.as_str(), "tool_batch_flushed");
+        assert_eq!(
+            ModelResponseStopReason::ToolBatchFlushed.as_str(),
+            "tool_batch_flushed"
+        );
         assert_eq!(ModelResponseStopReason::Completed.as_str(), "completed");
         assert_eq!(ModelResponseStopReason::MaxTurns.as_str(), "max_turns");
         assert_eq!(ModelResponseStopReason::Terminal.as_str(), "terminal");
@@ -149,18 +152,21 @@ mod tests {
     #[test]
     fn tool_phase_new_sets_resolved_from_vec_len() {
         use super::ModelResponseToolPhase;
-        let phase = ModelResponseToolPhase::new(5, vec![
-            AssistantToolUse {
-                tool_name: String::from("Read"),
-                tool_use_id: String::from("t1"),
-                status: String::from("completed"),
-            },
-            AssistantToolUse {
-                tool_name: String::from("Write"),
-                tool_use_id: String::from("t2"),
-                status: String::from("completed"),
-            },
-        ]);
+        let phase = ModelResponseToolPhase::new(
+            5,
+            vec![
+                AssistantToolUse {
+                    tool_name: String::from("Read"),
+                    tool_use_id: String::from("t1"),
+                    status: String::from("completed"),
+                },
+                AssistantToolUse {
+                    tool_name: String::from("Write"),
+                    tool_use_id: String::from("t2"),
+                    status: String::from("completed"),
+                },
+            ],
+        );
         assert_eq!(phase.requested_tools, 5);
         assert_eq!(phase.resolved_tools, 2);
         assert_eq!(phase.tool_uses.len(), 2);

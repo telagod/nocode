@@ -90,10 +90,22 @@ mod tests {
 
     #[test]
     fn parse_role_is_case_insensitive_and_trims() {
-        assert_eq!(QueryMessageRole::parse("  System  "), Some(QueryMessageRole::System));
-        assert_eq!(QueryMessageRole::parse("USER"), Some(QueryMessageRole::User));
-        assert_eq!(QueryMessageRole::parse("Assistant"), Some(QueryMessageRole::Assistant));
-        assert_eq!(QueryMessageRole::parse("TOOL"), Some(QueryMessageRole::Tool));
+        assert_eq!(
+            QueryMessageRole::parse("  System  "),
+            Some(QueryMessageRole::System)
+        );
+        assert_eq!(
+            QueryMessageRole::parse("USER"),
+            Some(QueryMessageRole::User)
+        );
+        assert_eq!(
+            QueryMessageRole::parse("Assistant"),
+            Some(QueryMessageRole::Assistant)
+        );
+        assert_eq!(
+            QueryMessageRole::parse("TOOL"),
+            Some(QueryMessageRole::Tool)
+        );
         assert_eq!(QueryMessageRole::parse("unknown"), None);
         assert_eq!(QueryMessageRole::parse(""), None);
     }

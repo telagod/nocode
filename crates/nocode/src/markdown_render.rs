@@ -1,8 +1,8 @@
 use crossterm::style::Color;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
-use syntect::highlighting::{ThemeSet, Style as SynStyle};
-use syntect::parsing::SyntaxSet;
 use syntect::easy::HighlightLines;
+use syntect::highlighting::{Style as SynStyle, ThemeSet};
+use syntect::parsing::SyntaxSet;
 
 /// A single styled segment within a rendered line.
 #[derive(Debug, Clone)]
@@ -280,7 +280,10 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
             }
             Event::Rule => {
                 let mut rule_line = RenderedLine::new();
-                rule_line.push(LineSegment::new("\u{2500}\u{2500}\u{2500}", Color::DarkGrey));
+                rule_line.push(LineSegment::new(
+                    "\u{2500}\u{2500}\u{2500}",
+                    Color::DarkGrey,
+                ));
                 lines.push(rule_line);
             }
             Event::SoftBreak | Event::HardBreak => {
@@ -343,10 +346,18 @@ mod tests {
         let lines = render_markdown_to_lines(md);
         let texts: Vec<String> = lines.iter().map(render_line_to_string).collect();
         // Verify fences and code content are present
-        assert!(texts.iter().any(|t| t == "```rust"), "should have opening fence: {texts:?}");
-        assert!(texts.iter().any(|t| t == "```"), "should have closing fence: {texts:?}");
         assert!(
-            texts.iter().any(|t| t.contains("\u{2502} ") && t.contains("let x = 1;")),
+            texts.iter().any(|t| t == "```rust"),
+            "should have opening fence: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t == "```"),
+            "should have closing fence: {texts:?}"
+        );
+        assert!(
+            texts
+                .iter()
+                .any(|t| t.contains("\u{2502} ") && t.contains("let x = 1;")),
             "should have prefixed code line: {texts:?}"
         );
     }
@@ -356,10 +367,15 @@ mod tests {
         let md = "```\nhello\n```\n";
         let lines = render_markdown_to_lines(md);
         // Find the line with "hello"
-        let code_line = lines.iter().find(|l| {
-            render_line_to_string(l).contains("hello")
-        }).expect("should have a line with hello");
-        let code_seg = code_line.segments.iter().find(|s| s.text == "hello").unwrap();
+        let code_line = lines
+            .iter()
+            .find(|l| render_line_to_string(l).contains("hello"))
+            .expect("should have a line with hello");
+        let code_seg = code_line
+            .segments
+            .iter()
+            .find(|s| s.text == "hello")
+            .unwrap();
         // With syntect, plain text gets RGB colors from the theme, not Color::Green
         matches!(code_seg.color, Color::Rgb { .. } | Color::Green);
     }
@@ -379,9 +395,14 @@ mod tests {
         assert!(!code_lines.is_empty(), "should have code lines");
         // At least one segment across all code lines should use Rgb color
         let has_rgb = code_lines.iter().any(|line| {
-            line.segments.iter().any(|s| matches!(s.color, Color::Rgb { .. }))
+            line.segments
+                .iter()
+                .any(|s| matches!(s.color, Color::Rgb { .. }))
         });
-        assert!(has_rgb, "rust code should have at least one Rgb-colored segment");
+        assert!(
+            has_rgb,
+            "rust code should have at least one Rgb-colored segment"
+        );
     }
 
     #[test]
@@ -420,7 +441,11 @@ mod tests {
             .map(render_line_to_string)
             .collect();
         assert_eq!(texts[0], "\u{2022} outer");
-        assert!(texts[1].starts_with("  "), "inner should be indented: {:?}", texts[1]);
+        assert!(
+            texts[1].starts_with("  "),
+            "inner should be indented: {:?}",
+            texts[1]
+        );
         assert!(texts[1].contains("\u{2022} inner"));
     }
 
@@ -462,7 +487,11 @@ mod tests {
             .map(render_line_to_string)
             .next()
             .unwrap();
-        assert!(text.starts_with("\u{2502} "), "blockquote should have prefix: {:?}", text);
+        assert!(
+            text.starts_with("\u{2502} "),
+            "blockquote should have prefix: {:?}",
+            text
+        );
         assert!(text.contains("quoted text"));
     }
 
@@ -470,9 +499,9 @@ mod tests {
     fn rule_renders_dashes() {
         let md = "above\n\n---\n\nbelow\n";
         let lines = render_markdown_to_lines(md);
-        let has_rule = lines.iter().any(|l| {
-            render_line_to_string(l).contains("\u{2500}\u{2500}\u{2500}")
-        });
+        let has_rule = lines
+            .iter()
+            .any(|l| render_line_to_string(l).contains("\u{2500}\u{2500}\u{2500}"));
         assert!(has_rule, "should contain horizontal rule");
     }
 

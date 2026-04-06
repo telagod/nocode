@@ -75,15 +75,10 @@ fn parse_mcp_prefix(name: &str) -> Option<(&str, &str)> {
 /// name uses the `mcp:<server>:<tool>` prefix and the manager has a connected
 /// server with that tool, the call is routed through the manager. Otherwise
 /// falls back to the legacy `McpToolBridge` lookup for backward compatibility.
-pub fn execute_mcp_tool_bridged(
-    call: ToolCallInput,
-    bridge: &McpToolBridge,
-) -> ToolExecutionTrace {
+pub fn execute_mcp_tool_bridged(call: ToolCallInput, bridge: &McpToolBridge) -> ToolExecutionTrace {
     let tool_name = call.tool_name.clone();
-    let progress = ToolProgressUpdate::new(
-        call.tool_use_id.clone(),
-        format!("MCP bridge: {tool_name}"),
-    );
+    let progress =
+        ToolProgressUpdate::new(call.tool_use_id.clone(), format!("MCP bridge: {tool_name}"));
 
     // Try the global McpManager first for mcp:server:tool format.
     if let Some((server, tool)) = parse_mcp_prefix(&tool_name) {
@@ -93,50 +88,46 @@ pub fn execute_mcp_tool_bridged(
         if let Some(discovered) = mgr.find_tool(tool)
             && discovered.server_name == server
         {
-                let arguments = call
-                    .arguments
-                    .iter()
-                    .map(|a| (a.key.clone(), serde_json::Value::String(a.value.clone())))
-                    .collect::<serde_json::Map<String, serde_json::Value>>();
-                let args_value = serde_json::Value::Object(arguments);
+            let arguments = call
+                .arguments
+                .iter()
+                .map(|a| (a.key.clone(), serde_json::Value::String(a.value.clone())))
+                .collect::<serde_json::Map<String, serde_json::Value>>();
+            let args_value = serde_json::Value::Object(arguments);
 
-                match mgr.call_tool(tool, args_value) {
-                    Ok(result_body) => {
-                        let msg = format!(
-                            "MCP tool '{tool}' executed on server '{server}': {result_body}"
-                        );
-                        return ToolExecutionTrace {
-                            progress_updates: vec![progress],
-                            result: ToolPermissionDecision::allow(false).settle(
-                                call.clone(),
-                                ToolCallOutput {
-                                    summary: msg.clone(),
-                                    generated_messages: vec![QueryMessage::assistant(
-                                        format!("tool-message: {msg}"),
-                                    )],
-                                    context_label: Some(call.context_label.clone()),
-                                    progress_updates: vec![ToolProgressUpdate::new(
-                                        call.tool_use_id,
-                                        format!("MCP complete: {tool}"),
-                                    )],
-                                },
-                            ),
-                            permission_denial: None,
-                        };
-                    }
-                    Err(err) => {
-                        return ToolExecutionTrace {
-                            progress_updates: vec![progress],
-                            result: ToolCallResult::failed(
-                                call,
-                                format!("MCP manager error: {err}"),
-                            ),
-                            permission_denial: None,
-                        };
-                    }
+            match mgr.call_tool(tool, args_value) {
+                Ok(result_body) => {
+                    let msg =
+                        format!("MCP tool '{tool}' executed on server '{server}': {result_body}");
+                    return ToolExecutionTrace {
+                        progress_updates: vec![progress],
+                        result: ToolPermissionDecision::allow(false).settle(
+                            call.clone(),
+                            ToolCallOutput {
+                                summary: msg.clone(),
+                                generated_messages: vec![QueryMessage::assistant(format!(
+                                    "tool-message: {msg}"
+                                ))],
+                                context_label: Some(call.context_label.clone()),
+                                progress_updates: vec![ToolProgressUpdate::new(
+                                    call.tool_use_id,
+                                    format!("MCP complete: {tool}"),
+                                )],
+                            },
+                        ),
+                        permission_denial: None,
+                    };
+                }
+                Err(err) => {
+                    return ToolExecutionTrace {
+                        progress_updates: vec![progress],
+                        result: ToolCallResult::failed(call, format!("MCP manager error: {err}")),
+                        permission_denial: None,
+                    };
                 }
             }
         }
+    }
 
     // Fallback: legacy McpToolBridge lookup.
     match bridge.find_tool(&tool_name) {
@@ -166,14 +157,15 @@ pub fn execute_mcp_tool_bridged(
             }
         }
         None => {
-            let servers: Vec<&String> = bridge
-                .discovered_tools
-                .keys()
-                .collect();
+            let servers: Vec<&String> = bridge.discovered_tools.keys().collect();
             let server_list = if servers.is_empty() {
                 String::from("(none)")
             } else {
-                servers.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                servers
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             };
             ToolExecutionTrace {
                 progress_updates: vec![progress],
@@ -229,8 +221,8 @@ mod tests {
         let mut bridge = McpToolBridge::new();
         bridge.register_tools("fs", vec![sample_tool("fs", "read_file")]);
 
-        let call = ToolCallInput::new("mcp:fs:read_file", "toolu-mcp-1")
-            .with_context_label("mcp-test");
+        let call =
+            ToolCallInput::new("mcp:fs:read_file", "toolu-mcp-1").with_context_label("mcp-test");
         let trace = execute_mcp_tool_bridged(call, &bridge);
 
         assert_eq!(trace.result.status_label(), "completed");
@@ -241,8 +233,8 @@ mod tests {
     #[test]
     fn execute_bridged_missing_tool() {
         let bridge = McpToolBridge::new();
-        let call = ToolCallInput::new("mcp:ghost:nope", "toolu-mcp-2")
-            .with_context_label("mcp-test");
+        let call =
+            ToolCallInput::new("mcp:ghost:nope", "toolu-mcp-2").with_context_label("mcp-test");
         let trace = execute_mcp_tool_bridged(call, &bridge);
 
         assert_eq!(trace.result.status_label(), "failed");

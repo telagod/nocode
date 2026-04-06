@@ -46,10 +46,9 @@ impl CommandRegistry {
     /// Find a command by its canonical name or any alias.
     pub fn find(&self, name: &str) -> Option<&SlashCommandSpec> {
         let normalized = name.strip_prefix('/').unwrap_or(name);
-        self.commands.iter().find(|spec| {
-            spec.name == normalized
-                || spec.aliases.iter().any(|a| a == normalized)
-        })
+        self.commands
+            .iter()
+            .find(|spec| spec.name == normalized || spec.aliases.iter().any(|a| a == normalized))
     }
 
     pub fn list(&self) -> &[SlashCommandSpec] {
@@ -57,7 +56,10 @@ impl CommandRegistry {
     }
 
     pub fn list_by_source(&self, source: CommandSource) -> Vec<&SlashCommandSpec> {
-        self.commands.iter().filter(|s| s.source == source).collect()
+        self.commands
+            .iter()
+            .filter(|s| s.source == source)
+            .collect()
     }
 
     pub fn render_help(&self) -> String {
@@ -150,7 +152,11 @@ pub fn default_command_registry() -> CommandRegistry {
     r.register(builtin("quit", "Exit nocode"));
 
     // -- navigation / TUI --
-    r.register(builtin_arg("focus", "Focus TUI pane", "<transcript|tasks|detail>"));
+    r.register(builtin_arg(
+        "focus",
+        "Focus TUI pane",
+        "<transcript|tasks|detail>",
+    ));
     r.register(builtin("tasks-next", "Next task page"));
     r.register(builtin("tasks-prev", "Previous task page"));
     r.register(builtin_alias("j", &["down"], "Pane cursor down"));
@@ -183,7 +189,11 @@ pub fn default_command_registry() -> CommandRegistry {
 
     // -- drafting / editing --
     r.register(builtin_arg("draft", "Set draft text", "<text>"));
-    r.register(builtin_alias("edit", &[], "Set draft text (alias of draft)"));
+    r.register(builtin_alias(
+        "edit",
+        &[],
+        "Set draft text (alias of draft)",
+    ));
     r.register(builtin_arg("append", "Append to draft", "<text>"));
     r.register(builtin("send", "Submit current draft"));
 
@@ -193,7 +203,11 @@ pub fn default_command_registry() -> CommandRegistry {
 
     // -- queue --
     r.register(builtin_arg("queue", "Queue a prompt", "<prompt>"));
-    r.register(builtin_arg("queue-slash", "Queue a slash command", "</command>"));
+    r.register(builtin_arg(
+        "queue-slash",
+        "Queue a slash command",
+        "</command>",
+    ));
     r.register(builtin("queue-show", "Show queued commands"));
 
     // -- git --
@@ -258,7 +272,9 @@ mod tests {
     #[test]
     fn find_by_alias() {
         let reg = default_command_registry();
-        let spec = reg.find("down").expect("alias 'down' should resolve to 'j'");
+        let spec = reg
+            .find("down")
+            .expect("alias 'down' should resolve to 'j'");
         assert_eq!(spec.name, "j");
         let spec2 = reg.find("up").expect("alias 'up' should resolve to 'k'");
         assert_eq!(spec2.name, "k");
@@ -313,10 +329,28 @@ mod tests {
         let reg = default_command_registry();
         let names: Vec<&str> = reg.list().iter().map(|s| s.name.as_str()).collect();
         for expected in &[
-            "help", "status", "runtime", "history", "quit", "commit",
-            "diff", "branch", "task-shell", "task-agent", "task-dream",
-            "tasks", "team-create", "team-status", "login", "logout",
-            "doctor", "draft", "edit", "append", "send", "queue",
+            "help",
+            "status",
+            "runtime",
+            "history",
+            "quit",
+            "commit",
+            "diff",
+            "branch",
+            "task-shell",
+            "task-agent",
+            "task-dream",
+            "tasks",
+            "team-create",
+            "team-status",
+            "login",
+            "logout",
+            "doctor",
+            "draft",
+            "edit",
+            "append",
+            "send",
+            "queue",
         ] {
             assert!(names.contains(expected), "missing command: {expected}");
         }

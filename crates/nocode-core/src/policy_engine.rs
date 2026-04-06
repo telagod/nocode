@@ -199,10 +199,7 @@ mod tests {
     fn chain_flattens_nested_actions() {
         let action = PolicyAction::Chain(vec![
             PolicyAction::MergeToDev,
-            PolicyAction::Chain(vec![
-                PolicyAction::MergeForward,
-                PolicyAction::Escalate,
-            ]),
+            PolicyAction::Chain(vec![PolicyAction::MergeForward, PolicyAction::Escalate]),
             PolicyAction::CleanupSession,
         ]);
         let flat = action.flatten();

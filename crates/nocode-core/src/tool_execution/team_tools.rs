@@ -31,10 +31,15 @@ pub fn execute_team_create(call: ToolCallInput) -> ToolExecutionTrace {
         .collect::<Vec<_>>()
         .join("\n");
 
-    let summary = format!("team '{team_name}' created with {count} subtasks: {}", subtasks.join(", "));
+    let summary = format!(
+        "team '{team_name}' created with {count} subtasks: {}",
+        subtasks.join(", ")
+    );
     let detail = format!("{summary}\n{listing}");
-    let progress =
-        ToolProgressUpdate::new(call.tool_use_id.clone(), format!("creating team {team_name}"));
+    let progress = ToolProgressUpdate::new(
+        call.tool_use_id.clone(),
+        format!("creating team {team_name}"),
+    );
 
     ToolExecutionTrace {
         progress_updates: vec![progress],
@@ -67,8 +72,10 @@ pub fn execute_team_delete(call: ToolCallInput) -> ToolExecutionTrace {
 
     let team_name = team_name.to_string();
     let summary = format!("team '{team_name}' deletion requested");
-    let progress =
-        ToolProgressUpdate::new(call.tool_use_id.clone(), format!("deleting team {team_name}"));
+    let progress = ToolProgressUpdate::new(
+        call.tool_use_id.clone(),
+        format!("deleting team {team_name}"),
+    );
 
     ToolExecutionTrace {
         progress_updates: vec![progress],
@@ -116,7 +123,10 @@ mod tests {
         let trace = execute_team_create(call);
         assert_eq!(trace.result.status_label(), "completed");
         let msg = trace.result.message();
-        assert!(msg.contains("team 'alpha' created with 3 subtasks"), "{msg}");
+        assert!(
+            msg.contains("team 'alpha' created with 3 subtasks"),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -128,7 +138,10 @@ mod tests {
         let trace = execute_team_create(call);
         assert_eq!(trace.result.status_label(), "failed");
         assert!(
-            trace.result.message().contains("missing required argument: team_name"),
+            trace
+                .result
+                .message()
+                .contains("missing required argument: team_name"),
             "{}",
             trace.result.message()
         );

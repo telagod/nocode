@@ -56,10 +56,9 @@ pub struct SandboxConfig {
 
 /// Read and parse a JSON config file from disk.
 pub fn load_config_file(path: &str) -> Result<serde_json::Value, String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("failed to read {path}: {e}"))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("failed to parse {path}: {e}"))
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("failed to read {path}: {e}"))?;
+    serde_json::from_str(&content).map_err(|e| format!("failed to parse {path}: {e}"))
 }
 
 /// Merge multiple config entries into a single RuntimeConfig.
@@ -121,8 +120,14 @@ pub fn discover_config_files(cwd: &str) -> Vec<ConfigEntry> {
     let home = std::env::var("HOME").unwrap_or_default();
     let candidates: Vec<(ConfigSource, String)> = vec![
         (ConfigSource::User, format!("{home}/.nocode/settings.json")),
-        (ConfigSource::Project, format!("{cwd}/.nocode/settings.json")),
-        (ConfigSource::Local, format!("{cwd}/.nocode/settings.local.json")),
+        (
+            ConfigSource::Project,
+            format!("{cwd}/.nocode/settings.json"),
+        ),
+        (
+            ConfigSource::Local,
+            format!("{cwd}/.nocode/settings.local.json"),
+        ),
     ];
 
     for (source, path) in candidates {

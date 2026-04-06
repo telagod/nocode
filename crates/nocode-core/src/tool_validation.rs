@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Return the JSON Schema for a known tool, or `None` for unknown tools.
 pub fn get_tool_schema(tool_name: &str) -> Option<Value> {

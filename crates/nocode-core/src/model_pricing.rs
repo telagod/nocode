@@ -20,27 +20,29 @@ pub struct CostEstimate {
 
 /// Built-in pricing table. Matches model names containing the pattern.
 const PRICING_TABLE: &[(&str, f64, f64, f64, f64)] = &[
-    ("haiku",  1.0,  5.0,  1.25, 0.1),
-    ("sonnet", 3.0,  15.0, 3.75, 0.3),
-    ("opus",   15.0, 75.0, 18.75, 1.5),
+    ("haiku", 1.0, 5.0, 1.25, 0.1),
+    ("sonnet", 3.0, 15.0, 3.75, 0.3),
+    ("opus", 15.0, 75.0, 18.75, 1.5),
 ];
 
 /// Look up pricing for a model by substring match against known patterns.
 pub fn pricing_for_model(model: &str) -> Option<ModelPricing> {
     let lower = model.to_lowercase();
-    PRICING_TABLE.iter().find_map(|(pattern, inp, out, cw, cr)| {
-        if lower.contains(pattern) {
-            Some(ModelPricing {
-                model_pattern: (*pattern).to_string(),
-                input_per_million: *inp,
-                output_per_million: *out,
-                cache_write_per_million: *cw,
-                cache_read_per_million: *cr,
-            })
-        } else {
-            None
-        }
-    })
+    PRICING_TABLE
+        .iter()
+        .find_map(|(pattern, inp, out, cw, cr)| {
+            if lower.contains(pattern) {
+                Some(ModelPricing {
+                    model_pattern: (*pattern).to_string(),
+                    input_per_million: *inp,
+                    output_per_million: *out,
+                    cache_write_per_million: *cw,
+                    cache_read_per_million: *cr,
+                })
+            } else {
+                None
+            }
+        })
 }
 
 /// Estimate cost for a given token usage.
@@ -124,11 +126,14 @@ mod tests {
     #[test]
     fn test_estimate_cost_with_cache() {
         let est = estimate_cost("sonnet", 500_000, 100_000, 200_000, 300_000);
-        let expected_input = 0.5 * 3.0;   // 1.5
-        let expected_output = 0.1 * 15.0;  // 1.5
-        let expected_cw = 0.2 * 3.75;     // 0.75
-        let expected_cr = 0.3 * 0.3;      // 0.09
-        assert!((est.total - (expected_input + expected_output + expected_cw + expected_cr)).abs() < 1e-9);
+        let expected_input = 0.5 * 3.0; // 1.5
+        let expected_output = 0.1 * 15.0; // 1.5
+        let expected_cw = 0.2 * 3.75; // 0.75
+        let expected_cr = 0.3 * 0.3; // 0.09
+        assert!(
+            (est.total - (expected_input + expected_output + expected_cw + expected_cr)).abs()
+                < 1e-9
+        );
     }
 
     #[test]

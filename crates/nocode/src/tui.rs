@@ -669,27 +669,25 @@ impl TuiApp {
                 &serde_json::Value::String(content.to_string()),
             );
             for fline in &formatted {
-                self.styled_lines.push(StyledContent::Styled(vec![
-                    LineSegment {
+                self.styled_lines
+                    .push(StyledContent::Styled(vec![LineSegment {
                         text: fline.clone(),
                         color: crossterm::style::Color::Yellow,
                         bold: false,
                         italic: false,
-                    },
-                ]));
+                    }]));
             }
         } else {
             // Tool result
             let formatted = tool_render::format_tool_result("Unknown", content);
             for fline in &formatted {
-                self.styled_lines.push(StyledContent::Styled(vec![
-                    LineSegment {
+                self.styled_lines
+                    .push(StyledContent::Styled(vec![LineSegment {
                         text: fline.clone(),
                         color: crossterm::style::Color::DarkYellow,
                         bold: false,
                         italic: false,
-                    },
-                ]));
+                    }]));
             }
         }
 
@@ -1034,11 +1032,7 @@ impl TuiApp {
                         if seg.italic {
                             queue!(stdout, SetAttribute(Attribute::Italic))?;
                         }
-                        queue!(
-                            stdout,
-                            SetForegroundColor(seg.color),
-                            Print(&seg.text),
-                        )?;
+                        queue!(stdout, SetForegroundColor(seg.color), Print(&seg.text),)?;
                         written += seg.text.chars().count();
                         if seg.bold || seg.italic {
                             queue!(stdout, SetAttribute(Attribute::Reset))?;
@@ -1307,7 +1301,6 @@ fn char_to_byte_index(value: &str, char_index: usize) -> usize {
         .unwrap_or(value.len())
 }
 
-
 fn wrap_line(value: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     if value.is_empty() {
@@ -1319,7 +1312,6 @@ fn wrap_line(value: &str, width: usize) -> Vec<String> {
         .map(|chunk| chunk.iter().collect::<String>())
         .collect()
 }
-
 
 /// Wrap a `StyledContent` line to fit within `width` characters,
 /// splitting at segment boundaries and within segments as needed.
@@ -1336,7 +1328,7 @@ fn wrap_styled_content(sc: &StyledContent, width: usize) -> Vec<StyledContent> {
             for seg in segs {
                 let mut remaining: &str = &seg.text;
                 while !remaining.is_empty() {
-#[allow(dead_code)]
+                    #[allow(dead_code)]
                     let avail = width.saturating_sub(col);
                     if avail == 0 {
                         result.push(Vec::new());
@@ -1345,8 +1337,11 @@ fn wrap_styled_content(sc: &StyledContent, width: usize) -> Vec<StyledContent> {
                     }
                     let take: String = remaining.chars().take(avail).collect();
                     let taken_chars = take.chars().count();
-                    let taken_bytes: usize =
-                        remaining.chars().take(taken_chars).map(|c| c.len_utf8()).sum();
+                    let taken_bytes: usize = remaining
+                        .chars()
+                        .take(taken_chars)
+                        .map(|c| c.len_utf8())
+                        .sum();
                     remaining = &remaining[taken_bytes..];
                     col += taken_chars;
                     result.last_mut().unwrap().push(LineSegment {
@@ -1361,10 +1356,7 @@ fn wrap_styled_content(sc: &StyledContent, width: usize) -> Vec<StyledContent> {
                     }
                 }
             }
-            result
-                .into_iter()
-                .map(StyledContent::Styled)
-                .collect()
+            result.into_iter().map(StyledContent::Styled).collect()
         }
     }
 }

@@ -58,7 +58,10 @@ pub fn execute_memory_save(call: ToolCallInput) -> ToolExecutionTrace {
 }
 
 /// Save — testable variant that accepts an explicit store.
-pub fn execute_memory_save_with_store(call: ToolCallInput, store: &MemoryStore) -> ToolExecutionTrace {
+pub fn execute_memory_save_with_store(
+    call: ToolCallInput,
+    store: &MemoryStore,
+) -> ToolExecutionTrace {
     let Some(name) = call.argument("name") else {
         return missing_argument(call, "name");
     };
@@ -81,7 +84,11 @@ pub fn execute_memory_save_with_store(call: ToolCallInput, store: &MemoryStore) 
     let file_name = file_name.to_string();
 
     let Some(mt) = MemoryType::parse(&memory_type_str) else {
-        return err_response(call, "MemorySave", &format!("invalid memory_type: {memory_type_str}"));
+        return err_response(
+            call,
+            "MemorySave",
+            &format!("invalid memory_type: {memory_type_str}"),
+        );
     };
 
     let entry = MemoryEntry {
@@ -96,7 +103,11 @@ pub fn execute_memory_save_with_store(call: ToolCallInput, store: &MemoryStore) 
         return err_response(call, "MemorySave", &e);
     }
     if let Err(e) = store.add_to_index(&entry) {
-        return err_response(call, "MemorySave", &format!("saved but index update failed: {e}"));
+        return err_response(
+            call,
+            "MemorySave",
+            &format!("saved but index update failed: {e}"),
+        );
     }
 
     let summary = format!("memory saved: {name} -> {file_name}");
@@ -109,7 +120,10 @@ pub fn execute_memory_list(call: ToolCallInput) -> ToolExecutionTrace {
 }
 
 /// List — testable variant that accepts an explicit store.
-pub fn execute_memory_list_with_store(call: ToolCallInput, store: &MemoryStore) -> ToolExecutionTrace {
+pub fn execute_memory_list_with_store(
+    call: ToolCallInput,
+    store: &MemoryStore,
+) -> ToolExecutionTrace {
     let filter_type = call.argument("memory_type").map(ToString::to_string);
 
     let entries = match store.list() {
@@ -121,7 +135,11 @@ pub fn execute_memory_list_with_store(call: ToolCallInput, store: &MemoryStore) 
         if let Some(mt) = MemoryType::parse(ft) {
             entries.iter().filter(|e| e.memory_type == mt).collect()
         } else {
-            return err_response(call, "MemoryList", &format!("invalid memory_type filter: {ft}"));
+            return err_response(
+                call,
+                "MemoryList",
+                &format!("invalid memory_type filter: {ft}"),
+            );
         }
     } else {
         entries.iter().collect()
@@ -133,7 +151,14 @@ pub fn execute_memory_list_with_store(call: ToolCallInput, store: &MemoryStore) 
     } else {
         filtered
             .iter()
-            .map(|e| format!("- {} [{}] ({})", e.name, e.memory_type.as_str(), e.file_name))
+            .map(|e| {
+                format!(
+                    "- {} [{}] ({})",
+                    e.name,
+                    e.memory_type.as_str(),
+                    e.file_name
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n")
     };
@@ -148,7 +173,10 @@ pub fn execute_memory_search(call: ToolCallInput) -> ToolExecutionTrace {
 }
 
 /// Search — testable variant that accepts an explicit store.
-pub fn execute_memory_search_with_store(call: ToolCallInput, store: &MemoryStore) -> ToolExecutionTrace {
+pub fn execute_memory_search_with_store(
+    call: ToolCallInput,
+    store: &MemoryStore,
+) -> ToolExecutionTrace {
     let Some(query) = call.argument("query") else {
         return missing_argument(call, "query");
     };
@@ -165,7 +193,15 @@ pub fn execute_memory_search_with_store(call: ToolCallInput, store: &MemoryStore
     } else {
         results
             .iter()
-            .map(|e| format!("- {} [{}] ({}): {}", e.name, e.memory_type.as_str(), e.file_name, e.description))
+            .map(|e| {
+                format!(
+                    "- {} [{}] ({}): {}",
+                    e.name,
+                    e.memory_type.as_str(),
+                    e.file_name,
+                    e.description
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n")
     };
@@ -180,7 +216,10 @@ pub fn execute_memory_delete(call: ToolCallInput) -> ToolExecutionTrace {
 }
 
 /// Delete — testable variant that accepts an explicit store.
-pub fn execute_memory_delete_with_store(call: ToolCallInput, store: &MemoryStore) -> ToolExecutionTrace {
+pub fn execute_memory_delete_with_store(
+    call: ToolCallInput,
+    store: &MemoryStore,
+) -> ToolExecutionTrace {
     let Some(file_name) = call.argument("file_name") else {
         return missing_argument(call, "file_name");
     };
@@ -190,7 +229,11 @@ pub fn execute_memory_delete_with_store(call: ToolCallInput, store: &MemoryStore
         return err_response(call, "MemoryDelete", &e);
     }
     if let Err(e) = store.remove_from_index(&file_name) {
-        return err_response(call, "MemoryDelete", &format!("deleted but index update failed: {e}"));
+        return err_response(
+            call,
+            "MemoryDelete",
+            &format!("deleted but index update failed: {e}"),
+        );
     }
 
     let summary = format!("memory deleted: {file_name}");
@@ -220,7 +263,12 @@ mod tests {
             .with_context_label("test");
         let trace = execute_memory_save_with_store(call, &store);
         assert_eq!(trace.result.status_label(), "completed");
-        assert!(trace.result.message().contains("memory saved: test-memory -> test.md"));
+        assert!(
+            trace
+                .result
+                .message()
+                .contains("memory saved: test-memory -> test.md")
+        );
     }
 
     #[test]
@@ -235,8 +283,7 @@ mod tests {
             .with_context_label("test");
         execute_memory_save_with_store(save_call, &store);
 
-        let list_call = ToolCallInput::new("MemoryList", "ml1")
-            .with_context_label("test");
+        let list_call = ToolCallInput::new("MemoryList", "ml1").with_context_label("test");
         let trace = execute_memory_list_with_store(list_call, &store);
         assert_eq!(trace.result.status_label(), "completed");
         assert!(trace.result.message().contains("1 entries"));
@@ -322,7 +369,12 @@ mod tests {
             .with_context_label("test");
         let trace = execute_memory_delete_with_store(delete_call, &store);
         assert_eq!(trace.result.status_label(), "completed");
-        assert!(trace.result.message().contains("memory deleted: to_delete.md"));
+        assert!(
+            trace
+                .result
+                .message()
+                .contains("memory deleted: to_delete.md")
+        );
     }
 
     #[test]
@@ -336,17 +388,26 @@ mod tests {
             .with_context_label("test");
         let trace = execute_memory_save_with_store(call, &store);
         assert_eq!(trace.result.status_label(), "failed");
-        assert!(trace.result.message().contains("missing required argument: name"));
+        assert!(
+            trace
+                .result
+                .message()
+                .contains("missing required argument: name")
+        );
     }
 
     #[test]
     fn memory_search_missing_query_fails() {
         let (_tmp, store) = temp_store();
-        let call = ToolCallInput::new("MemorySearch", "ms4")
-            .with_context_label("test");
+        let call = ToolCallInput::new("MemorySearch", "ms4").with_context_label("test");
         let trace = execute_memory_search_with_store(call, &store);
         assert_eq!(trace.result.status_label(), "failed");
-        assert!(trace.result.message().contains("missing required argument: query"));
+        assert!(
+            trace
+                .result
+                .message()
+                .contains("missing required argument: query")
+        );
     }
 
     #[test]

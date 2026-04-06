@@ -79,10 +79,7 @@ mod tests {
     #[test]
     fn tick_cycles_through_all_frames() {
         let mut spinner = Spinner::new("loading");
-        let expected: Vec<String> = FRAMES
-            .iter()
-            .map(|ch| format!("{ch} loading"))
-            .collect();
+        let expected: Vec<String> = FRAMES.iter().map(|ch| format!("{ch} loading")).collect();
 
         for expected_display in &expected {
             let frame = spinner.tick();

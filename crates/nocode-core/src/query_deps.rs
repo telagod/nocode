@@ -553,8 +553,7 @@ mod tests {
     #[test]
     fn rescuing_tool_runner_returns_completed() {
         let runner = RescuingToolRunner;
-        let call = ToolCallInput::new("Bash", "toolu-99")
-            .with_context_label("test-ctx");
+        let call = ToolCallInput::new("Bash", "toolu-99").with_context_label("test-ctx");
         let result = runner.run_tool(call);
         assert_eq!(result.status_label(), "completed");
         assert!(result.message().contains("rescued"));

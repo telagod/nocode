@@ -9,7 +9,11 @@ pub struct BashValidationResult {
 }
 
 /// Main entry point: run all 6 validators against a command.
-pub fn validate_bash_command(command: &str, mode: PermissionMode, cwd: &str) -> BashValidationResult {
+pub fn validate_bash_command(
+    command: &str,
+    mode: PermissionMode,
+    cwd: &str,
+) -> BashValidationResult {
     let mut warnings = Vec::new();
 
     // 1. Read-only validation
@@ -79,8 +83,8 @@ pub fn read_only_validation(command: &str) -> Option<String> {
 
     // Write indicators
     static WRITE_INDICATORS: &[&str] = &[
-        "tee ", "tee\t", "dd ", "mv ", "cp ", "rm ", "mkdir ", "rmdir ",
-        "chmod ", "chown ", "install ", "patch ",
+        "tee ", "tee\t", "dd ", "mv ", "cp ", "rm ", "mkdir ", "rmdir ", "chmod ", "chown ",
+        "install ", "patch ",
     ];
 
     // Redirect operators
@@ -89,7 +93,9 @@ pub fn read_only_validation(command: &str) -> Option<String> {
     }
 
     for indicator in WRITE_INDICATORS {
-        if trimmed.starts_with(indicator.trim()) || trimmed.contains(&format!("| {}", indicator.trim())) {
+        if trimmed.starts_with(indicator.trim())
+            || trimmed.contains(&format!("| {}", indicator.trim()))
+        {
             return Some(format!(
                 "write command '{}' blocked in read-only mode",
                 indicator.trim()
@@ -166,8 +172,10 @@ pub fn destructive_command_warning(command: &str) -> Option<String> {
     }
 
     // DELETE FROM without WHERE
-    if trimmed.contains("delete from") && !trimmed.contains("where")
-        && !trimmed.contains("backup") && !trimmed.contains("--dry")
+    if trimmed.contains("delete from")
+        && !trimmed.contains("where")
+        && !trimmed.contains("backup")
+        && !trimmed.contains("--dry")
     {
         return Some("bulk delete without WHERE clause".to_string());
     }
@@ -186,15 +194,14 @@ pub fn mode_validation(command: &str, mode: PermissionMode) -> Option<String> {
 
     static SYSTEM_PATHS: &[&str] = &["/etc/", "/boot/", "/usr/", "/var/", "/opt/"];
     static WRITE_PREFIXES: &[&str] = &[
-        "rm ", "mv ", "cp ", "mkdir ", "rmdir ", "chmod ", "chown ",
-        "install ", "tee ", "dd ",
+        "rm ", "mv ", "cp ", "mkdir ", "rmdir ", "chmod ", "chown ", "install ", "tee ", "dd ",
     ];
 
     let is_write_cmd = WRITE_PREFIXES.iter().any(|p| trimmed.starts_with(p));
     // Also check for redirect to system path
-    let has_redirect_to_system = SYSTEM_PATHS.iter().any(|sp| {
-        trimmed.contains(&format!("> {sp}")) || trimmed.contains(&format!(">> {sp}"))
-    });
+    let has_redirect_to_system = SYSTEM_PATHS
+        .iter()
+        .any(|sp| trimmed.contains(&format!("> {sp}")) || trimmed.contains(&format!(">> {sp}")));
 
     if is_write_cmd || has_redirect_to_system {
         for sys_path in SYSTEM_PATHS {
@@ -223,7 +230,9 @@ pub fn sed_validation(command: &str) -> Option<String> {
     // sed -i (in-place) detection
     if trimmed.contains("sed -i") || trimmed.contains("sed -i'") || trimmed.contains("sed -i\"") {
         // Check if targeting system files
-        static SYSTEM_PATHS: &[&str] = &["/etc/", "/boot/", "/usr/", "/var/", "/opt/", "/sys/", "/proc/"];
+        static SYSTEM_PATHS: &[&str] = &[
+            "/etc/", "/boot/", "/usr/", "/var/", "/opt/", "/sys/", "/proc/",
+        ];
         for sp in SYSTEM_PATHS {
             if trimmed.contains(sp) {
                 return Some(format!("sed in-place edit of system file in {sp} blocked"));
@@ -268,9 +277,7 @@ pub fn command_semantics(command: &str) -> Option<String> {
     let trimmed = normalized.trim();
 
     // Shutdown/reboot/halt/poweroff
-    static SHUTDOWN_CMDS: &[&str] = &[
-        "shutdown", "reboot", "halt", "poweroff", "init 0", "init 6",
-    ];
+    static SHUTDOWN_CMDS: &[&str] = &["shutdown", "reboot", "halt", "poweroff", "init 0", "init 6"];
     for cmd in SHUTDOWN_CMDS {
         if trimmed.starts_with(cmd) {
             return Some(format!("system command '{cmd}' blocked"));
@@ -309,17 +316,33 @@ mod tests {
 
     #[test]
     fn read_only_blocks_write_commands() {
-        let result = validate_bash_command("mv file.txt /tmp/", PermissionMode::ReadOnly, "/home/user/project");
+        let result = validate_bash_command(
+            "mv file.txt /tmp/",
+            PermissionMode::ReadOnly,
+            "/home/user/project",
+        );
         assert!(!result.allowed);
         assert!(result.denial_reason.is_some());
 
-        let result = validate_bash_command("rm file.txt", PermissionMode::ReadOnly, "/home/user/project");
+        let result = validate_bash_command(
+            "rm file.txt",
+            PermissionMode::ReadOnly,
+            "/home/user/project",
+        );
         assert!(!result.allowed);
 
-        let result = validate_bash_command("echo hello > out.txt", PermissionMode::ReadOnly, "/home/user/project");
+        let result = validate_bash_command(
+            "echo hello > out.txt",
+            PermissionMode::ReadOnly,
+            "/home/user/project",
+        );
         assert!(!result.allowed);
 
-        let result = validate_bash_command("cp a.txt b.txt", PermissionMode::ReadOnly, "/home/user/project");
+        let result = validate_bash_command(
+            "cp a.txt b.txt",
+            PermissionMode::ReadOnly,
+            "/home/user/project",
+        );
         assert!(!result.allowed);
     }
 
@@ -344,66 +367,105 @@ mod tests {
 
     #[test]
     fn destructive_blocks_rm_rf() {
-        let result = validate_bash_command("rm -rf /", PermissionMode::WorkspaceWrite, "/home/user");
+        let result =
+            validate_bash_command("rm -rf /", PermissionMode::WorkspaceWrite, "/home/user");
         assert!(!result.allowed);
         assert!(result.denial_reason.unwrap().contains("recursive delete"));
 
-        let result = validate_bash_command("rm -rf /*", PermissionMode::WorkspaceWrite, "/home/user");
+        let result =
+            validate_bash_command("rm -rf /*", PermissionMode::WorkspaceWrite, "/home/user");
         assert!(!result.allowed);
     }
 
     #[test]
     fn destructive_blocks_fork_bomb() {
-        let result = validate_bash_command(":(){:|:&};:", PermissionMode::WorkspaceWrite, "/home/user");
+        let result =
+            validate_bash_command(":(){:|:&};:", PermissionMode::WorkspaceWrite, "/home/user");
         assert!(!result.allowed);
         assert!(result.denial_reason.unwrap().contains("fork bomb"));
     }
 
     #[test]
     fn destructive_blocks_db_drop() {
-        let result = validate_bash_command("psql -c 'DROP DATABASE prod'", PermissionMode::WorkspaceWrite, "/home/user");
+        let result = validate_bash_command(
+            "psql -c 'DROP DATABASE prod'",
+            PermissionMode::WorkspaceWrite,
+            "/home/user",
+        );
         assert!(!result.allowed);
         assert!(result.denial_reason.unwrap().contains("database drop"));
 
-        let result = validate_bash_command("mysql -e 'TRUNCATE TABLE users'", PermissionMode::WorkspaceWrite, "/home/user");
+        let result = validate_bash_command(
+            "mysql -e 'TRUNCATE TABLE users'",
+            PermissionMode::WorkspaceWrite,
+            "/home/user",
+        );
         assert!(!result.allowed);
 
-        let result = validate_bash_command("psql -c 'DELETE FROM users'", PermissionMode::WorkspaceWrite, "/home/user");
+        let result = validate_bash_command(
+            "psql -c 'DELETE FROM users'",
+            PermissionMode::WorkspaceWrite,
+            "/home/user",
+        );
         assert!(!result.allowed);
         assert!(result.denial_reason.unwrap().contains("WHERE"));
     }
 
     #[test]
     fn mode_blocks_system_paths_in_workspace_mode() {
-        let result = validate_bash_command("rm /etc/passwd", PermissionMode::WorkspaceWrite, "/home/user");
+        let result = validate_bash_command(
+            "rm /etc/passwd",
+            PermissionMode::WorkspaceWrite,
+            "/home/user",
+        );
         assert!(!result.allowed);
         assert!(result.denial_reason.unwrap().contains("/etc"));
 
-        let result = validate_bash_command("cp file /boot/grub.cfg", PermissionMode::WorkspaceWrite, "/home/user");
+        let result = validate_bash_command(
+            "cp file /boot/grub.cfg",
+            PermissionMode::WorkspaceWrite,
+            "/home/user",
+        );
         assert!(!result.allowed);
 
-        let result = validate_bash_command("mv file /usr/local/bin/x", PermissionMode::WorkspaceWrite, "/home/user");
+        let result = validate_bash_command(
+            "mv file /usr/local/bin/x",
+            PermissionMode::WorkspaceWrite,
+            "/home/user",
+        );
         assert!(!result.allowed);
     }
 
     #[test]
     fn mode_allows_system_paths_in_danger_mode() {
         // DangerFullAccess skips mode_validation, but destructive still blocks rm -rf /
-        let result = validate_bash_command("cp file /etc/config", PermissionMode::DangerFullAccess, "/home/user");
+        let result = validate_bash_command(
+            "cp file /etc/config",
+            PermissionMode::DangerFullAccess,
+            "/home/user",
+        );
         // mode_validation won't block, but path_validation will warn
         assert!(result.allowed);
     }
 
     #[test]
     fn sed_i_blocked_in_readonly() {
-        let result = validate_bash_command("sed -i 's/foo/bar/' file.txt", PermissionMode::ReadOnly, "/home/user");
+        let result = validate_bash_command(
+            "sed -i 's/foo/bar/' file.txt",
+            PermissionMode::ReadOnly,
+            "/home/user",
+        );
         assert!(!result.allowed);
         assert!(result.denial_reason.unwrap().contains("sed"));
     }
 
     #[test]
     fn path_outside_cwd_warned() {
-        let result = validate_bash_command("cat /tmp/secret.txt", PermissionMode::WorkspaceWrite, "/home/user/project");
+        let result = validate_bash_command(
+            "cat /tmp/secret.txt",
+            PermissionMode::WorkspaceWrite,
+            "/home/user/project",
+        );
         assert!(result.allowed); // warning only, not denial
         assert!(!result.warnings.is_empty());
         assert!(result.warnings[0].contains("outside working directory"));
@@ -411,14 +473,19 @@ mod tests {
 
     #[test]
     fn semantics_blocks_shutdown() {
-        let result = validate_bash_command("shutdown -h now", PermissionMode::WorkspaceWrite, "/home/user");
+        let result = validate_bash_command(
+            "shutdown -h now",
+            PermissionMode::WorkspaceWrite,
+            "/home/user",
+        );
         assert!(!result.allowed);
         assert!(result.denial_reason.unwrap().contains("shutdown"));
 
         let result = validate_bash_command("reboot", PermissionMode::WorkspaceWrite, "/home/user");
         assert!(!result.allowed);
 
-        let result = validate_bash_command("poweroff", PermissionMode::WorkspaceWrite, "/home/user");
+        let result =
+            validate_bash_command("poweroff", PermissionMode::WorkspaceWrite, "/home/user");
         assert!(!result.allowed);
 
         let result = validate_bash_command("init 0", PermissionMode::WorkspaceWrite, "/home/user");
@@ -427,7 +494,8 @@ mod tests {
 
     #[test]
     fn semantics_blocks_kill_init() {
-        let result = validate_bash_command("kill -9 1", PermissionMode::WorkspaceWrite, "/home/user");
+        let result =
+            validate_bash_command("kill -9 1", PermissionMode::WorkspaceWrite, "/home/user");
         assert!(!result.allowed);
         assert!(result.denial_reason.unwrap().contains("PID 1"));
     }
@@ -450,7 +518,11 @@ mod tests {
     #[test]
     fn combined_validation_collects_warnings() {
         // A command that is allowed but has a path warning
-        let result = validate_bash_command("cat /opt/data/file.txt", PermissionMode::WorkspaceWrite, "/home/user/project");
+        let result = validate_bash_command(
+            "cat /opt/data/file.txt",
+            PermissionMode::WorkspaceWrite,
+            "/home/user/project",
+        );
         // path_validation warns about system path /opt — but mode_validation won't block cat
         // Actually cat is not a write prefix, so mode_validation passes. path_validation warns.
         assert!(result.allowed);
@@ -471,7 +543,8 @@ mod tests {
     fn danger_mode_allows_everything_except_destructive() {
         let cwd = "/home/user/project";
         // Allowed: system path write in danger mode
-        let result = validate_bash_command("cp file /etc/config", PermissionMode::DangerFullAccess, cwd);
+        let result =
+            validate_bash_command("cp file /etc/config", PermissionMode::DangerFullAccess, cwd);
         assert!(result.allowed);
 
         // Still blocked: rm -rf /
@@ -485,18 +558,27 @@ mod tests {
 
     #[test]
     fn semantics_blocks_iptables() {
-        let result = validate_bash_command("iptables -F", PermissionMode::WorkspaceWrite, "/home/user");
+        let result =
+            validate_bash_command("iptables -F", PermissionMode::WorkspaceWrite, "/home/user");
         assert!(!result.allowed);
         assert!(result.denial_reason.unwrap().contains("iptables"));
     }
 
     #[test]
     fn semantics_blocks_systemctl_stop() {
-        let result = validate_bash_command("systemctl stop nginx", PermissionMode::WorkspaceWrite, "/home/user");
+        let result = validate_bash_command(
+            "systemctl stop nginx",
+            PermissionMode::WorkspaceWrite,
+            "/home/user",
+        );
         assert!(!result.allowed);
         assert!(result.denial_reason.unwrap().contains("systemctl"));
 
-        let result = validate_bash_command("systemctl disable sshd", PermissionMode::WorkspaceWrite, "/home/user");
+        let result = validate_bash_command(
+            "systemctl disable sshd",
+            PermissionMode::WorkspaceWrite,
+            "/home/user",
+        );
         assert!(!result.allowed);
     }
 }

@@ -108,11 +108,7 @@ pub fn execute_lsp(call: ToolCallInput) -> ToolExecutionTrace {
     };
 
     // Detect language from file extension and find a server.
-    let ext = file_path
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_string();
+    let ext = file_path.rsplit('.').next().unwrap_or("").to_string();
     let lang = match ext.as_str() {
         "rs" => "rust",
         "ts" | "tsx" => "typescript",
@@ -192,7 +188,12 @@ mod tests {
             .with_context_label("test");
         let trace = execute_lsp(call);
         assert_eq!(trace.result.status_label(), "failed");
-        assert!(trace.result.message().contains("missing required argument: action"));
+        assert!(
+            trace
+                .result
+                .message()
+                .contains("missing required argument: action")
+        );
     }
 
     #[test]
@@ -206,6 +207,11 @@ mod tests {
             .with_context_label("test");
         let trace = execute_lsp(call);
         assert_eq!(trace.result.status_label(), "completed");
-        assert!(trace.result.message().contains("lsp diagnostics on main.rs"));
+        assert!(
+            trace
+                .result
+                .message()
+                .contains("lsp diagnostics on main.rs")
+        );
     }
 }

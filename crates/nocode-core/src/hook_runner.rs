@@ -113,10 +113,9 @@ impl HookRunner {
             match &outcome {
                 HookOutcome::Deny { reason } => {
                     result.denied = true;
-                    result.messages.push(format!(
-                        "hook '{}' denied: {}",
-                        hook.command, reason
-                    ));
+                    result
+                        .messages
+                        .push(format!("hook '{}' denied: {}", hook.command, reason));
                     result.outcomes.push(outcome);
                     break; // first deny stops the chain
                 }
@@ -194,10 +193,7 @@ mod tests {
         runner.register(HookCommand::new(HookEvent::PreToolUse, "pre1"));
         runner.register(HookCommand::new(HookEvent::PostToolUse, "post1"));
         runner.register(HookCommand::new(HookEvent::PreToolUse, "pre2"));
-        runner.register(HookCommand::new(
-            HookEvent::PostToolUseFailure,
-            "fail1",
-        ));
+        runner.register(HookCommand::new(HookEvent::PostToolUseFailure, "fail1"));
 
         let pre = runner.hooks_for(HookEvent::PreToolUse);
         assert_eq!(pre.len(), 2);

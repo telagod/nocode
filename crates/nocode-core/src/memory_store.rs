@@ -178,8 +178,7 @@ impl MemoryStore {
     }
 
     pub fn ensure_dir(&self) -> Result<(), String> {
-        fs::create_dir_all(&self.base_dir)
-            .map_err(|e| format!("failed to create memory dir: {e}"))
+        fs::create_dir_all(&self.base_dir).map_err(|e| format!("failed to create memory dir: {e}"))
     }
 
     pub fn save(&self, entry: &MemoryEntry) -> Result<(), String> {
@@ -191,21 +190,20 @@ impl MemoryStore {
 
     pub fn load(&self, file_name: &str) -> Result<MemoryEntry, String> {
         let path = self.base_dir.join(file_name);
-        let raw = fs::read_to_string(&path)
-            .map_err(|e| format!("failed to read {file_name}: {e}"))?;
+        let raw =
+            fs::read_to_string(&path).map_err(|e| format!("failed to read {file_name}: {e}"))?;
         MemoryEntry::from_markdown(file_name, &raw)
             .ok_or_else(|| format!("failed to parse {file_name}"))
     }
 
     pub fn delete(&self, file_name: &str) -> Result<(), String> {
         let path = self.base_dir.join(file_name);
-        fs::remove_file(&path)
-            .map_err(|e| format!("failed to delete {file_name}: {e}"))
+        fs::remove_file(&path).map_err(|e| format!("failed to delete {file_name}: {e}"))
     }
 
     pub fn list(&self) -> Result<Vec<MemoryEntry>, String> {
-        let dir = fs::read_dir(&self.base_dir)
-            .map_err(|e| format!("failed to read memory dir: {e}"))?;
+        let dir =
+            fs::read_dir(&self.base_dir).map_err(|e| format!("failed to read memory dir: {e}"))?;
         let mut entries = Vec::new();
         for item in dir {
             let item = item.map_err(|e| format!("dir entry error: {e}"))?;
@@ -257,24 +255,21 @@ impl MemoryStore {
                 entries: Vec::new(),
             });
         }
-        let raw = fs::read_to_string(&path)
-            .map_err(|e| format!("failed to read MEMORY.md: {e}"))?;
+        let raw =
+            fs::read_to_string(&path).map_err(|e| format!("failed to read MEMORY.md: {e}"))?;
         Ok(MemoryIndex::parse(&raw))
     }
 
     pub fn save_index(&self, index: &MemoryIndex) -> Result<(), String> {
         self.ensure_dir()?;
         let path = self.index_path();
-        fs::write(&path, index.render())
-            .map_err(|e| format!("failed to write MEMORY.md: {e}"))
+        fs::write(&path, index.render()).map_err(|e| format!("failed to write MEMORY.md: {e}"))
     }
 
     pub fn add_to_index(&self, entry: &MemoryEntry) -> Result<(), String> {
         let mut index = self.load_index()?;
         // Remove existing entry for same file if present
-        index
-            .entries
-            .retain(|e| e.file_name != entry.file_name);
+        index.entries.retain(|e| e.file_name != entry.file_name);
         index.entries.push(MemoryIndexEntry {
             title: entry.name.clone(),
             file_name: entry.file_name.clone(),
@@ -335,7 +330,8 @@ mod tests {
 
     #[test]
     fn memory_entry_from_markdown_parses_frontmatter() {
-        let md = "---\nname: test\ndescription: a test entry\ntype: feedback\n---\n\nBody text here.";
+        let md =
+            "---\nname: test\ndescription: a test entry\ntype: feedback\n---\n\nBody text here.";
         let entry = MemoryEntry::from_markdown("test.md", md).unwrap();
         assert_eq!(entry.name, "test");
         assert_eq!(entry.description, "a test entry");
@@ -371,7 +367,10 @@ mod tests {
             }],
         };
         let rendered = idx.render();
-        assert_eq!(rendered, "- [Role](user_role.md) \u{2014} user is a pentester\n");
+        assert_eq!(
+            rendered,
+            "- [Role](user_role.md) \u{2014} user is a pentester\n"
+        );
     }
 
     #[test]

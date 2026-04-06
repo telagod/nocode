@@ -166,7 +166,8 @@ impl RecoveryContext {
             });
         }
 
-        self.events.push(RecoveryEvent::RecoverySucceeded { scenario });
+        self.events
+            .push(RecoveryEvent::RecoverySucceeded { scenario });
         RecoveryResult::Recovered
     }
 
