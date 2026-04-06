@@ -17,6 +17,7 @@ pub mod lsp_client;
 pub mod mcp_client;
 pub mod mcp_manager;
 pub mod memory_store;
+pub mod memory_signals;
 pub mod message;
 pub mod mock_service;
 pub mod model_pricing;
