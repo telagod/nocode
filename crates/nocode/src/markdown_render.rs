@@ -81,6 +81,11 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
     // List tracking
     let mut list_stack: Vec<Option<u64>> = Vec::new(); // None = unordered, Some(n) = ordered starting at n
 
+    // Table tracking
+    let mut in_table = false;
+    let mut table_row: Vec<String> = Vec::new();
+    let mut table_is_header = false;
+
     // Helper: flush current line
     let flush = |lines: &mut Vec<RenderedLine>, current: &mut RenderedLine| {
         lines.push(std::mem::replace(current, RenderedLine::new()));
@@ -204,7 +209,14 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
             }
             Event::Text(text) => {
                 let text_str = text.to_string();
-                if in_code_block {
+                if in_table {
+                    // Accumulate cell text for table row rendering.
+                    if let Some(last) = table_row.last_mut() {
+                        last.push_str(&text_str);
+                    } else {
+                        table_row.push(text_str);
+                    }
+                } else if in_code_block {
                     // Each line of code block gets prefix + syntect highlighting
                     let ss = SyntaxSet::load_defaults_newlines();
                     let ts = ThemeSet::load_defaults();
@@ -289,6 +301,47 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
             Event::SoftBreak | Event::HardBreak => {
                 flush(&mut lines, &mut current);
             }
+            Event::Start(Tag::Table(_)) => {
+                in_table = true;
+                flush(&mut lines, &mut current);
+            }
+            Event::End(TagEnd::Table) => {
+                in_table = false;
+            }
+            Event::Start(Tag::TableHead) => {
+                table_is_header = true;
+                table_row.clear();
+            }
+            Event::End(TagEnd::TableHead) => {
+                // Render header row
+                let header_text = table_row.join(" \u{2502} ");
+                let mut header_line = RenderedLine::new();
+                header_line.push(LineSegment::new(&header_text, Color::Cyan).bold());
+                lines.push(header_line);
+                // Separator
+                let sep = "\u{2500}".repeat(header_text.len().max(3));
+                let mut sep_line = RenderedLine::new();
+                sep_line.push(LineSegment::new(&sep, Color::DarkGrey));
+                lines.push(sep_line);
+                table_is_header = false;
+                table_row.clear();
+            }
+            Event::Start(Tag::TableRow) => {
+                table_row.clear();
+            }
+            Event::End(TagEnd::TableRow) => {
+                if !table_is_header {
+                    let row_text = table_row.join(" \u{2502} ");
+                    let mut row_line = RenderedLine::new();
+                    row_line.push(LineSegment::new(&row_text, Color::White));
+                    lines.push(row_line);
+                }
+                table_row.clear();
+            }
+            Event::Start(Tag::TableCell) => {
+                table_row.push(String::new());
+            }
+            Event::End(TagEnd::TableCell) => {}
             _ => {}
         }
     }
