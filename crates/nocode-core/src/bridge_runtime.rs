@@ -846,6 +846,109 @@ impl<T: RemoteBridgeTransport> ModelStreamSink for RemoteBridgeStreamSink<'_, T>
     }
 }
 
+// ---------------------------------------------------------------------------
+// WebSocket bridge transport
+// ---------------------------------------------------------------------------
+
+/// WebSocket-based remote bridge transport using tungstenite.
+///
+/// Connects to a WebSocket server and exchanges JSON-serialized wire types.
+/// Environment variable `NOCODE_WS_BRIDGE_URL` configures the endpoint.
+pub struct WsBridgeTransport {
+    socket: tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
+}
+
+impl WsBridgeTransport {
+    /// Connect to a WebSocket bridge server.
+    pub fn connect(url: &str) -> Result<Self, BridgeTransportError> {
+        let (socket, _response) = tungstenite::connect(url)
+            .map_err(|e| BridgeTransportError::transport("ws_connect", e.to_string()))?;
+        Ok(Self { socket })
+    }
+
+    /// Connect using the `NOCODE_WS_BRIDGE_URL` environment variable.
+    pub fn from_env() -> Option<Result<Self, BridgeTransportError>> {
+        std::env::var("NOCODE_WS_BRIDGE_URL")
+            .ok()
+            .filter(|url| !url.is_empty())
+            .map(|url| Self::connect(&url))
+    }
+
+    fn send_json(&mut self, stage: &'static str, value: &str) -> Result<(), BridgeTransportError> {
+        use tungstenite::Message;
+        self.socket
+            .send(Message::Text(value.to_string()))
+            .map_err(|e| BridgeTransportError::transport(stage, e.to_string()))
+    }
+
+    fn recv_json(&mut self, stage: &'static str) -> Result<String, BridgeTransportError> {
+        use tungstenite::Message;
+        loop {
+            let msg = self
+                .socket
+                .read()
+                .map_err(|e| BridgeTransportError::transport(stage, e.to_string()))?;
+            match msg {
+                Message::Text(text) => return Ok(text),
+                Message::Close(_) => {
+                    return Err(BridgeTransportError::transport(
+                        stage,
+                        "WebSocket connection closed by server",
+                    ));
+                }
+                Message::Ping(data) => {
+                    let _ = self.socket.send(Message::Pong(data));
+                }
+                _ => {} // skip binary/pong frames
+            }
+        }
+    }
+}
+
+impl std::fmt::Debug for WsBridgeTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WsBridgeTransport").finish()
+    }
+}
+
+impl RemoteBridgeTransport for WsBridgeTransport {
+    fn publish_request(&mut self, request: &BridgeWireRequest) -> Result<(), BridgeTransportError> {
+        let json = request
+            .to_json()
+            .map_err(|e| BridgeTransportError::transport("publish_request", e.to_string()))?;
+        self.send_json("publish_request", &json)
+    }
+
+    fn request_permission(
+        &mut self,
+        request: &PermissionRequestWire,
+    ) -> Result<PermissionResponseWire, BridgeTransportError> {
+        let json = serde_json::to_string(request)
+            .map_err(|e| BridgeTransportError::transport("request_permission", e.to_string()))?;
+        self.send_json("request_permission", &json)?;
+        let response_json = self.recv_json("request_permission")?;
+        serde_json::from_str(&response_json)
+            .map_err(|e| BridgeTransportError::transport("request_permission", e.to_string()))
+    }
+
+    fn publish_event(&mut self, event: &BridgeEventWire) -> Result<(), BridgeTransportError> {
+        let json = event
+            .to_json()
+            .map_err(|e| BridgeTransportError::transport("publish_event", e.to_string()))?;
+        self.send_json("publish_event", &json)
+    }
+
+    fn publish_response(
+        &mut self,
+        response: &BridgeWireResponse,
+    ) -> Result<(), BridgeTransportError> {
+        let json = response
+            .to_json()
+            .map_err(|e| BridgeTransportError::transport("publish_response", e.to_string()))?;
+        self.send_json("publish_response", &json)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
