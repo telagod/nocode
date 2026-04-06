@@ -212,6 +212,45 @@ fn default_permission_context() -> ToolPermissionContext {
         })
 }
 
+/// Load environment variables from `~/.claude/settings.json` `env` field.
+///
+/// Maps known Claude Code env vars to nocode equivalents:
+/// - `ANTHROPIC_AUTH_TOKEN` → `ANTHROPIC_API_KEY`
+/// - `ANTHROPIC_BASE_URL` → `ANTHROPIC_BASE_URL`
+/// - Other vars are set as-is.
+fn load_claude_settings_env() {
+    let home = std::env::var("HOME").unwrap_or_else(|_| String::from("."));
+    let path = format!("{home}/.claude/settings.json");
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return;
+    };
+    let Some(env_map) = parsed.get("env").and_then(|v| v.as_object()) else {
+        return;
+    };
+    for (key, value) in env_map {
+        if let Some(val) = value.as_str() {
+            // SAFETY: called once at startup before any threads are spawned.
+            unsafe {
+                match key.as_str() {
+                    "ANTHROPIC_AUTH_TOKEN" => {
+                        if std::env::var("ANTHROPIC_API_KEY").is_err() {
+                            std::env::set_var("ANTHROPIC_API_KEY", val);
+                        }
+                    }
+                    _ => {
+                        if std::env::var(key).is_err() {
+                            std::env::set_var(key, val);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn bootstrap_config() -> QueryEngineConfig {
     let provider = if cfg!(test) {
         ModelProvider::Mock
@@ -281,6 +320,9 @@ fn bootstrap_config() -> QueryEngineConfig {
 }
 
 fn main() {
+    // Load env vars from ~/.claude/settings.json if present.
+    load_claude_settings_env();
+
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "--process-agent-daemon") {
         run_process_agent_daemon();
