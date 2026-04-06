@@ -4,6 +4,7 @@ mod ide_server;
 mod markdown_render;
 #[allow(dead_code, clippy::collapsible_if)]
 mod markdown_stream;
+mod mcp_server;
 mod repl;
 #[allow(dead_code)]
 mod spinner;
@@ -291,6 +292,10 @@ fn main() {
     if args.iter().any(|arg| arg == "--ide-server") {
         let engine = QueryEngine::new(bootstrap_config());
         ide_server::run_ide_server(engine);
+        return;
+    }
+    if args.iter().any(|arg| arg == "--mcp-server") {
+        mcp_server::run_mcp_server(workspace_root());
         return;
     }
     if args.iter().any(|arg| arg == "--tui") {

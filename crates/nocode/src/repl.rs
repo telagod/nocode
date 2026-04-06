@@ -912,6 +912,55 @@ pub struct TuiPermissionRequest {
     pub response_tx: mpsc::Sender<bool>,
 }
 
+/// All recognized slash command names for tab completion.
+#[allow(dead_code)]
+const SLASH_COMMAND_NAMES: &[&str] = &[
+    "append",
+    "branch",
+    "commit",
+    "diff",
+    "doctor",
+    "down",
+    "draft",
+    "edit",
+    "enter",
+    "focus",
+    "help",
+    "history",
+    "history-next",
+    "history-prev",
+    "ide",
+    "inputs",
+    "j",
+    "k",
+    "login",
+    "logout",
+    "plugin",
+    "plugins",
+    "queue",
+    "queue-show",
+    "queue-slash",
+    "quit",
+    "runtime",
+    "send",
+    "status",
+    "task-agent",
+    "task-dream",
+    "task-open",
+    "task-queue",
+    "task-run-all",
+    "task-run-next",
+    "task-shell",
+    "task-show",
+    "task-stop",
+    "tasks",
+    "tasks-next",
+    "tasks-prev",
+    "team-create",
+    "team-status",
+    "up",
+];
+
 /// Minimal REPL session metadata plus state for history, queue, and draft editing.
 #[derive(Debug)]
 pub struct ReplSession {
@@ -978,6 +1027,27 @@ impl ReplSession {
 
     pub fn prompt_text(&self) -> String {
         format!("{}> ", self.prompt_label)
+    }
+
+    /// Tab-complete a slash command prefix.
+    ///
+    /// Returns `Ok(completed)` when exactly one command matches, or
+    /// `Err(candidates)` when zero or multiple commands match.
+    #[allow(dead_code)]
+    pub fn complete_command(&self, prefix: &str) -> Result<String, Vec<String>> {
+        let needle = prefix
+            .strip_prefix('/')
+            .unwrap_or(prefix)
+            .to_ascii_lowercase();
+        let matches: Vec<&str> = SLASH_COMMAND_NAMES
+            .iter()
+            .copied()
+            .filter(|name| name.starts_with(needle.as_str()))
+            .collect();
+        match matches.len() {
+            1 => Ok(format!("/{}", matches[0])),
+            _ => Err(matches.iter().map(|name| format!("/{name}")).collect()),
+        }
     }
 
     pub fn tui_draft(&self) -> &str {
@@ -1548,6 +1618,10 @@ impl ReplSession {
     }
 
     /// Runs the REPL loop against the given engine until EOF or `/quit`.
+    ///
+    /// Supports multiline input: when a line ends with `\`, the next line is
+    /// appended (separated by newline) and reading continues until a line
+    /// without a trailing backslash is entered.
     pub fn run_loop<R: BufRead, W: Write>(
         &mut self,
         engine: &mut QueryEngine,
@@ -1555,6 +1629,7 @@ impl ReplSession {
         writer: &mut W,
     ) -> io::Result<()> {
         let mut buffer = String::new();
+        let mut accumulated = String::new();
         loop {
             self.maybe_auto_drive_tasks(engine, writer)?;
 
@@ -1566,20 +1641,45 @@ impl ReplSession {
             }
 
             buffer.clear();
-            writer.write_all(self.prompt_text().as_bytes())?;
+            if accumulated.is_empty() {
+                writer.write_all(self.prompt_text().as_bytes())?;
+            } else {
+                writer.write_all(b"... ")?;
+            }
             writer.flush()?;
 
             let read = reader.read_line(&mut buffer)?;
             if read == 0 {
+                if !accumulated.is_empty() {
+                    let final_input = std::mem::take(&mut accumulated);
+                    let command = self.parse_input(final_input.as_str(), ReplInputOrigin::Local);
+                    self.execute_command(engine, writer, command)?;
+                }
                 break;
             }
 
             let raw_line = buffer.trim_end_matches(['\n', '\r']);
-            if raw_line.is_empty() {
+            if raw_line.is_empty() && accumulated.is_empty() {
                 continue;
             }
 
-            let command = self.parse_input(raw_line, ReplInputOrigin::Local);
+            if let Some(continued) = raw_line.strip_suffix('\\') {
+                if !accumulated.is_empty() {
+                    accumulated.push('\n');
+                }
+                accumulated.push_str(continued);
+                continue;
+            }
+
+            let full_input = if accumulated.is_empty() {
+                raw_line.to_string()
+            } else {
+                accumulated.push('\n');
+                accumulated.push_str(raw_line);
+                std::mem::take(&mut accumulated)
+            };
+
+            let command = self.parse_input(full_input.as_str(), ReplInputOrigin::Local);
             if !self.execute_command(engine, writer, command)? {
                 break;
             }
@@ -4414,5 +4514,49 @@ sys.exit(7)
 
         let rendered = String::from_utf8(output).expect("utf8 output");
         assert!(rendered.contains("draft[1/1 queued]: queued hello"));
+    }
+
+    #[test]
+    fn tab_complete_single_match_returns_full_command() {
+        let session = ReplSession::new("nocode");
+        assert_eq!(
+            session.complete_command("/ru"),
+            Ok(String::from("/runtime"))
+        );
+        assert_eq!(session.complete_command("/qui"), Ok(String::from("/quit")));
+        assert_eq!(session.complete_command("/sen"), Ok(String::from("/send")));
+        // Without leading slash.
+        assert_eq!(session.complete_command("ru"), Ok(String::from("/runtime")));
+    }
+
+    #[test]
+    fn tab_complete_multiple_matches_returns_candidates() {
+        let session = ReplSession::new("nocode");
+        let result = session.complete_command("/task-s");
+        assert!(result.is_err());
+        let candidates = result.unwrap_err();
+        assert!(candidates.contains(&String::from("/task-shell")));
+        assert!(candidates.contains(&String::from("/task-show")));
+        assert!(candidates.contains(&String::from("/task-stop")));
+        assert_eq!(candidates.len(), 3);
+    }
+
+    #[test]
+    fn multiline_input_merges_backslash_continued_lines() {
+        let mut engine = QueryEngine::new(test_config());
+        let mut session = ReplSession::new("nocode");
+        let mut input = Cursor::new(b"hello \\\nworld\n/quit\n");
+        let mut output = Vec::new();
+
+        session
+            .run_loop(&mut engine, &mut input, &mut output)
+            .expect("repl loop should succeed");
+
+        let rendered = String::from_utf8(output).expect("utf8 output");
+        // The two lines should be merged and sent as a single prompt.
+        assert!(rendered.contains("[t1:conversation] user: hello"));
+        assert!(rendered.contains("world"));
+        // Continuation prompt should appear.
+        assert!(rendered.contains("... "));
     }
 }
