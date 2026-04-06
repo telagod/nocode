@@ -5,9 +5,14 @@
 //! tool names, recent user requests, inferred TODOs, and key file paths.
 
 use crate::message::{QueryMessage, QueryMessageRole};
-use crate::query_deps::Compactor;
+use crate::provider::{
+    ModelCallOutput, ModelProvider, ModelRequest, ModelSelection, ModelStreamMode,
+    RecordingModelStream,
+};
+use crate::query_deps::{CallModel, Compactor};
 use crate::summary_compression::{SummaryCompressionBudget, compress_summary};
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Config & Result
@@ -220,6 +225,157 @@ impl Compactor for RichCompactor {
 }
 
 // ---------------------------------------------------------------------------
+// LlmCompactor — LLM-based summarization with RichCompactor fallback
+// ---------------------------------------------------------------------------
+
+/// Configuration for LLM-based session compaction.
+#[derive(Debug, Clone)]
+pub struct LlmCompactionConfig {
+    /// Minimum number of non-system messages before LLM compaction triggers (default 8).
+    pub min_messages_for_compaction: usize,
+    /// Number of recent messages to preserve verbatim (default 4).
+    pub preserve_recent_messages: usize,
+    /// Provider to use for the summarization call (default Mock).
+    pub provider: ModelProvider,
+    /// Model name for the summarization call (default "haiku").
+    pub model: String,
+}
+
+impl Default for LlmCompactionConfig {
+    fn default() -> Self {
+        Self {
+            min_messages_for_compaction: 8,
+            preserve_recent_messages: 4,
+            provider: ModelProvider::Mock,
+            model: String::from("haiku"),
+        }
+    }
+}
+
+/// Compactor that uses an LLM to generate a structured summary of older messages.
+///
+/// Falls back to [`RichCompactor`] if the LLM call fails.
+pub struct LlmCompactor {
+    pub call_model: Arc<dyn CallModel>,
+    pub config: LlmCompactionConfig,
+}
+
+impl std::fmt::Debug for LlmCompactor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlmCompactor")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
+}
+
+impl LlmCompactor {
+    pub fn new(call_model: Arc<dyn CallModel>, config: LlmCompactionConfig) -> Self {
+        Self { call_model, config }
+    }
+
+    /// Build the system prompt that instructs the LLM to produce a structured summary.
+    fn summarization_system_prompt() -> String {
+        String::from(
+            "You are a conversation summarizer. Given a sequence of messages from a coding \
+             assistant session, produce a concise structured summary. Include:\n\
+             - Key topics discussed\n\
+             - Tools used and files referenced\n\
+             - Decisions made\n\
+             - Pending work or open questions\n\n\
+             Output ONLY the summary, no preamble. Keep it under 800 characters.",
+        )
+    }
+
+    /// Serialize the old messages into a single user message for the LLM.
+    fn build_conversation_payload(messages: &[QueryMessage]) -> String {
+        let mut payload = String::from("Summarize this conversation:\n\n");
+        for msg in messages {
+            payload.push_str(&format!("[{}]: {}\n", msg.role.as_str(), msg.content));
+        }
+        payload
+    }
+
+    /// Call the LLM to summarize the given messages.
+    fn call_llm_for_summary(&self, old_messages: &[QueryMessage]) -> Result<String, ()> {
+        let system_prompt = vec![QueryMessage::system(Self::summarization_system_prompt())];
+        let conversation = vec![QueryMessage::user(Self::build_conversation_payload(
+            old_messages,
+        ))];
+
+        let request = ModelRequest {
+            selection: ModelSelection {
+                provider: self.config.provider,
+                requested_model: Some(self.config.model.clone()),
+                fallback_model: None,
+            },
+            system_prompt,
+            conversation,
+            model_reasoning_effort: None,
+            json_schema: None,
+            query_source: crate::query_loop::QuerySource::Sdk,
+            stream_mode: ModelStreamMode::Disabled,
+            max_turns: Some(1),
+            task_budget: None,
+            verbose: false,
+            replay_user_messages: false,
+            include_partial_messages: false,
+            tool_definitions: Vec::new(),
+        };
+
+        let mut stream = RecordingModelStream::default();
+        let output: ModelCallOutput = self
+            .call_model
+            .call_model(&request, &mut stream)
+            .map_err(|_| ())?;
+
+        let summary = output.message.content.trim().to_string();
+        if summary.is_empty() {
+            return Err(());
+        }
+        Ok(summary)
+    }
+}
+
+impl Compactor for LlmCompactor {
+    fn compact(&self, messages: &[QueryMessage]) -> Vec<QueryMessage> {
+        let non_system_count = messages
+            .iter()
+            .filter(|m| m.role != QueryMessageRole::System)
+            .count();
+
+        // Not enough messages to warrant compaction.
+        if non_system_count < self.config.min_messages_for_compaction {
+            return messages.to_vec();
+        }
+
+        let keep = self.config.preserve_recent_messages.min(messages.len());
+        let split = messages.len().saturating_sub(keep);
+        let old_messages = &messages[..split];
+        let recent_messages = &messages[split..];
+
+        // Attempt LLM summarization; fall back to RichCompactor on failure.
+        let summary = match self.call_llm_for_summary(old_messages) {
+            Ok(s) => s,
+            Err(()) => {
+                let fallback = RichCompactor::new(CompactionConfig {
+                    preserve_recent_messages: self.config.preserve_recent_messages,
+                    max_estimated_tokens: 0, // force compaction
+                });
+                return fallback.compact(messages);
+            }
+        };
+
+        let mut compacted = Vec::with_capacity(keep + 1);
+        compacted.push(QueryMessage::system(format!(
+            "[LLM Summary] This session was compacted. Summary of {split} earlier messages:\n\n\
+             {summary}"
+        )));
+        compacted.extend_from_slice(recent_messages);
+        compacted
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -400,5 +556,145 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].role, QueryMessageRole::System);
         assert_eq!(result[1], QueryMessage::user("recent"));
+    }
+
+    // -----------------------------------------------------------------------
+    // LlmCompactor tests
+    // -----------------------------------------------------------------------
+
+    use crate::provider::{ModelCallOutput, ModelError, ModelRequest, ModelStreamSink};
+
+    /// A mock `CallModel` that returns a fixed summary string.
+    #[derive(Debug)]
+    struct SuccessCallModel {
+        response: String,
+    }
+
+    impl SuccessCallModel {
+        fn new(response: impl Into<String>) -> Self {
+            Self {
+                response: response.into(),
+            }
+        }
+    }
+
+    impl crate::query_deps::CallModel for SuccessCallModel {
+        fn call_model(
+            &self,
+            _request: &ModelRequest,
+            _stream: &mut dyn ModelStreamSink,
+        ) -> Result<ModelCallOutput, ModelError> {
+            Ok(ModelCallOutput::new(
+                crate::provider::ModelProvider::Mock,
+                "test-model",
+                QueryMessage::assistant(self.response.clone()),
+            ))
+        }
+    }
+
+    /// A mock `CallModel` that always fails.
+    #[derive(Debug)]
+    struct FailingCallModel;
+
+    impl crate::query_deps::CallModel for FailingCallModel {
+        fn call_model(
+            &self,
+            _request: &ModelRequest,
+            _stream: &mut dyn ModelStreamSink,
+        ) -> Result<ModelCallOutput, ModelError> {
+            Err(ModelError::provider_failure("simulated failure", false))
+        }
+    }
+
+    #[test]
+    fn llm_compactor_normal_compaction() {
+        let call_model = Arc::new(SuccessCallModel::new(
+            "Summary: discussed file edits and tool usage.",
+        ));
+        let compactor = LlmCompactor::new(
+            call_model,
+            LlmCompactionConfig {
+                min_messages_for_compaction: 4,
+                preserve_recent_messages: 2,
+                ..Default::default()
+            },
+        );
+
+        let msgs = vec![
+            QueryMessage::user("first request"),
+            QueryMessage::assistant("first response"),
+            QueryMessage::user("second request"),
+            QueryMessage::assistant("second response"),
+            QueryMessage::user("third request"),
+            QueryMessage::assistant("third response"),
+        ];
+
+        let result = compactor.compact(&msgs);
+
+        // continuation summary + 2 recent messages
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].role, QueryMessageRole::System);
+        assert!(result[0].content.contains("[LLM Summary]"));
+        assert!(result[0].content.contains("discussed file edits"));
+        assert_eq!(result[1], QueryMessage::user("third request"));
+        assert_eq!(result[2], QueryMessage::assistant("third response"));
+    }
+
+    #[test]
+    fn llm_compactor_fallback_on_failure() {
+        let call_model = Arc::new(FailingCallModel);
+        let compactor = LlmCompactor::new(
+            call_model,
+            LlmCompactionConfig {
+                min_messages_for_compaction: 4,
+                preserve_recent_messages: 2,
+                ..Default::default()
+            },
+        );
+
+        let msgs = vec![
+            QueryMessage::user("old request ".repeat(10)),
+            QueryMessage::assistant("old response ".repeat(10)),
+            QueryMessage::user("another old ".repeat(10)),
+            QueryMessage::assistant("another reply ".repeat(10)),
+            QueryMessage::user("recent question"),
+            QueryMessage::assistant("recent answer"),
+        ];
+
+        let result = compactor.compact(&msgs);
+
+        // Should fall back to RichCompactor — produces a [Continuation] marker
+        assert!(result[0].content.contains("[Continuation]"));
+        assert!(result[0].content.contains("Session Compaction Summary"));
+        // Recent messages preserved
+        let last = &result[result.len() - 1];
+        assert_eq!(last.content, "recent answer");
+    }
+
+    #[test]
+    fn llm_compactor_skips_when_too_few_messages() {
+        let call_model = Arc::new(SuccessCallModel::new("should not appear"));
+        let compactor = LlmCompactor::new(
+            call_model,
+            LlmCompactionConfig {
+                min_messages_for_compaction: 8,
+                preserve_recent_messages: 2,
+                ..Default::default()
+            },
+        );
+
+        let msgs = vec![
+            QueryMessage::user("hello"),
+            QueryMessage::assistant("hi"),
+            QueryMessage::user("how are you"),
+            QueryMessage::assistant("fine"),
+        ];
+
+        let result = compactor.compact(&msgs);
+
+        // No compaction — messages returned as-is
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0], QueryMessage::user("hello"));
+        assert_eq!(result[3], QueryMessage::assistant("fine"));
     }
 }

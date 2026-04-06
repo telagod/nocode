@@ -1060,6 +1060,15 @@ impl ReplSession {
         // Check if the final result has arrived.
         let mut returned_engine = None;
         if let Ok((plan, engine)) = pending.result_rx.try_recv() {
+            // Surface model errors prominently before the full submission render.
+            if let Some(error) = &plan.model_error {
+                lines.push(format!(
+                    "stream error: {} (kind={}, retryable={})",
+                    error.message,
+                    error.kind.as_str(),
+                    error.retryable
+                ));
+            }
             let rendered = self.render_submission(&plan);
             lines.push(rendered);
             self.last_plan_summary = Some(render_plan_status(&plan));

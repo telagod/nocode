@@ -81,6 +81,9 @@ pub(crate) fn run_tui() -> io::Result<()> {
                 if let Some(rendered) = app.md_stream.push(text) {
                     app.push_markdown_block(rendered.as_str());
                 }
+            } else if line.starts_with("stream error:") {
+                let msg = line.strip_prefix("stream error: ").unwrap_or(line.as_str());
+                app.push_error_block(msg);
             } else {
                 app.push_block(line.as_str());
             }

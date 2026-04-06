@@ -117,8 +117,8 @@ pub use recovery::{
 };
 pub use roadmap::{MigrationSurface, RewriteRoadmap, RewriteStage, default_roadmap, render_status};
 pub use session_compaction::{
-    CompactionConfig, CompactionResult, RichCompactor, compact_session, estimate_message_tokens,
-    should_compact, summarize_messages,
+    CompactionConfig, CompactionResult, LlmCompactionConfig, LlmCompactor, RichCompactor,
+    compact_session, estimate_message_tokens, should_compact, summarize_messages,
 };
 pub use session_persistence::{
     ReadFileCacheState, SessionIdentity, SessionPersistenceConfig, SessionPersistencePlan,
