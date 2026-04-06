@@ -68,6 +68,32 @@ impl TaskStatus {
     }
 }
 
+/// Lifecycle event types for task audit trail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskEventType {
+    Spawned,
+    Started,
+    ProgressUpdate,
+    Completed,
+    Failed,
+    Killed,
+    Resumed,
+}
+
+impl TaskEventType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Spawned => "spawned",
+            Self::Started => "started",
+            Self::ProgressUpdate => "progress_update",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Killed => "killed",
+            Self::Resumed => "resumed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskStateBase {
     pub id: TaskId,
@@ -1892,11 +1918,21 @@ impl<S: TaskShellHost, A: TaskAgentHost, D: TaskDreamHost> TaskRuntimeDriver
     }
 }
 
+/// A recorded task lifecycle event for audit trail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskAuditEvent {
+    pub task_id: TaskId,
+    pub event_type: TaskEventType,
+    pub detail: Option<String>,
+    pub timestamp_ms: u64,
+}
+
 #[derive(Debug, Default)]
 pub struct TaskCoordinator {
     tasks: HashMap<TaskId, TaskRecord>,
     queue: VecDeque<TaskId>,
     counter: u64,
+    audit_log: Vec<TaskAuditEvent>,
 }
 
 impl TaskCoordinator {
@@ -1905,7 +1941,35 @@ impl TaskCoordinator {
             tasks: HashMap::new(),
             queue: VecDeque::new(),
             counter: 0,
+            audit_log: Vec::new(),
         }
+    }
+
+    fn record_event(
+        &mut self,
+        task_id: &TaskId,
+        event_type: TaskEventType,
+        detail: Option<String>,
+    ) {
+        self.audit_log.push(TaskAuditEvent {
+            task_id: task_id.clone(),
+            event_type,
+            detail,
+            timestamp_ms: current_time_millis(),
+        });
+    }
+
+    /// Return the full audit log.
+    pub fn audit_log(&self) -> &[TaskAuditEvent] {
+        &self.audit_log
+    }
+
+    /// Return audit events for a specific task.
+    pub fn task_audit_log(&self, task_id: &TaskId) -> Vec<&TaskAuditEvent> {
+        self.audit_log
+            .iter()
+            .filter(|e| e.task_id == *task_id)
+            .collect()
     }
 
     fn allocate_id(&mut self, task_type: TaskType) -> TaskId {
@@ -1922,6 +1986,7 @@ impl TaskCoordinator {
         };
         self.queue.push_back(id.clone());
         self.tasks.insert(id.clone(), record);
+        self.record_event(&id, TaskEventType::Spawned, None);
         id
     }
 
@@ -1981,6 +2046,7 @@ impl TaskCoordinator {
                 match record.base.status {
                     TaskStatus::Pending => {
                         record.base.mark_running();
+                        self.record_event(&task_id, TaskEventType::Started, None);
                         return Some(task_id);
                     }
                     TaskStatus::Running => return Some(task_id),
@@ -1992,21 +2058,31 @@ impl TaskCoordinator {
     }
 
     pub fn complete_task(&mut self, task_id: &TaskId) -> bool {
-        self.tasks
+        let ok = self
+            .tasks
             .get_mut(task_id)
             .map(|record| {
                 record.base.mark_completed();
             })
-            .is_some()
+            .is_some();
+        if ok {
+            self.record_event(task_id, TaskEventType::Completed, None);
+        }
+        ok
     }
 
     pub fn fail_task(&mut self, task_id: &TaskId) -> bool {
-        self.tasks
+        let ok = self
+            .tasks
             .get_mut(task_id)
             .map(|record| {
                 record.base.mark_failed();
             })
-            .is_some()
+            .is_some();
+        if ok {
+            self.record_event(task_id, TaskEventType::Failed, None);
+        }
+        ok
     }
 
     pub fn record_shell_result(&mut self, task_id: &TaskId, result: CommandResult) -> bool {
@@ -2015,8 +2091,10 @@ impl TaskCoordinator {
                 return false;
             }
             if let TaskPayload::LocalShell(shell) = &mut record.payload {
+                let detail = format!("code={} interrupted={}", result.code, result.interrupted);
                 shell.result = Some(result);
                 record.base.mark_completed();
+                self.record_event(task_id, TaskEventType::Completed, Some(detail));
                 return true;
             }
         }
@@ -2428,6 +2506,7 @@ pub fn stop_task(
     }
 
     record.base.mark_killed();
+    coordinator.record_event(task_id, TaskEventType::Killed, command.clone());
 
     Ok(StopTaskResult {
         task_id: task_id.clone(),
