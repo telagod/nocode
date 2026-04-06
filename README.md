@@ -2,7 +2,7 @@
 
 [中文文档](README_CN.md) | [Development Guide](docs/DEVELOPMENT.md)
 
-A terminal-native AI coding assistant built in Rust. 38K LOC, 51 modules, 25 tools, 555 tests.
+A terminal-native AI coding assistant built in Rust. 41K LOC, 54 modules, 25 tools, 780 tests.
 
 ## Install
 

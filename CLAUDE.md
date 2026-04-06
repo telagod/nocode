@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is nocode
 
-A terminal-native AI coding assistant built in Rust — 38K LOC, 51 modules, 25 tools, 555 tests. Connects to Claude, OpenAI, Gemini, or any compatible endpoint. Two interfaces: line-mode REPL and 4-pane TUI with full Markdown rendering, syntect syntax highlighting, and RGB color support.
+A terminal-native AI coding assistant built in Rust — 41K LOC, 54 modules, 25 tools, 780 tests. Connects to Claude, OpenAI, Gemini, or any compatible endpoint. Two interfaces: line-mode REPL and 4-pane TUI with full Markdown rendering, syntect syntax highlighting, and RGB color support.
 
 ## Build & Test Commands
 
@@ -31,7 +31,7 @@ crates/nocode/        — binary (~8K LOC), CLI/REPL/TUI shell
 
 Dependencies: serde, serde_json, reqwest, jsonschema, rusqlite (bundled), chrono, pulldown-cmark, syntect, crossterm.
 
-## Architecture — 51 Modules
+## Architecture — 54 Modules
 
 ### Provider Layer
 - `provider.rs` — ModelProvider enum (Mock|Claude|OpenAi|Gemini|Custom), ApiFormat routing
@@ -53,7 +53,7 @@ Discovery: ToolSearch, Lsp
 Memory: MemorySave, MemoryList, MemorySearch, MemoryDelete
 
 Modules:
-- `tool_execution/executor.rs` — DefaultToolExecutor dispatch with hook/sandbox/validation integration
+- `tool_execution/executor.rs` — DefaultToolExecutor dispatch with hook/sandbox/validation integration, PermissionPrompter trait (AutoApprove/AutoDeny/Interactive), PermissionAuditLog
 - `tool_execution/model.rs` — ToolCallInput, ToolCallResult, ToolExecutionTrace
 - `tool_execution/task_tools.rs` — 5 task tools wired to global TaskCoordinator
 - `tool_execution/team_tools.rs` — TeamCreate/Delete
@@ -81,10 +81,12 @@ Modules:
 
 ### Session & Compaction
 - `session_compaction.rs` — RichCompactor with structured summaries (message counts, tool names, recent requests, pending work, key files), integrated with summary_compression
+- `session_control.rs` — SessionControl with fork/branch/resume/suspend/complete, SessionCheckpoint, SessionMetadata with parent_id/branch_name
+- `task_packet.rs` — TaskPacket structured task format (goal/constraints/files/budget/priority/labels), ValidatedPacket, TaskValidator trait, FileExistenceValidator, BudgetRangeValidator
 - `budget.rs` + `budget_state.rs` — token budget tracking with diminishing returns
 
 ### Runtime Infrastructure
-- `worker_boot.rs` — Worker state machine (Spawning→TrustRequired→ReadyForPrompt→Running→Finished/Failed), WorkerEvent audit trail, WorkerRegistry singleton
+- `worker_boot.rs` — Worker state machine (Spawning→TrustRequired→ReadyForPrompt→Running→Finished/Failed), WorkerEvent audit trail, WorkerRegistry singleton, TrustResolver trait + TrustChain chain evaluator + AllowAll/PromptRequired/RuleBased policies, resolve_trust_with() policy integration
 - `recovery.rs` — 7 failure scenarios, RecoveryRecipe (steps + max_attempts + escalation), one-attempt-before-escalation
 - `policy_engine.rs` — composable conditions (GreenAt/StaleBranch/And/Or), chainable actions (MergeToDev/Escalate/Chain), priority-sorted rule evaluation
 - `task_runtime.rs` — TaskCoordinator (shell/agent/dream/daemon), global singleton
@@ -111,7 +113,7 @@ Modules:
 
 ### MCP & LSP
 - `mcp_client.rs` — JSON-RPC over stdio, initialize/list_tools/call_tool
-- `mcp_manager.rs` — McpManager with per-server lifecycle, tool discovery, global singleton
+- `mcp_manager.rs` — McpManager with per-server lifecycle, tool discovery, health checks (McpHealthStats, health_check_all, reconnect), 11-phase McpLifecycleTracker (Registered→Spawning→Handshake→CapabilityNegotiation→ToolDiscovery→VersionCheck→Connected→HealthCheck→Degraded→Reconnecting→Shutdown), global singleton
 - `lsp_client.rs` — LspRegistry with file-system based implementation (grep-based definition/references, bracket diagnostics, keyword completion)
 - `global_registry.rs` — GlobalToolRegistry (OnceLock singleton), ToolSource (Base/Plugin/Mcp/Runtime), fuzzy search
 

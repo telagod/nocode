@@ -639,9 +639,7 @@ fn permission_enforcer_workspace_write_boundary() {
 
 use nocode_core::plugin_system::{
     HookEvent, Plugin, PluginKind, PluginMetadata, PluginRegistry, PluginState,
-    PluginToolManifest,
 };
-use nocode_core::tool_registry::PermissionMode as PluginPermMode;
 
 fn make_plugin(id: &str) -> Plugin {
     Plugin {

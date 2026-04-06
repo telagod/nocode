@@ -16,6 +16,7 @@ mod tool_render;
 #[allow(dead_code, clippy::empty_line_after_doc_comments)]
 mod tool_truncate;
 mod tui;
+mod tui_permission;
 
 use nocode_core::{
     AssistantTurnStatus, BridgeEventWire, BridgeMode, BridgeRequest, BridgeTransportError,

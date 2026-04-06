@@ -6,6 +6,112 @@ use serde_json::Value;
 
 use crate::mcp_client::McpClient;
 
+// ---------------------------------------------------------------------------
+// MCP Lifecycle Phase System
+// ---------------------------------------------------------------------------
+
+/// The 11 phases of an MCP server lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum McpLifecyclePhase {
+    Registered,
+    Spawning,
+    Handshake,
+    CapabilityNegotiation,
+    ToolDiscovery,
+    VersionCheck,
+    Connected,
+    HealthCheck,
+    Degraded,
+    Reconnecting,
+    Shutdown,
+}
+
+impl McpLifecyclePhase {
+    /// Valid transitions from this phase.
+    fn valid_transitions(self) -> &'static [McpLifecyclePhase] {
+        use McpLifecyclePhase::*;
+        match self {
+            Registered => &[Spawning, Shutdown],
+            Spawning => &[Handshake, Shutdown],
+            Handshake => &[CapabilityNegotiation, Shutdown],
+            CapabilityNegotiation => &[ToolDiscovery, VersionCheck, Shutdown],
+            ToolDiscovery => &[VersionCheck, Connected, Shutdown],
+            VersionCheck => &[Connected, Shutdown],
+            Connected => &[HealthCheck, Degraded, Reconnecting, Shutdown],
+            HealthCheck => &[Connected, Degraded, Shutdown],
+            Degraded => &[Reconnecting, Shutdown],
+            Reconnecting => &[Spawning, Shutdown],
+            Shutdown => &[Registered],
+        }
+    }
+
+    pub fn can_transition_to(self, target: McpLifecyclePhase) -> bool {
+        self.valid_transitions().contains(&target)
+    }
+}
+
+/// Tracks lifecycle phase transitions for an MCP server with validation.
+#[derive(Debug, Clone)]
+pub struct McpLifecycleTracker {
+    pub phase: McpLifecyclePhase,
+    pub history: Vec<McpLifecycleTransition>,
+}
+
+#[derive(Debug, Clone)]
+pub struct McpLifecycleTransition {
+    pub from: McpLifecyclePhase,
+    pub to: McpLifecyclePhase,
+    pub timestamp_ms: u64,
+}
+
+impl McpLifecycleTracker {
+    pub fn new() -> Self {
+        Self {
+            phase: McpLifecyclePhase::Registered,
+            history: Vec::new(),
+        }
+    }
+
+    /// Attempt a phase transition. Returns Err if the transition is invalid.
+    pub fn transition(&mut self, target: McpLifecyclePhase) -> Result<(), String> {
+        if !self.phase.can_transition_to(target) {
+            return Err(format!(
+                "invalid MCP lifecycle transition: {:?} → {:?} (valid: {:?})",
+                self.phase,
+                target,
+                self.phase.valid_transitions()
+            ));
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.history.push(McpLifecycleTransition {
+            from: self.phase,
+            to: target,
+            timestamp_ms: now,
+        });
+        self.phase = target;
+        Ok(())
+    }
+
+    /// Reset to Registered (e.g. after full shutdown cycle).
+    pub fn reset(&mut self) {
+        self.phase = McpLifecyclePhase::Registered;
+        self.history.clear();
+    }
+
+    pub fn transition_count(&self) -> usize {
+        self.history.len()
+    }
+}
+
+impl Default for McpLifecycleTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Status of an MCP server connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpServerStatus {
@@ -45,6 +151,7 @@ pub struct McpServerEntry {
     pub tools: Vec<McpDiscoveredTool>,
     pub error: Option<String>,
     pub health: McpHealthStats,
+    pub lifecycle: McpLifecycleTracker,
     client: Option<McpClient>,
 }
 
@@ -58,6 +165,7 @@ impl fmt::Debug for McpServerEntry {
             .field("tools", &self.tools)
             .field("error", &self.error)
             .field("health", &self.health)
+            .field("lifecycle", &self.lifecycle)
             .field("client", &self.client.as_ref().map(|_| "<McpClient>"))
             .finish()
     }
@@ -87,6 +195,7 @@ impl McpManager {
                 tools: Vec::new(),
                 error: None,
                 health: McpHealthStats::default(),
+                lifecycle: McpLifecycleTracker::new(),
                 client: None,
             },
         );
@@ -595,5 +704,105 @@ mod tests {
         let h = mgr.get_health("fs").unwrap();
         assert_eq!(h.checks_total, 0);
         assert!(mgr.get_health("ghost").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Lifecycle phase tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lifecycle_valid_transitions() {
+        let mut tracker = McpLifecycleTracker::new();
+        assert_eq!(tracker.phase, McpLifecyclePhase::Registered);
+
+        tracker.transition(McpLifecyclePhase::Spawning).unwrap();
+        tracker.transition(McpLifecyclePhase::Handshake).unwrap();
+        tracker.transition(McpLifecyclePhase::CapabilityNegotiation).unwrap();
+        tracker.transition(McpLifecyclePhase::ToolDiscovery).unwrap();
+        tracker.transition(McpLifecyclePhase::Connected).unwrap();
+        assert_eq!(tracker.phase, McpLifecyclePhase::Connected);
+        assert_eq!(tracker.transition_count(), 5);
+    }
+
+    #[test]
+    fn lifecycle_invalid_transition_rejected() {
+        let mut tracker = McpLifecycleTracker::new();
+        // Registered → Connected is not valid (must go through Spawning first)
+        let err = tracker.transition(McpLifecyclePhase::Connected).unwrap_err();
+        assert!(err.contains("invalid"));
+        assert_eq!(tracker.phase, McpLifecyclePhase::Registered);
+    }
+
+    #[test]
+    fn lifecycle_shutdown_from_any_phase() {
+        for start in [
+            McpLifecyclePhase::Registered,
+            McpLifecyclePhase::Spawning,
+            McpLifecyclePhase::Handshake,
+            McpLifecyclePhase::Connected,
+            McpLifecyclePhase::Degraded,
+        ] {
+            let mut tracker = McpLifecycleTracker::new();
+            tracker.phase = start; // Force phase for testing
+            assert!(tracker.transition(McpLifecyclePhase::Shutdown).is_ok());
+        }
+    }
+
+    #[test]
+    fn lifecycle_shutdown_to_registered() {
+        let mut tracker = McpLifecycleTracker::new();
+        tracker.transition(McpLifecyclePhase::Spawning).unwrap();
+        tracker.transition(McpLifecyclePhase::Shutdown).unwrap();
+        tracker.transition(McpLifecyclePhase::Registered).unwrap();
+        assert_eq!(tracker.phase, McpLifecyclePhase::Registered);
+    }
+
+    #[test]
+    fn lifecycle_reconnect_path() {
+        let mut tracker = McpLifecycleTracker::new();
+        tracker.phase = McpLifecyclePhase::Connected;
+        tracker.transition(McpLifecyclePhase::Degraded).unwrap();
+        tracker.transition(McpLifecyclePhase::Reconnecting).unwrap();
+        tracker.transition(McpLifecyclePhase::Spawning).unwrap();
+        tracker.transition(McpLifecyclePhase::Handshake).unwrap();
+        assert_eq!(tracker.phase, McpLifecyclePhase::Handshake);
+    }
+
+    #[test]
+    fn lifecycle_health_check_path() {
+        let mut tracker = McpLifecycleTracker::new();
+        tracker.phase = McpLifecyclePhase::Connected;
+        tracker.transition(McpLifecyclePhase::HealthCheck).unwrap();
+        tracker.transition(McpLifecyclePhase::Connected).unwrap();
+        assert_eq!(tracker.phase, McpLifecyclePhase::Connected);
+    }
+
+    #[test]
+    fn lifecycle_reset() {
+        let mut tracker = McpLifecycleTracker::new();
+        tracker.transition(McpLifecyclePhase::Spawning).unwrap();
+        tracker.transition(McpLifecyclePhase::Handshake).unwrap();
+        assert_eq!(tracker.transition_count(), 2);
+
+        tracker.reset();
+        assert_eq!(tracker.phase, McpLifecyclePhase::Registered);
+        assert_eq!(tracker.transition_count(), 0);
+    }
+
+    #[test]
+    fn lifecycle_registered_on_new_server() {
+        let mut mgr = McpManager::new();
+        mgr.register_server("test", "cmd", vec![]);
+        let entry = mgr.servers.get("test").unwrap();
+        assert_eq!(entry.lifecycle.phase, McpLifecyclePhase::Registered);
+    }
+
+    #[test]
+    fn lifecycle_can_transition_to() {
+        assert!(McpLifecyclePhase::Registered.can_transition_to(McpLifecyclePhase::Spawning));
+        assert!(!McpLifecyclePhase::Registered.can_transition_to(McpLifecyclePhase::Connected));
+        assert!(McpLifecyclePhase::Connected.can_transition_to(McpLifecyclePhase::HealthCheck));
+        assert!(McpLifecyclePhase::Connected.can_transition_to(McpLifecyclePhase::Degraded));
+        assert!(!McpLifecyclePhase::Shutdown.can_transition_to(McpLifecyclePhase::Connected));
     }
 }

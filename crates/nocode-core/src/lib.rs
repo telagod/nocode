@@ -45,6 +45,7 @@ pub mod stale_branch;
 pub mod stop_hook;
 pub mod summary_compression;
 pub mod task_runtime;
+pub mod task_packet;
 pub mod telemetry;
 pub mod tool_execution;
 pub mod tool_registry;
@@ -77,8 +78,8 @@ pub use lsp_client::{
     LspResult, LspServer, LspServerStatus, LspSymbol, global_lsp_registry,
 };
 pub use mcp_manager::{
-    McpDiscoveredTool, McpHealthStats, McpManager, McpServerEntry, McpServerStatus,
-    global_mcp_manager,
+    McpDiscoveredTool, McpHealthStats, McpLifecyclePhase, McpLifecycleTracker,
+    McpLifecycleTransition, McpManager, McpServerEntry, McpServerStatus, global_mcp_manager,
 };
 pub use message::{QueryMessage, QueryMessageRole};
 pub use model_response::{ModelResponse, ModelResponseStopReason, ModelResponseToolPhase};
@@ -125,6 +126,10 @@ pub use session_compaction::{
 };
 pub use session_control::{
     SessionCheckpoint, SessionControl, SessionMetadata, SessionStatus,
+};
+pub use task_packet::{
+    BudgetRangeValidator, FileExistenceValidator, TaskBudgetSpec, TaskPacket, TaskPacketError,
+    TaskPacketLimits, TaskPriority, TaskValidator, ValidatedPacket,
 };
 pub use session_persistence::{
     ReadFileCacheState, SessionIdentity, SessionPersistenceConfig, SessionPersistencePlan,
