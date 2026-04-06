@@ -29,7 +29,9 @@ pub(crate) fn run_tui() -> io::Result<()> {
     }
     let mut stdout = io::stdout();
     let _guard = TuiTerminalGuard::enter(&mut stdout)?;
-    let mut engine: Option<QueryEngine> = Some(QueryEngine::new(crate::bootstrap_config()));
+    let config = crate::bootstrap_config();
+    crate::wire_task_coordinator(&config.session_id);
+    let mut engine: Option<QueryEngine> = Some(QueryEngine::new(config));
     let mut session = ReplSession::new("nocode");
     session.set_tui_mode(true);
 
