@@ -1047,18 +1047,27 @@ impl ReplSession {
         }
     }
 
+    #[allow(dead_code)]
     pub fn tui_draft(&self) -> &str {
         self.editor.draft().unwrap_or("")
     }
 
+    #[allow(dead_code)]
     pub fn set_tui_draft(&mut self, value: impl Into<String>) {
         self.editor.set_draft(value);
     }
 
+    #[allow(dead_code)]
     pub fn clear_tui_draft(&mut self) {
         self.editor.clear();
     }
 
+    /// Set a pending intent directly (for TUI mode submit).
+    pub fn submit_prompt(&mut self, prompt: impl Into<String>) {
+        self.pending_intent = Some(ReplIntent::new(prompt));
+    }
+
+    #[allow(dead_code)]
     pub fn process_local_line<W: Write>(
         &mut self,
         engine: &mut QueryEngine,
@@ -1069,6 +1078,7 @@ impl ReplSession {
         self.execute_command(engine, writer, command)
     }
 
+    #[allow(dead_code)]
     pub fn tick_tasks<W: Write>(&mut self, engine: &QueryEngine, writer: &mut W) -> io::Result<()> {
         self.maybe_tick_task_updates(engine, writer)
     }
@@ -1199,6 +1209,7 @@ impl ReplSession {
     }
 
     /// Move permission cursor up.
+    #[allow(dead_code)]
     pub fn permission_cursor_up(&mut self) {
         if self.permission_cursor > 0 {
             self.permission_cursor -= 1;
@@ -1206,6 +1217,7 @@ impl ReplSession {
     }
 
     /// Move permission cursor down.
+    #[allow(dead_code)]
     pub fn permission_cursor_down(&mut self) {
         if !self.pending_permissions.is_empty() {
             self.permission_cursor =
@@ -1307,6 +1319,7 @@ impl ReplSession {
         }
     }
 
+    #[allow(dead_code)]
     pub fn render_tui_help_overlay(&self) -> String {
         let mut lines = vec![
             String::from("help overlay:"),
@@ -1329,6 +1342,7 @@ impl ReplSession {
         lines.join("\n")
     }
 
+    #[allow(dead_code)]
     pub fn render_tui_inspector_overlay(&self) -> String {
         let mut sections = vec![
             String::from("inspector overlay:"),

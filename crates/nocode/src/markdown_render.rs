@@ -14,7 +14,7 @@ pub struct LineSegment {
 }
 
 impl LineSegment {
-    fn new(text: impl Into<String>, color: Color) -> Self {
+    pub fn new(text: impl Into<String>, color: Color) -> Self {
         Self {
             text: text.into(),
             color,
@@ -23,12 +23,12 @@ impl LineSegment {
         }
     }
 
-    fn bold(mut self) -> Self {
+    pub fn bold(mut self) -> Self {
         self.bold = true;
         self
     }
 
-    fn italic(mut self) -> Self {
+    pub fn italic(mut self) -> Self {
         self.italic = true;
         self
     }
@@ -41,13 +41,13 @@ pub struct RenderedLine {
 }
 
 impl RenderedLine {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             segments: Vec::new(),
         }
     }
 
-    fn push(&mut self, segment: LineSegment) {
+    pub fn push(&mut self, segment: LineSegment) {
         self.segments.push(segment);
     }
 
