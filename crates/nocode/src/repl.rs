@@ -1108,7 +1108,7 @@ impl ReplSession {
                         ));
                     }
                 }
-                ModelStreamEvent::Delta { text } => {
+                ModelStreamEvent::Delta { text, .. } => {
                     pending.accumulated_text.push_str(text);
                     // Approximate streaming output tokens: 1 token ~ 4 chars.
                     let approx_tokens = (text.len() as u64).div_ceil(4);
@@ -1122,6 +1122,12 @@ impl ReplSession {
                     lines.push(format!(
                         "stream complete: {}",
                         normalize_session_content(message.content.as_str())
+                    ));
+                }
+                ModelStreamEvent::StreamError { message, .. } => {
+                    lines.push(format!(
+                        "stream error: {}",
+                        normalize_session_content(message.as_str())
                     ));
                 }
             }
@@ -3099,13 +3105,19 @@ impl<W: Write> ModelStreamSink for ReplLiveStreamCapture<'_, W> {
                     model
                 )
             }
-            ModelStreamEvent::Delta { text } => {
+            ModelStreamEvent::Delta { text, .. } => {
                 format!("stream delta: {}", normalize_session_content(text.as_str()))
             }
             ModelStreamEvent::Complete { message } => format!(
                 "stream complete: {}",
                 normalize_session_content(message.content.as_str())
             ),
+            ModelStreamEvent::StreamError { message, .. } => {
+                format!(
+                    "stream error: {}",
+                    normalize_session_content(message.as_str())
+                )
+            }
         };
         self.push_line(line);
     }

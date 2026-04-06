@@ -2256,8 +2256,11 @@ fn render_stream_event_activity(event: &ModelStreamEventWire) -> String {
         ModelStreamEventWire::Start { provider, model } => {
             format!("stream=start:{provider}/{model}")
         }
-        ModelStreamEventWire::Delta { text } => {
+        ModelStreamEventWire::Delta { text, .. } => {
             format!("stream=delta:{}", truncate_preview(text.clone(), 64))
+        }
+        ModelStreamEventWire::StreamError { message, .. } => {
+            format!("stream=error:{}", truncate_preview(message.clone(), 64))
         }
         ModelStreamEventWire::Complete { role, content } => format!(
             "stream=complete:{role}:{}",
@@ -2499,6 +2502,9 @@ mod tests {
                 Ok(AgentStep::progress(1, 8).with_stream_events(vec![
                     ModelStreamEventWire::Delta {
                         text: String::from("loop delta"),
+                        sequence: 0,
+                        timestamp_ms: 0,
+                        chunk_bytes: 10,
                     },
                 ]))
             }
@@ -2988,6 +2994,9 @@ mod tests {
         let response = ProcessAgentResponseWire::new(2, 88, true, ProcessAgentStatusWire::Running)
             .with_stream_events(vec![ModelStreamEventWire::Delta {
                 text: String::from("wire delta"),
+                sequence: 0,
+                timestamp_ms: 0,
+                chunk_bytes: 10,
             }])
             .with_response_result(json!({"ok": true, "source": "wire"}));
         let response_json = response.to_json().expect("response should serialize");
@@ -3011,6 +3020,9 @@ mod tests {
     fn process_agent_output_wire_round_trip_json() {
         let output = ProcessAgentOutputWire::event(ModelStreamEventWire::Delta {
             text: String::from("wire delta"),
+            sequence: 0,
+            timestamp_ms: 0,
+            chunk_bytes: 10,
         });
         let encoded = output.to_json().expect("output wire should serialize");
         let decoded =
@@ -3077,7 +3089,7 @@ json.dump(response, sys.stdout)
 request = json.load(sys.stdin)
 frames = [
     {"kind": "event", "event": {"kind": "start", "provider": "mock", "model": "worker"}},
-    {"kind": "event", "event": {"kind": "delta", "text": request.get("prompt", "")}},
+    {"kind": "event", "event": {"kind": "delta", "text": request.get("prompt", ""), "sequence": 1, "timestamp_ms": 0, "chunk_bytes": 10}},
     {"kind": "complete", "response": {
         "tool_use_delta": len(request.get("agent_id", "")),
         "token_delta": 9,
@@ -3180,7 +3192,7 @@ for line in sys.stdin:
     request = json.loads(line)
     sys.stdout.write(json.dumps({
         "kind": "event",
-        "event": {"kind": "delta", "text": request.get("prompt", "")}
+        "event": {"kind": "delta", "text": request.get("prompt", ""), "sequence": count, "timestamp_ms": 0, "chunk_bytes": 10}
     }) + "\n")
     sys.stdout.write(json.dumps({
         "kind": "complete",

@@ -725,7 +725,12 @@ fn render_stream_event_summary(event: &ModelStreamEventWire) -> String {
         ModelStreamEventWire::Start { provider, model } => {
             format!("start provider={provider} model={model}")
         }
-        ModelStreamEventWire::Delta { text } => format!("delta text={}", truncate_value(text, 96)),
+        ModelStreamEventWire::Delta { text, .. } => {
+            format!("delta text={}", truncate_value(text, 96))
+        }
+        ModelStreamEventWire::StreamError { message, .. } => {
+            format!("error message={}", truncate_value(message, 96))
+        }
         ModelStreamEventWire::Complete { role, content } => {
             format!(
                 "complete role={role} content={}",
@@ -854,6 +859,9 @@ mod tests {
                 AgentStep::completed(2, 64, true)
                     .with_stream_events(vec![ModelStreamEventWire::Delta {
                         text: String::from("task-panel delta"),
+                        sequence: 0,
+                        timestamp_ms: 0,
+                        chunk_bytes: 16,
                     }])
                     .with_model_error(ModelErrorWire {
                         surface: String::from("provider"),

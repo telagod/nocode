@@ -198,6 +198,13 @@ impl CallModel for DefaultCallModel {
         });
 
         let output = if matches!(request.stream_mode, ModelStreamMode::Enabled) {
+            let caps = request.selection.provider.capabilities();
+            if !caps.supports_streaming {
+                return Err(ModelError::configuration_failure(format!(
+                    "provider {} does not support streaming",
+                    request.selection.provider.as_str()
+                )));
+            }
             let mut parser = StreamingModelParser::new(request);
             let response = transport
                 .execute_streaming(&http_request, |frame| parser.push_frame(frame, stream))?;
@@ -212,6 +219,9 @@ impl CallModel for DefaultCallModel {
                 let output = parse_model_response(request, &response.body)?;
                 stream.push(ModelStreamEvent::Delta {
                     text: output.message.content.clone(),
+                    sequence: 0,
+                    timestamp_ms: 0,
+                    chunk_bytes: output.message.content.len(),
                 });
                 output
             }
@@ -248,6 +258,9 @@ fn call_mock_model(
     if matches!(request.stream_mode, ModelStreamMode::Enabled) {
         stream.push(ModelStreamEvent::Delta {
             text: message.content.clone(),
+            sequence: 0,
+            timestamp_ms: 0,
+            chunk_bytes: message.content.len(),
         });
     }
     stream.push(ModelStreamEvent::Complete {

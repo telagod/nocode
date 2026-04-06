@@ -196,6 +196,9 @@ impl CallModel for FixedCallModel {
         });
         stream.push(ModelStreamEvent::Delta {
             text: String::from("delta"),
+            sequence: 1,
+            timestamp_ms: 0,
+            chunk_bytes: 5,
         });
         stream.push(ModelStreamEvent::Complete {
             message: message.clone(),

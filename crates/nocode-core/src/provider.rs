@@ -4,6 +4,14 @@ use crate::query_loop::{QuerySource, TaskBudget};
 use jsonschema::JSONSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn current_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map_or(0, |d| d.as_millis() as u64)
+}
 
 /// The wire format used to communicate with a model provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -525,6 +533,13 @@ pub enum ModelStreamEvent {
     },
     Delta {
         text: String,
+        sequence: u32,
+        timestamp_ms: u64,
+        chunk_bytes: usize,
+    },
+    StreamError {
+        message: String,
+        retryable: bool,
     },
     Complete {
         message: QueryMessage,
@@ -536,6 +551,7 @@ impl ModelStreamEvent {
         match self {
             Self::Start { .. } => "start",
             Self::Delta { .. } => "delta",
+            Self::StreamError { .. } => "stream_error",
             Self::Complete { .. } => "complete",
         }
     }
@@ -544,9 +560,24 @@ impl ModelStreamEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ModelStreamEventWire {
-    Start { provider: String, model: String },
-    Delta { text: String },
-    Complete { role: String, content: String },
+    Start {
+        provider: String,
+        model: String,
+    },
+    Delta {
+        text: String,
+        sequence: u32,
+        timestamp_ms: u64,
+        chunk_bytes: usize,
+    },
+    StreamError {
+        message: String,
+        retryable: bool,
+    },
+    Complete {
+        role: String,
+        content: String,
+    },
 }
 
 impl ModelStreamEventWire {
@@ -557,7 +588,20 @@ impl ModelStreamEventWire {
                     .ok_or_else(|| format!("unknown model provider: {provider}"))?;
                 Ok(ModelStreamEvent::Start { provider, model })
             }
-            Self::Delta { text } => Ok(ModelStreamEvent::Delta { text }),
+            Self::Delta {
+                text,
+                sequence,
+                timestamp_ms,
+                chunk_bytes,
+            } => Ok(ModelStreamEvent::Delta {
+                text,
+                sequence,
+                timestamp_ms,
+                chunk_bytes,
+            }),
+            Self::StreamError { message, retryable } => {
+                Ok(ModelStreamEvent::StreamError { message, retryable })
+            }
             Self::Complete { role, content } => {
                 let role = QueryMessageRole::parse(role.as_str())
                     .ok_or_else(|| format!("unknown query message role: {role}"))?;
@@ -576,7 +620,21 @@ impl From<&ModelStreamEvent> for ModelStreamEventWire {
                 provider: provider.as_str().to_string(),
                 model: model.clone(),
             },
-            ModelStreamEvent::Delta { text } => Self::Delta { text: text.clone() },
+            ModelStreamEvent::Delta {
+                text,
+                sequence,
+                timestamp_ms,
+                chunk_bytes,
+            } => Self::Delta {
+                text: text.clone(),
+                sequence: *sequence,
+                timestamp_ms: *timestamp_ms,
+                chunk_bytes: *chunk_bytes,
+            },
+            ModelStreamEvent::StreamError { message, retryable } => Self::StreamError {
+                message: message.clone(),
+                retryable: *retryable,
+            },
             ModelStreamEvent::Complete { message } => Self::Complete {
                 role: message.role.as_str().to_string(),
                 content: message.content.clone(),
@@ -779,10 +837,11 @@ impl ModelInvocation {
             stats.total_events += 1;
             match event {
                 ModelStreamEvent::Start { .. } => stats.started = true,
-                ModelStreamEvent::Delta { text } => {
+                ModelStreamEvent::Delta { text, .. } => {
                     stats.delta_events += 1;
                     stats.delta_chars += text.chars().count();
                 }
+                ModelStreamEvent::StreamError { .. } => stats.total_events += 0,
                 ModelStreamEvent::Complete { .. } => stats.completed = true,
             }
         }
@@ -1453,6 +1512,7 @@ pub(crate) struct StreamingModelParser<'a> {
     model: String,
     text: String,
     fallback_payload: Option<Value>,
+    delta_sequence: u32,
 }
 
 impl<'a> StreamingModelParser<'a> {
@@ -1466,6 +1526,7 @@ impl<'a> StreamingModelParser<'a> {
                 .to_string(),
             text: String::new(),
             fallback_payload: None,
+            delta_sequence: 0,
         }
     }
 
@@ -1518,6 +1579,9 @@ impl<'a> StreamingModelParser<'a> {
             if !fallback_text.is_empty() {
                 stream.push(ModelStreamEvent::Delta {
                     text: fallback_text.clone(),
+                    sequence: 0,
+                    timestamp_ms: 0,
+                    chunk_bytes: fallback_text.len(),
                 });
                 text = fallback_text;
             }
@@ -1657,9 +1721,13 @@ impl<'a> StreamingModelParser<'a> {
     }
 
     fn push_stream_delta(&mut self, fragment: &str, stream: &mut dyn ModelStreamSink) {
+        self.delta_sequence += 1;
         self.text.push_str(fragment);
         stream.push(ModelStreamEvent::Delta {
             text: fragment.to_string(),
+            sequence: self.delta_sequence,
+            timestamp_ms: current_time_ms(),
+            chunk_bytes: fragment.len(),
         });
     }
 }
