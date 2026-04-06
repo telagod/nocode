@@ -130,11 +130,13 @@ pub use session_persistence::{
     ReadFileCacheState, SessionIdentity, SessionPersistenceConfig, SessionPersistencePlan,
     SessionPersistenceState, SessionResumePlan,
 };
+pub use sql_store::{CommandRow, SqlStore, TaskEventRow, TaskRow, global_sql_store};
 pub use stop_hook::{StopHookInfo, StopHookResult};
 pub use task_packet::{
     BudgetRangeValidator, FileExistenceValidator, TaskBudgetSpec, TaskPacket, TaskPacketError,
     TaskPacketLimits, TaskPriority, TaskValidator, ValidatedPacket,
 };
+pub use task_runtime::ResumeResult;
 pub use task_runtime::{
     AgentProgress, AgentStep, AgentTaskResult, BashTaskKind, CommandResult, DefaultDreamHost,
     DreamPhase, DreamStep, DreamTaskResult, DreamTurn, InProcessAgentHost, LiveTaskRuntimeDriver,
@@ -143,9 +145,9 @@ pub use task_runtime::{
     ProcessAgentFailureKind, ProcessAgentOutputWire, ProcessAgentRequestWire,
     ProcessAgentResponseWire, ProcessAgentRestartPolicy, ProcessAgentStatusWire,
     ProcessAgentSupervisorPolicy, ProcessTaskAgentHost, StopTaskError, StopTaskResult,
-    TaskAgentHost, TaskCoordinator, TaskDreamHost, TaskDriveError, TaskDriveReport, TaskId,
-    TaskPayload, TaskRecord, TaskResult, TaskRuntimeDriver, TaskShellHost, TaskStateBase,
-    TaskStatus, TaskType, stop_task,
+    TaskAgentHost, TaskAuditEvent, TaskCoordinator, TaskDreamHost, TaskDriveError, TaskDriveReport,
+    TaskEventType, TaskId, TaskPayload, TaskRecord, TaskResult, TaskRuntimeDriver, TaskShellHost,
+    TaskStateBase, TaskStatus, TaskType, stop_task,
 };
 pub use tool_execution::mcp_bridge::{McpToolBridge, McpToolInfo, execute_mcp_tool_bridged};
 pub use tool_execution::{
