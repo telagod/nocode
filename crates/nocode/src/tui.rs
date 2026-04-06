@@ -649,6 +649,29 @@ impl TuiApp {
         self.mark_dirty();
     }
 
+    /// Push a styled error block with red color for visibility.
+    fn push_error_block(&mut self, message: &str) {
+        let prefix = LineSegment {
+            text: String::from("[ERROR] "),
+            color: Color::Red,
+            bold: true,
+            italic: false,
+        };
+        let body = LineSegment {
+            text: message.to_string(),
+            color: Color::Red,
+            bold: false,
+            italic: false,
+        };
+        self.styled_lines
+            .push(StyledContent::Styled(vec![prefix, body]));
+        if self.styled_lines.len() > LOG_LIMIT {
+            let overflow = self.styled_lines.len() - LOG_LIMIT;
+            self.styled_lines.drain(0..overflow);
+        }
+        self.mark_dirty();
+    }
+
     /// Push a tool call/result event through tool_render for formatted output.
     fn push_tool_event(&mut self, line: &str) {
         // Extract tool name and content from "[CALL] tool-message: ..." or "[DONE] ..." format
