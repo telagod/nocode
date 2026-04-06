@@ -51,6 +51,14 @@ impl TaskType {
             Self::Dream => "d",
         }
     }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LocalShell => "local_shell",
+            Self::LocalAgent => "local_agent",
+            Self::Dream => "dream",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +73,16 @@ pub enum TaskStatus {
 impl TaskStatus {
     pub const fn is_terminal(self) -> bool {
         matches!(self, Self::Completed | Self::Failed | Self::Killed)
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Killed => "killed",
+        }
     }
 }
 
@@ -1933,6 +1951,7 @@ pub struct TaskCoordinator {
     queue: VecDeque<TaskId>,
     counter: u64,
     audit_log: Vec<TaskAuditEvent>,
+    session_id: Option<String>,
 }
 
 impl TaskCoordinator {
@@ -1942,7 +1961,13 @@ impl TaskCoordinator {
             queue: VecDeque::new(),
             counter: 0,
             audit_log: Vec::new(),
+            session_id: None,
         }
+    }
+
+    /// Set the session ID for SQL persistence.
+    pub fn set_session_id(&mut self, session_id: impl Into<String>) {
+        self.session_id = Some(session_id.into());
     }
 
     fn record_event(
@@ -1954,9 +1979,15 @@ impl TaskCoordinator {
         self.audit_log.push(TaskAuditEvent {
             task_id: task_id.clone(),
             event_type,
-            detail,
+            detail: detail.clone(),
             timestamp_ms: current_time_millis(),
         });
+        // Best-effort SQL persistence.
+        let store = crate::sql_store::global_sql_store();
+        if let Ok(guard) = store.lock() {
+            let _ =
+                guard.insert_task_event(task_id.as_str(), event_type.as_str(), detail.as_deref());
+        }
     }
 
     /// Return the full audit log.
@@ -1980,12 +2011,20 @@ impl TaskCoordinator {
     fn register(&mut self, payload: TaskPayload, description: String) -> TaskId {
         let task_type = payload.task_type();
         let id = self.allocate_id(task_type);
+        let desc = description.clone();
         let record = TaskRecord {
             base: TaskStateBase::new(id.clone(), task_type, description),
             payload,
         };
         self.queue.push_back(id.clone());
         self.tasks.insert(id.clone(), record);
+        // Best-effort SQL persistence.
+        if let Some(session_id) = &self.session_id {
+            let store = crate::sql_store::global_sql_store();
+            if let Ok(guard) = store.lock() {
+                let _ = guard.insert_task(id.as_str(), session_id, task_type.as_str(), &desc, None);
+            }
+        }
         self.record_event(&id, TaskEventType::Spawned, None);
         id
     }
@@ -2040,12 +2079,20 @@ impl TaskCoordinator {
         self.queue.len()
     }
 
+    fn persist_status_update(&self, task_id: &TaskId, status: TaskStatus) {
+        let store = crate::sql_store::global_sql_store();
+        if let Ok(guard) = store.lock() {
+            let _ = guard.update_task_status(task_id.as_str(), status.as_str());
+        }
+    }
+
     pub fn next_pending(&mut self) -> Option<TaskId> {
         while let Some(task_id) = self.queue.pop_front() {
             if let Some(record) = self.tasks.get_mut(&task_id) {
                 match record.base.status {
                     TaskStatus::Pending => {
                         record.base.mark_running();
+                        self.persist_status_update(&task_id, TaskStatus::Running);
                         self.record_event(&task_id, TaskEventType::Started, None);
                         return Some(task_id);
                     }
@@ -2066,6 +2113,7 @@ impl TaskCoordinator {
             })
             .is_some();
         if ok {
+            self.persist_status_update(task_id, TaskStatus::Completed);
             self.record_event(task_id, TaskEventType::Completed, None);
         }
         ok
@@ -2080,6 +2128,7 @@ impl TaskCoordinator {
             })
             .is_some();
         if ok {
+            self.persist_status_update(task_id, TaskStatus::Failed);
             self.record_event(task_id, TaskEventType::Failed, None);
         }
         ok
@@ -2094,6 +2143,7 @@ impl TaskCoordinator {
                 let detail = format!("code={} interrupted={}", result.code, result.interrupted);
                 shell.result = Some(result);
                 record.base.mark_completed();
+                self.persist_status_update(task_id, TaskStatus::Completed);
                 self.record_event(task_id, TaskEventType::Completed, Some(detail));
                 return true;
             }
@@ -2112,6 +2162,11 @@ impl TaskCoordinator {
         {
             agent.progress.tool_use_count += tool_use_delta;
             agent.progress.token_count += token_delta;
+            self.record_event(
+                task_id,
+                TaskEventType::ProgressUpdate,
+                Some(format!("tools+{tool_use_delta} tokens+{token_delta}")),
+            );
             return true;
         }
         false
