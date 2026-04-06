@@ -696,44 +696,6 @@ fn find_references_in_file(file_path: &str, symbol: &str) -> Vec<LspLocation> {
     locations
 }
 
-#[allow(dead_code)]
-fn run_command(cwd: &str, command: &str) -> String {
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .current_dir(cwd)
-        .output();
-    match output {
-        Ok(o) => {
-            let stdout = String::from_utf8_lossy(&o.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&o.stderr).to_string();
-            if stdout.is_empty() { stderr } else { stdout }
-        }
-        Err(e) => format!("command failed: {e}"),
-    }
-}
-
-#[allow(dead_code)]
-fn parse_grep_locations(base_dir: &str, output: &str) -> Vec<LspLocation> {
-    let mut locations = Vec::new();
-    let base = Path::new(base_dir);
-    for line in output.lines() {
-        let parts: Vec<&str> = line.splitn(3, ':').collect();
-        if parts.len() >= 2 {
-            let rel_path = parts[0].strip_prefix("./").unwrap_or(parts[0]);
-            let abs_path = base.join(rel_path);
-            let file_str = abs_path.to_string_lossy().to_string();
-            let line_num: u32 = parts[1].parse().unwrap_or(0);
-            locations.push(LspLocation {
-                file: file_str,
-                line: line_num,
-                column: 0,
-            });
-        }
-    }
-    locations
-}
-
 static LSP_REGISTRY: OnceLock<Arc<Mutex<LspRegistry>>> = OnceLock::new();
 
 pub fn global_lsp_registry() -> Arc<Mutex<LspRegistry>> {

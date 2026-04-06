@@ -19,8 +19,9 @@ impl ToolExecutionModule {
 }
 
 pub use executor::{
-    DefaultToolExecutor, LiveToolHost, ToolCommandOutput, ToolExecutionContext, ToolExecutor,
-    ToolHost,
+    AutoApprovePrompter, AutoDenyPrompter, DefaultToolExecutor, InteractivePrompter, LiveToolHost,
+    PermissionAuditEntry, PermissionAuditLog, PermissionPrompter, ToolCommandOutput,
+    ToolExecutionContext, ToolExecutor, ToolHost,
 };
 pub use model::{
     ToolCallArgument, ToolCallInput, ToolCallOutput, ToolCallResult, ToolExecutionRequest,

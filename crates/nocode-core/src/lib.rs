@@ -38,6 +38,7 @@ pub mod recovery;
 pub mod roadmap;
 pub mod sandbox;
 pub mod session_compaction;
+pub mod session_control;
 pub mod session_persistence;
 pub mod sql_store;
 pub mod stale_branch;
@@ -76,7 +77,8 @@ pub use lsp_client::{
     LspResult, LspServer, LspServerStatus, LspSymbol, global_lsp_registry,
 };
 pub use mcp_manager::{
-    McpDiscoveredTool, McpManager, McpServerEntry, McpServerStatus, global_mcp_manager,
+    McpDiscoveredTool, McpHealthStats, McpManager, McpServerEntry, McpServerStatus,
+    global_mcp_manager,
 };
 pub use message::{QueryMessage, QueryMessageRole};
 pub use model_response::{ModelResponse, ModelResponseStopReason, ModelResponseToolPhase};
@@ -121,6 +123,9 @@ pub use session_compaction::{
     CompactionConfig, CompactionResult, LlmCompactionConfig, LlmCompactor, RichCompactor,
     compact_session, estimate_message_tokens, should_compact, summarize_messages,
 };
+pub use session_control::{
+    SessionCheckpoint, SessionControl, SessionMetadata, SessionStatus,
+};
 pub use session_persistence::{
     ReadFileCacheState, SessionIdentity, SessionPersistenceConfig, SessionPersistencePlan,
     SessionPersistenceState, SessionResumePlan,
@@ -140,10 +145,12 @@ pub use task_runtime::{
 };
 pub use tool_execution::mcp_bridge::{McpToolBridge, McpToolInfo, execute_mcp_tool_bridged};
 pub use tool_execution::{
-    DefaultToolExecutor, DeferredTool, DeferredToolRegistry, LiveToolHost, ToolCallArgument,
-    ToolCallInput, ToolCallOutput, ToolCallResult, ToolCommandOutput, ToolExecutionContext,
-    ToolExecutionModule, ToolExecutionRequest, ToolExecutionTrace, ToolExecutor, ToolHost,
-    ToolPermissionDecision, ToolProgressUpdate, ToolSearchResult,
+    AutoApprovePrompter, AutoDenyPrompter, DefaultToolExecutor, DeferredTool,
+    DeferredToolRegistry, InteractivePrompter, LiveToolHost, PermissionAuditEntry,
+    PermissionAuditLog, PermissionPrompter, ToolCallArgument, ToolCallInput, ToolCallOutput,
+    ToolCallResult, ToolCommandOutput, ToolExecutionContext, ToolExecutionModule,
+    ToolExecutionRequest, ToolExecutionTrace, ToolExecutor, ToolHost, ToolPermissionDecision,
+    ToolProgressUpdate, ToolSearchResult,
 };
 pub use tool_registry::{
     PermissionCondition, PermissionMode, PermissionRule, ToolDefinition, ToolKind,
@@ -154,6 +161,7 @@ pub use tool_validation::{get_tool_schema, validate_tool_input};
 pub use transcript::{QueryTranscript, TranscriptEntry, TranscriptRole};
 pub use usage_tracker::{UsageSnapshot, UsageTotals, UsageTracker};
 pub use worker_boot::{
-    Worker, WorkerEvent, WorkerEventKind, WorkerFailure, WorkerFailureKind, WorkerRegistry,
-    WorkerStatus, global_worker_registry,
+    AllowAllPolicy, PromptRequiredPolicy, RuleBasedPolicy, TrustChain, TrustContext,
+    TrustDecision, TrustPolicy, TrustResolver, Worker, WorkerEvent, WorkerEventKind,
+    WorkerFailure, WorkerFailureKind, WorkerRegistry, WorkerStatus, global_worker_registry,
 };

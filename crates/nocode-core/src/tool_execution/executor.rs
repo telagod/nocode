@@ -15,6 +15,128 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Strategy for resolving tool permission decisions.
+/// Implementations can auto-approve, auto-deny, or prompt the user interactively.
+pub trait PermissionPrompter: Send + Sync + std::fmt::Debug {
+    /// Decide whether a tool call should proceed.
+    fn check(&self, tool_name: &str, arguments_summary: &str) -> ToolPermissionDecision;
+    fn name(&self) -> &str;
+}
+
+/// Auto-approves all tool calls. Used in non-interactive / test contexts.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AutoApprovePrompter;
+
+impl PermissionPrompter for AutoApprovePrompter {
+    fn check(&self, _tool_name: &str, _arguments_summary: &str) -> ToolPermissionDecision {
+        ToolPermissionDecision::allow(false)
+    }
+    fn name(&self) -> &str {
+        "auto-approve"
+    }
+}
+
+/// Auto-denies all tool calls. Used in read-only / locked contexts.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AutoDenyPrompter {
+    _private: (),
+}
+
+impl AutoDenyPrompter {
+    pub fn new() -> Self {
+        Self { _private: () }
+    }
+}
+
+impl PermissionPrompter for AutoDenyPrompter {
+    fn check(&self, tool_name: &str, _arguments_summary: &str) -> ToolPermissionDecision {
+        ToolPermissionDecision::deny(format!("auto-deny: {tool_name}"))
+    }
+    fn name(&self) -> &str {
+        "auto-deny"
+    }
+}
+
+/// Returns Prompt for tools that require elevated permissions, Allow for safe tools.
+#[derive(Debug, Clone)]
+pub struct InteractivePrompter {
+    /// Tools that always require user approval.
+    pub prompt_tools: Vec<String>,
+}
+
+impl InteractivePrompter {
+    pub fn new(prompt_tools: Vec<String>) -> Self {
+        Self { prompt_tools }
+    }
+
+    pub fn default_dangerous() -> Self {
+        Self {
+            prompt_tools: vec![
+                "Bash".into(),
+                "Write".into(),
+                "Edit".into(),
+                "WebFetch".into(),
+                "WebSearch".into(),
+                "Agent".into(),
+                "TeamCreate".into(),
+                "TeamDelete".into(),
+                "CronCreate".into(),
+                "CronDelete".into(),
+            ],
+        }
+    }
+}
+
+impl PermissionPrompter for InteractivePrompter {
+    fn check(&self, tool_name: &str, _arguments_summary: &str) -> ToolPermissionDecision {
+        if self.prompt_tools.iter().any(|t| t == tool_name) {
+            ToolPermissionDecision::prompt(tool_name, format!("{tool_name} requires approval"))
+        } else {
+            ToolPermissionDecision::allow(false)
+        }
+    }
+    fn name(&self) -> &str {
+        "interactive"
+    }
+}
+
+/// Audit record of a permission decision.
+#[derive(Debug, Clone)]
+pub struct PermissionAuditEntry {
+    pub tool_name: String,
+    pub decision: String,
+    pub prompter: String,
+    pub timestamp_ms: u64,
+}
+
+/// Tracks permission decisions for observability.
+#[derive(Debug, Default)]
+pub struct PermissionAuditLog {
+    pub entries: Vec<PermissionAuditEntry>,
+}
+
+impl PermissionAuditLog {
+    pub fn record(&mut self, tool_name: &str, decision: &str, prompter: &str) {
+        self.entries.push(PermissionAuditEntry {
+            tool_name: tool_name.to_string(),
+            decision: decision.to_string(),
+            prompter: prompter.to_string(),
+            timestamp_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        });
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolExecutionContext {
     pub cwd: String,
@@ -1153,5 +1275,151 @@ mod tests {
         assert!(validate_bash_command("git status", m, cwd).allowed);
         assert!(validate_bash_command("grep -rn pattern .", m, cwd).allowed);
         assert!(validate_bash_command("rm src/temp.txt", m, cwd).allowed);
+    }
+
+    // -----------------------------------------------------------------------
+    // PermissionPrompter tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn auto_approve_prompter_allows_all() {
+        let p = AutoApprovePrompter;
+        assert_eq!(p.name(), "auto-approve");
+        let d = p.check("Bash", "rm -rf /tmp/test");
+        assert!(matches!(d, ToolPermissionDecision::Allow { .. }));
+    }
+
+    #[test]
+    fn auto_deny_prompter_denies_all() {
+        let p = AutoDenyPrompter::new();
+        assert_eq!(p.name(), "auto-deny");
+        let d = p.check("Read", "file_path=foo.rs");
+        assert!(matches!(d, ToolPermissionDecision::Deny { .. }));
+        if let ToolPermissionDecision::Deny { reason } = d {
+            assert!(reason.contains("Read"));
+        }
+    }
+
+    #[test]
+    fn interactive_prompter_prompts_dangerous_tools() {
+        let p = InteractivePrompter::default_dangerous();
+        assert_eq!(p.name(), "interactive");
+
+        let d = p.check("Bash", "command=ls");
+        assert!(matches!(d, ToolPermissionDecision::Prompt { .. }));
+
+        let d = p.check("Write", "file_path=foo.rs");
+        assert!(matches!(d, ToolPermissionDecision::Prompt { .. }));
+
+        let d = p.check("Edit", "old=a new=b");
+        assert!(matches!(d, ToolPermissionDecision::Prompt { .. }));
+    }
+
+    #[test]
+    fn interactive_prompter_allows_safe_tools() {
+        let p = InteractivePrompter::default_dangerous();
+        let d = p.check("Read", "file_path=foo.rs");
+        assert!(matches!(d, ToolPermissionDecision::Allow { .. }));
+
+        let d = p.check("Glob", "pattern=*.rs");
+        assert!(matches!(d, ToolPermissionDecision::Allow { .. }));
+
+        let d = p.check("Grep", "pattern=foo");
+        assert!(matches!(d, ToolPermissionDecision::Allow { .. }));
+    }
+
+    #[test]
+    fn interactive_prompter_custom_tools() {
+        let p = InteractivePrompter::new(vec!["MyDangerous".into()]);
+        let d = p.check("MyDangerous", "args");
+        assert!(matches!(d, ToolPermissionDecision::Prompt { .. }));
+
+        let d = p.check("MySafe", "args");
+        assert!(matches!(d, ToolPermissionDecision::Allow { .. }));
+    }
+
+    #[test]
+    fn permission_audit_log_records() {
+        let mut log = PermissionAuditLog::default();
+        assert!(log.is_empty());
+
+        log.record("Bash", "allow", "auto-approve");
+        log.record("Write", "prompt", "interactive");
+        assert_eq!(log.len(), 2);
+        assert!(!log.is_empty());
+
+        assert_eq!(log.entries[0].tool_name, "Bash");
+        assert_eq!(log.entries[0].decision, "allow");
+        assert_eq!(log.entries[0].prompter, "auto-approve");
+        assert!(log.entries[0].timestamp_ms > 0);
+
+        assert_eq!(log.entries[1].tool_name, "Write");
+    }
+
+    #[test]
+    fn permission_decision_prompt_settles_to_denied() {
+        let call = ToolCallInput::new("Bash", "toolu-99");
+        let decision = ToolPermissionDecision::prompt("Bash", "needs approval");
+        let result = decision.settle(call, ToolCallOutput::default());
+        assert_eq!(result.status_label(), "denied");
+        assert!(result.message().contains("awaiting approval"));
+    }
+
+    #[test]
+    fn auto_deny_prompter_default() {
+        let p = AutoDenyPrompter::default();
+        let d = p.check("Agent", "prompt=test");
+        assert!(matches!(d, ToolPermissionDecision::Deny { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Shell escape & path check tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn shell_escape_handles_quotes() {
+        assert_eq!(shell_escape("hello"), "'hello'");
+        assert_eq!(shell_escape("it's"), "'it'\\''s'");
+        assert_eq!(shell_escape(""), "''");
+    }
+
+    #[test]
+    fn check_command_paths_detects_outside_workspace() {
+        let result = check_command_paths("cat /etc/passwd", "/home/user/project");
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("/etc/passwd"));
+    }
+
+    #[test]
+    fn check_command_paths_allows_workspace_paths() {
+        let result = check_command_paths("cat /home/user/project/src/main.rs", "/home/user/project");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn check_command_paths_allows_safe_system_paths() {
+        assert!(check_command_paths("echo > /dev/null", "/home/user").is_none());
+        assert!(check_command_paths("ls /tmp/test", "/home/user").is_none());
+        assert!(check_command_paths("which /usr/bin/git", "/home/user").is_none());
+        assert!(check_command_paths("cat /proc/cpuinfo", "/home/user").is_none());
+    }
+
+    #[test]
+    fn check_command_paths_no_absolute_paths() {
+        assert!(check_command_paths("ls -la src/", "/home/user").is_none());
+        assert!(check_command_paths("cargo test", "/home/user").is_none());
+    }
+
+    #[test]
+    fn is_safe_system_path_coverage() {
+        assert!(is_safe_system_path("/dev/null"));
+        assert!(is_safe_system_path("/tmp/anything"));
+        assert!(is_safe_system_path("/usr/bin/git"));
+        assert!(is_safe_system_path("/usr/local/bin/node"));
+        assert!(is_safe_system_path("/bin/sh"));
+        assert!(is_safe_system_path("/proc/self/status"));
+        assert!(!is_safe_system_path("/etc/passwd"));
+        assert!(!is_safe_system_path("/var/log/syslog"));
+        assert!(!is_safe_system_path("/root/.ssh/id_rsa"));
     }
 }

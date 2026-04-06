@@ -77,6 +77,8 @@ impl ToolCallInput {
 pub enum ToolPermissionDecision {
     Allow { user_modified: bool },
     Deny { reason: String },
+    /// Requires interactive user approval before proceeding.
+    Prompt { tool_name: String, reason: String },
 }
 
 impl ToolPermissionDecision {
@@ -90,6 +92,13 @@ impl ToolPermissionDecision {
         }
     }
 
+    pub fn prompt(tool_name: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::Prompt {
+            tool_name: tool_name.into(),
+            reason: reason.into(),
+        }
+    }
+
     pub fn settle(self, call: ToolCallInput, output: ToolCallOutput) -> ToolCallResult {
         match self {
             Self::Allow { user_modified } => ToolCallResult::Completed {
@@ -98,6 +107,10 @@ impl ToolPermissionDecision {
                 output,
             },
             Self::Deny { reason } => ToolCallResult::Denied { call, reason },
+            Self::Prompt { reason, .. } => ToolCallResult::Denied {
+                call,
+                reason: format!("awaiting approval: {reason}"),
+            },
         }
     }
 }
@@ -230,7 +243,8 @@ pub struct ToolExecutionTrace {
 #[cfg(test)]
 mod tests {
     use super::{
-        ToolCallInput, ToolCallOutput, ToolCallResult, ToolPermissionDecision, ToolProgressUpdate,
+        ToolCallInput, ToolCallOutput, ToolCallResult, ToolExecutionRequest,
+        ToolPermissionDecision, ToolProgressUpdate,
     };
     use crate::message::QueryMessage;
 
@@ -268,5 +282,109 @@ mod tests {
         let result = ToolCallResult::failed(call, "command exited 1");
         assert_eq!(result.status_label(), "failed");
         assert!(result.message().contains("command exited 1"));
+    }
+
+    #[test]
+    fn permission_prompt_settles_to_denied() {
+        let call = ToolCallInput::new("Bash", "toolu-p1");
+        let decision = ToolPermissionDecision::prompt("Bash", "requires approval");
+        let result = decision.settle(call, ToolCallOutput::default());
+        assert_eq!(result.status_label(), "denied");
+        assert!(result.message().contains("awaiting approval"));
+    }
+
+    #[test]
+    fn permission_deny_settles_to_denied() {
+        let call = ToolCallInput::new("Write", "toolu-p2");
+        let decision = ToolPermissionDecision::deny("not allowed");
+        let result = decision.settle(call, ToolCallOutput::default());
+        assert_eq!(result.status_label(), "denied");
+        assert!(result.message().contains("not allowed"));
+    }
+
+    #[test]
+    fn permission_allow_user_modified() {
+        let call = ToolCallInput::new("Edit", "toolu-p3");
+        let decision = ToolPermissionDecision::allow(true);
+        let result = decision.settle(
+            call,
+            ToolCallOutput {
+                summary: String::from("edited"),
+                generated_messages: Vec::new(),
+                context_label: None,
+                progress_updates: Vec::new(),
+            },
+        );
+        assert_eq!(result.status_label(), "completed");
+        assert!(result.message().contains("user-modified"));
+    }
+
+    #[test]
+    fn tool_call_no_arguments_summary() {
+        let call = ToolCallInput::new("Read", "toolu-s1");
+        assert_eq!(call.summary(), "Read#toolu-s1");
+    }
+
+    #[test]
+    fn tool_call_argument_not_found() {
+        let call = ToolCallInput::new("Read", "toolu-s2")
+            .with_argument("file_path", "foo.rs");
+        assert!(call.argument("nonexistent").is_none());
+    }
+
+    #[test]
+    fn tool_call_with_arguments_map() {
+        let mut map = std::collections::HashMap::new();
+        map.insert("key1".to_string(), "val1".to_string());
+        map.insert("key2".to_string(), "val2".to_string());
+        let call = ToolCallInput::new("Bash", "toolu-m1").with_arguments_map(&map);
+        assert_eq!(call.arguments.len(), 2);
+        assert!(call.argument("key1").is_some());
+        assert!(call.argument("key2").is_some());
+    }
+
+    #[test]
+    fn tool_execution_request_allowed_and_denied() {
+        let call = ToolCallInput::new("Read", "toolu-r1");
+        let req = ToolExecutionRequest::allowed(call.clone());
+        assert!(req.can_execute);
+        assert!(req.deny_reason.is_none());
+
+        let req = ToolExecutionRequest::denied(call, "blocked");
+        assert!(!req.can_execute);
+        assert_eq!(req.deny_reason.as_deref(), Some("blocked"));
+    }
+
+    #[test]
+    fn tool_call_result_call_accessor() {
+        let call = ToolCallInput::new("Glob", "toolu-c1");
+        let result = ToolCallResult::Completed {
+            call: call.clone(),
+            user_modified: false,
+            output: ToolCallOutput::default(),
+        };
+        assert_eq!(result.call().tool_name, "Glob");
+
+        let denied = ToolCallResult::Denied {
+            call: call.clone(),
+            reason: "no".into(),
+        };
+        assert_eq!(denied.call().tool_use_id, "toolu-c1");
+    }
+
+    #[test]
+    fn tool_progress_update_fields() {
+        let u = ToolProgressUpdate::new("id-1", "doing stuff");
+        assert_eq!(u.tool_use_id, "id-1");
+        assert_eq!(u.message, "doing stuff");
+    }
+
+    #[test]
+    fn tool_call_output_default() {
+        let o = ToolCallOutput::default();
+        assert!(o.summary.is_empty());
+        assert!(o.generated_messages.is_empty());
+        assert!(o.context_label.is_none());
+        assert!(o.progress_updates.is_empty());
     }
 }
