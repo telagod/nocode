@@ -651,12 +651,21 @@ fn bridge_remote_prompt_from_args(args: &[String]) -> Option<String> {
         .or_else(|| Some(String::from("remote bridge rewrite")))
 }
 
+fn wire_task_coordinator(session_id: &str) {
+    let coordinator = nocode_core::task_runtime::global_task_coordinator();
+    if let Ok(mut guard) = coordinator.lock() {
+        guard.set_session_id(session_id);
+    }
+}
+
 fn run_repl() {
+    let config = bootstrap_config();
+    wire_task_coordinator(&config.session_id);
     let stdin = io::stdin();
     let mut reader = BufReader::new(stdin.lock());
     let stdout = io::stdout();
     let mut writer = stdout.lock();
-    let mut engine = QueryEngine::new(bootstrap_config());
+    let mut engine = QueryEngine::new(config);
     let mut session = ReplSession::new("nocode");
     if let Err(err) = session.run_loop(&mut engine, &mut reader, &mut writer) {
         eprintln!("nocode repl error: {err}");
