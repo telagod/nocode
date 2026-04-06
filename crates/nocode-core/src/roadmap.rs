@@ -166,7 +166,7 @@ const CHECKLIST: [RewriteChecklistItem; 16] = [
     RewriteChecklistItem {
         id: "tooling-runtime",
         area: "Execution",
-        summary: "tool registry、permission gating、tool execution runtime、hook dispatch",
+        summary: "tool registry + permission gating + PermissionMode from context + TUI permission prompter wired; hook dispatch operational",
         status: RewriteStatus::InProgress,
         priority: 2,
         rust_target: "nocode_core::{tool_registry, tool_execution}",
@@ -175,7 +175,7 @@ const CHECKLIST: [RewriteChecklistItem; 16] = [
     RewriteChecklistItem {
         id: "task-system",
         area: "Execution",
-        summary: "LocalShellTask、LocalAgentTask、DreamTask、task coordinator、progress/update/stop APIs、drive_until_idle、shell/in-process/process agent host",
+        summary: "task coordinator + SQL persistence + audit trail + stop_task with kill + resume from persisted; 剩 cross-session wiring to main entry + remote daemon",
         status: RewriteStatus::InProgress,
         priority: 2,
         rust_target: "nocode runtime task system",
@@ -189,7 +189,7 @@ const CHECKLIST: [RewriteChecklistItem; 16] = [
     RewriteChecklistItem {
         id: "providers-config",
         area: "Providers",
-        summary: "provider config、model selection、live transport plan、env auth、task budget；真实 HTTP transport、retry/backoff、SSE parser 已接通，剩 live chunk transport/capability matrix",
+        summary: "SSE streaming with per-frame callback + ModelStreamEvent metadata (seq/ts/bytes) + StreamError + capability validation + cancellation; 剩 async transport + backpressure",
         status: RewriteStatus::InProgress,
         priority: 2,
         rust_target: "nocode provider layer",
@@ -554,7 +554,7 @@ mod tests {
         assert!(rendered.contains("next-blockers:"));
         assert!(rendered.contains("release-gates:"));
         assert!(rendered.contains("rewrite-checklist:"));
-        assert!(rendered.contains("task budget"));
+        assert!(rendered.contains("capability validation"));
     }
 
     #[test]
