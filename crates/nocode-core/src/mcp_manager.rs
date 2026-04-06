@@ -1,7 +1,10 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
+
+use crate::mcp_client::McpClient;
 
 /// Status of an MCP server connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,7 +24,6 @@ pub struct McpDiscoveredTool {
 }
 
 /// Entry tracking a registered MCP server and its state.
-#[derive(Debug)]
 pub struct McpServerEntry {
     pub name: String,
     pub command: String,
@@ -29,6 +31,21 @@ pub struct McpServerEntry {
     pub status: McpServerStatus,
     pub tools: Vec<McpDiscoveredTool>,
     pub error: Option<String>,
+    client: Option<McpClient>,
+}
+
+impl fmt::Debug for McpServerEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("McpServerEntry")
+            .field("name", &self.name)
+            .field("command", &self.command)
+            .field("args", &self.args)
+            .field("status", &self.status)
+            .field("tools", &self.tools)
+            .field("error", &self.error)
+            .field("client", &self.client.as_ref().map(|_| "<McpClient>"))
+            .finish()
+    }
 }
 
 /// Manages MCP server lifecycles and tool routing.
@@ -54,15 +71,15 @@ impl McpManager {
                 status: McpServerStatus::Disconnected,
                 tools: Vec::new(),
                 error: None,
+                client: None,
             },
         );
     }
 
     /// Connect to a registered server and discover its tools.
     ///
-    /// Currently simulates connection (sets status to `Connected`, returns empty
-    /// tool list). Real `McpClient::spawn` integration is deferred because
-    /// `Child` is not `Send` and cannot live inside a `Mutex` safely.
+    /// Spawns the MCP server process, performs the JSON-RPC initialize
+    /// handshake, and discovers available tools via `tools/list`.
     pub fn connect(&mut self, name: &str) -> Result<Vec<McpDiscoveredTool>, String> {
         let entry = self
             .servers
@@ -70,15 +87,52 @@ impl McpManager {
             .ok_or_else(|| format!("MCP server not registered: {name}"))?;
 
         entry.status = McpServerStatus::Connecting;
-        // TODO: real implementation — McpClient::spawn + initialize + list_tools
+
+        // Convert Vec<String> args to &[&str] for McpClient::spawn.
+        let arg_refs: Vec<&str> = entry.args.iter().map(String::as_str).collect();
+
+        // Spawn the MCP server process (initialize handshake happens inside spawn).
+        let mut client = match McpClient::spawn(&entry.command, &arg_refs) {
+            Ok(c) => c,
+            Err(e) => {
+                entry.status = McpServerStatus::Failed;
+                entry.error = Some(e.clone());
+                return Err(e);
+            }
+        };
+
+        // Discover tools.
+        let tools = match client.list_tools() {
+            Ok(t) => t,
+            Err(e) => {
+                entry.status = McpServerStatus::Failed;
+                entry.error = Some(e.clone());
+                return Err(e);
+            }
+        };
+
+        // Convert to McpDiscoveredTool.
+        let discovered: Vec<McpDiscoveredTool> = tools
+            .iter()
+            .map(|t| McpDiscoveredTool {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                server_name: name.to_string(),
+            })
+            .collect();
+
+        entry.tools = discovered.clone();
+        entry.client = Some(client);
         entry.status = McpServerStatus::Connected;
         entry.error = None;
-        Ok(entry.tools.clone())
+
+        Ok(discovered)
     }
 
     /// Disconnect a server, clearing its tools and resetting status.
     pub fn disconnect(&mut self, name: &str) {
         if let Some(entry) = self.servers.get_mut(name) {
+            entry.client = None; // Drop closes the child process.
             entry.status = McpServerStatus::Disconnected;
             entry.tools.clear();
             entry.error = None;
@@ -104,41 +158,50 @@ impl McpManager {
             .find(|t| t.name == tool_name)
     }
 
-    /// Call a tool on its owning server.
+    /// Call a tool on its owning server via the real MCP client.
     ///
-    /// Returns a simulated success response for connected servers.
-    /// Returns an error if the server is not connected or the tool is unknown.
-    pub fn call_tool(&self, tool_name: &str, arguments: Value) -> Result<String, String> {
-        let tool = self
-            .find_tool(tool_name)
+    /// Routes the call to the connected server that owns the tool.
+    /// Returns the tool result content or an error.
+    pub fn call_tool(&mut self, tool_name: &str, arguments: Value) -> Result<String, String> {
+        // Find which server owns this tool.
+        let server_name = self
+            .servers
+            .values()
+            .filter(|e| e.status == McpServerStatus::Connected)
+            .find(|e| e.tools.iter().any(|t| t.name == tool_name))
+            .map(|e| e.name.clone())
             .ok_or_else(|| format!("MCP tool not found: {tool_name}"))?;
 
-        let server_name = &tool.server_name;
         let entry = self
             .servers
-            .get(server_name)
+            .get_mut(&server_name)
             .ok_or_else(|| format!("MCP server '{server_name}' not registered"))?;
 
-        match entry.status {
-            McpServerStatus::Connected => {
-                // TODO: real McpClient::call_tool integration
-                Ok(format!(
-                    "{{\"result\": \"simulated success\", \"tool\": \"{tool_name}\", \"server\": \"{server_name}\", \"arguments\": {arguments}}}"
-                ))
-            }
-            McpServerStatus::Disconnected => {
-                Err(format!("MCP server '{server_name}' is disconnected"))
-            }
-            McpServerStatus::Connecting => {
-                Err(format!("MCP server '{server_name}' is still connecting"))
-            }
-            McpServerStatus::Failed => {
-                let err_msg = entry.error.as_deref().unwrap_or("unknown error");
-                Err(format!(
-                    "MCP server '{server_name}' is in failed state: {err_msg}"
-                ))
-            }
+        let client = entry
+            .client
+            .as_mut()
+            .ok_or_else(|| format!("MCP server '{server_name}' has no active client"))?;
+
+        // Convert Value arguments to HashMap<String, String> for McpClient.
+        let args_map: HashMap<String, String> = match arguments.as_object() {
+            Some(obj) => obj
+                .iter()
+                .map(|(k, v)| {
+                    let val = match v {
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    (k.clone(), val)
+                })
+                .collect(),
+            None => HashMap::new(),
+        };
+
+        let result = client.call_tool(tool_name, &args_map)?;
+        if result.is_error {
+            return Err(format!("MCP tool error: {}", result.content));
         }
+        Ok(result.content)
     }
 }
 
@@ -175,15 +238,20 @@ mod tests {
     }
 
     #[test]
-    fn register_and_connect_server() {
+    fn register_and_connect_nonexistent_binary_fails() {
         let mut mgr = McpManager::new();
-        mgr.register_server("fs", "mcp-fs", vec!["--root".into(), "/tmp".into()]);
+        mgr.register_server(
+            "bad",
+            "__nonexistent_mcp_binary_99999__",
+            vec![],
+        );
 
-        assert_eq!(mgr.get_status("fs"), Some(McpServerStatus::Disconnected));
+        assert_eq!(mgr.get_status("bad"), Some(McpServerStatus::Disconnected));
 
-        let tools = mgr.connect("fs").unwrap();
-        assert!(tools.is_empty()); // simulated — no real tools yet
-        assert_eq!(mgr.get_status("fs"), Some(McpServerStatus::Connected));
+        let err = mgr.connect("bad").unwrap_err();
+        assert!(err.contains("failed to spawn"), "unexpected error: {err}");
+        assert_eq!(mgr.get_status("bad"), Some(McpServerStatus::Failed));
+        assert!(mgr.servers.get("bad").unwrap().error.is_some());
     }
 
     #[test]
@@ -225,13 +293,13 @@ mod tests {
             .tools
             .push(make_tool("fs", "read_file"));
 
-        // Server is Disconnected — find_tool won't find it.
+        // Server is Disconnected — tool lookup won't find it.
         let err = mgr.call_tool("read_file", json!({})).unwrap_err();
         assert!(err.contains("not found"));
     }
 
     #[test]
-    fn call_tool_on_connected_succeeds() {
+    fn call_tool_without_client_fails() {
         let mut mgr = McpManager::new();
         mgr.register_server("fs", "mcp-fs", vec![]);
         mgr.servers
@@ -239,27 +307,27 @@ mod tests {
             .unwrap()
             .tools
             .push(make_tool("fs", "read_file"));
+        // Set Connected but no client — simulates a broken state.
         mgr.servers.get_mut("fs").unwrap().status = McpServerStatus::Connected;
 
-        let result = mgr.call_tool("read_file", json!({"path": "/etc/hosts"}));
-        assert!(result.is_ok());
-        let body = result.unwrap();
-        assert!(body.contains("simulated success"));
-        assert!(body.contains("read_file"));
+        let err = mgr
+            .call_tool("read_file", json!({"path": "/etc/hosts"}))
+            .unwrap_err();
+        assert!(err.contains("no active client"));
     }
 
     #[test]
-    fn list_servers() {
+    fn call_tool_unknown_tool_fails() {
         let mut mgr = McpManager::new();
-        mgr.register_server("a", "cmd-a", vec![]);
-        mgr.register_server("b", "cmd-b", vec!["--flag".into()]);
+        mgr.register_server("fs", "mcp-fs", vec![]);
+        mgr.servers.get_mut("fs").unwrap().status = McpServerStatus::Connected;
 
-        let servers = mgr.list_servers();
-        assert_eq!(servers.len(), 2);
+        let err = mgr.call_tool("nonexistent_tool", json!({})).unwrap_err();
+        assert!(err.contains("not found"));
     }
 
     #[test]
-    fn disconnect_clears_tools_and_status() {
+    fn disconnect_clears_client_and_tools() {
         let mut mgr = McpManager::new();
         mgr.register_server("fs", "mcp-fs", vec![]);
         mgr.servers
@@ -272,6 +340,18 @@ mod tests {
         mgr.disconnect("fs");
         assert_eq!(mgr.get_status("fs"), Some(McpServerStatus::Disconnected));
         assert!(mgr.servers.get("fs").unwrap().tools.is_empty());
+        assert!(mgr.servers.get("fs").unwrap().client.is_none());
+        assert!(mgr.servers.get("fs").unwrap().error.is_none());
+    }
+
+    #[test]
+    fn list_servers() {
+        let mut mgr = McpManager::new();
+        mgr.register_server("a", "cmd-a", vec![]);
+        mgr.register_server("b", "cmd-b", vec!["--flag".into()]);
+
+        let servers = mgr.list_servers();
+        assert_eq!(servers.len(), 2);
     }
 
     #[test]

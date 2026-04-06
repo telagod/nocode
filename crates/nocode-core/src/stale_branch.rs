@@ -33,9 +33,63 @@ pub enum StaleBranchActionKind {
 }
 
 /// Check how fresh a branch is relative to its base.
-/// Stub: always returns `Fresh` — real implementation needs `git rev-list`.
-pub fn check_freshness(_branch: &str, _base: &str, _max_age: Duration) -> BranchFreshness {
-    BranchFreshness::Fresh
+/// Uses `git rev-list --count` to determine ahead/behind status,
+/// and commit timestamps to determine staleness.
+pub fn check_freshness(branch: &str, base: &str, max_age: Duration) -> BranchFreshness {
+    let ahead = git_rev_count(branch, base);
+    let behind = git_rev_count(base, branch);
+
+    match (ahead, behind) {
+        (Ok(0), Ok(0)) | (Ok(_), Ok(0)) => BranchFreshness::Fresh,
+        (Ok(0), Ok(_)) => {
+            if is_stale(branch, max_age) {
+                BranchFreshness::Stale
+            } else {
+                BranchFreshness::Fresh
+            }
+        }
+        (Ok(_), Ok(_)) => BranchFreshness::Diverged,
+        _ => BranchFreshness::Fresh, // git command failed, assume fresh
+    }
+}
+
+fn git_rev_count(from: &str, to: &str) -> Result<usize, String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-list", "--count", &format!("{to}..{from}")])
+        .output()
+        .map_err(|e| format!("git rev-list failed: {e}"))?;
+
+    if !output.status.success() {
+        return Err("git rev-list returned non-zero".to_string());
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<usize>()
+        .map_err(|e| format!("failed to parse rev count: {e}"))
+}
+
+fn is_stale(branch: &str, max_age: Duration) -> bool {
+    let output = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%ct", branch])
+        .output();
+
+    let Ok(output) = output else { return false };
+    if !output.status.success() {
+        return false;
+    }
+
+    let timestamp: u64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .unwrap_or(0);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    now.saturating_sub(timestamp) > max_age.as_secs()
 }
 
 /// Decide what action to take given a freshness reading and a policy.
@@ -78,9 +132,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn check_freshness_returns_fresh_stub() {
-        let f = check_freshness("feature/x", "main", Duration::from_secs(3600));
+    fn check_freshness_on_current_branch_is_fresh() {
+        let f = check_freshness("HEAD", "HEAD", Duration::from_secs(3600));
         assert_eq!(f, BranchFreshness::Fresh);
+    }
+
+    #[test]
+    fn git_rev_count_on_same_ref_is_zero() {
+        let count = git_rev_count("HEAD", "HEAD");
+        assert_eq!(count, Ok(0));
     }
 
     #[test]

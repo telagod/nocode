@@ -83,7 +83,7 @@ pub fn execute_mcp_tool_bridged(call: ToolCallInput, bridge: &McpToolBridge) -> 
     // Try the global McpManager first for mcp:server:tool format.
     if let Some((server, tool)) = parse_mcp_prefix(&tool_name) {
         let mgr_arc = global_mcp_manager();
-        let mgr = mgr_arc.lock().unwrap_or_else(|e| e.into_inner());
+        let mut mgr = mgr_arc.lock().unwrap_or_else(|e| e.into_inner());
 
         if let Some(discovered) = mgr.find_tool(tool)
             && discovered.server_name == server

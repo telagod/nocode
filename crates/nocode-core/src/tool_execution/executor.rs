@@ -872,6 +872,25 @@ impl<H: ToolHost> ToolExecutor for DefaultToolExecutor<H> {
             };
         }
 
+        // Permission enforcement: verify tool is allowed under active mode.
+        let active_mode = crate::tool_registry::PermissionMode::WorkspaceWrite; // TODO: get from context
+        let perm_check = crate::permission_enforcer::check_tool_permission(
+            request.call.tool_name.as_str(),
+            active_mode,
+        );
+        if let crate::permission_enforcer::PermissionCheckResult::Denied { reason, .. } =
+            perm_check
+        {
+            return ToolExecutionTrace {
+                progress_updates: Vec::new(),
+                result: ToolCallResult::failed(
+                    request.call,
+                    format!("permission denied: {reason}"),
+                ),
+                permission_denial: Some(reason),
+            };
+        }
+
         match request.call.tool_name.as_str() {
             "Read" => self.execute_read(request.call),
             "Edit" => self.execute_edit(request.call),

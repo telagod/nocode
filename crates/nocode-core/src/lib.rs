@@ -22,6 +22,7 @@ pub mod mock_service;
 pub mod model_pricing;
 pub mod model_response;
 pub mod oauth;
+pub mod permission_enforcer;
 pub mod persistence_backend;
 pub mod plugin_system;
 pub mod policy_engine;
