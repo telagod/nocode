@@ -85,7 +85,7 @@ pub struct ResumeSnapshot {
     pub file_history: Option<FileHistorySnapshot>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct QueryEngineState {
     pub mutable_messages: Vec<QueryMessage>,
     pub completed_turns: Vec<AssistantTurn>,
@@ -121,7 +121,7 @@ pub struct SubmitMessageOptions {
     pub is_meta: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct QuerySubmissionPlan {
     pub prompt: String,
     pub prompt_uuid: Option<String>,

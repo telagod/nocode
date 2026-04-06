@@ -93,13 +93,13 @@ pub struct SessionPointer {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BridgeTurnOutcome {
     Submitted(QuerySubmissionPlan),
     PermissionDenied { reason: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BridgeTurn {
     pub mode: BridgeMode,
     pub transport_label: String,

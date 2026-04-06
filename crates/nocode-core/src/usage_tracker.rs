@@ -1,6 +1,7 @@
 use crate::assistant_turn::AssistantTurn;
 use crate::budget::estimate_turn_tokens;
 use crate::message::QueryMessage;
+use crate::model_pricing::{CostEstimate, estimate_cost};
 use crate::tool_execution::ToolCallResult;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -9,7 +10,7 @@ pub struct UsageTotals {
     pub output_tokens: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UsageSnapshot {
     pub turn_index: u32,
     pub input_tokens: u64,
@@ -18,12 +19,16 @@ pub struct UsageSnapshot {
     pub tool_call_count: usize,
     pub tool_result_count: usize,
     pub total_usage: UsageTotals,
+    pub turn_cost: CostEstimate,
+    pub cumulative_cost: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct UsageTracker {
     totals: UsageTotals,
     completed_turns: u32,
+    model_name: Option<String>,
+    cumulative_cost: f64,
 }
 
 impl UsageTracker {
@@ -33,6 +38,14 @@ impl UsageTracker {
 
     pub fn completed_turns(&self) -> u32 {
         self.completed_turns
+    }
+
+    pub fn cumulative_cost(&self) -> f64 {
+        self.cumulative_cost
+    }
+
+    pub fn set_model(&mut self, model: &str) {
+        self.model_name = Some(model.to_string());
     }
 
     pub fn record_turn(
@@ -50,6 +63,12 @@ impl UsageTracker {
         self.totals.output_tokens += output_tokens;
         self.completed_turns += 1;
 
+        let turn_cost = match &self.model_name {
+            Some(model) => estimate_cost(model, input_tokens, output_tokens, 0, 0),
+            None => CostEstimate::default(),
+        };
+        self.cumulative_cost += turn_cost.total;
+
         UsageSnapshot {
             turn_index: self.completed_turns,
             input_tokens,
@@ -58,7 +77,14 @@ impl UsageTracker {
             tool_call_count: assistant_turn.tool_uses.len(),
             tool_result_count: tool_results.len(),
             total_usage: self.totals.clone(),
+            turn_cost,
+            cumulative_cost: self.cumulative_cost,
         }
+    }
+
+    /// Format cumulative cost for display.
+    pub fn format_cost(&self) -> String {
+        crate::model_pricing::format_usd(self.cumulative_cost)
     }
 }
 
@@ -184,5 +210,76 @@ mod tests {
         );
         let snapshot = tracker.record_turn(&[QueryMessage::user("query")], &[], &turn, &[]);
         assert_eq!(&snapshot.total_usage, tracker.totals());
+    }
+
+    #[test]
+    fn cost_tracking_with_model() {
+        let mut tracker = UsageTracker::default();
+        tracker.set_model("claude-sonnet-4");
+        let turn = AssistantTurn::new(
+            1,
+            AssistantTurnStatus::Completed,
+            vec![QueryMessage::assistant("response text here")],
+            &[],
+            1,
+        );
+        let snapshot = tracker.record_turn(
+            &[QueryMessage::user("hello world")],
+            &[QueryMessage::system("system")],
+            &turn,
+            &[],
+        );
+        assert!(snapshot.turn_cost.total > 0.0);
+        assert!(snapshot.cumulative_cost > 0.0);
+        assert!((tracker.cumulative_cost() - snapshot.cumulative_cost).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cost_tracking_without_model() {
+        let mut tracker = UsageTracker::default();
+        let turn = AssistantTurn::new(
+            1,
+            AssistantTurnStatus::Completed,
+            vec![QueryMessage::assistant("reply")],
+            &[],
+            1,
+        );
+        let snapshot = tracker.record_turn(&[QueryMessage::user("hi")], &[], &turn, &[]);
+        assert!((snapshot.turn_cost.total).abs() < f64::EPSILON);
+        assert!((snapshot.cumulative_cost).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cumulative_cost_accumulates() {
+        let mut tracker = UsageTracker::default();
+        tracker.set_model("opus");
+        for i in 0..3 {
+            let turn = AssistantTurn::new(
+                i + 1,
+                AssistantTurnStatus::Continue,
+                vec![QueryMessage::assistant("reply")],
+                &[],
+                1,
+            );
+            tracker.record_turn(&[QueryMessage::user("input")], &[], &turn, &[]);
+        }
+        assert!(tracker.cumulative_cost() > 0.0);
+        assert_eq!(tracker.completed_turns(), 3);
+    }
+
+    #[test]
+    fn format_cost_display() {
+        let mut tracker = UsageTracker::default();
+        assert_eq!(tracker.format_cost(), "$0.00");
+        tracker.set_model("haiku");
+        let turn = AssistantTurn::new(
+            1,
+            AssistantTurnStatus::Completed,
+            vec![QueryMessage::assistant("r")],
+            &[],
+            1,
+        );
+        tracker.record_turn(&[QueryMessage::user("q")], &[], &turn, &[]);
+        assert!(tracker.format_cost().starts_with('$'));
     }
 }

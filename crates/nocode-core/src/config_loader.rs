@@ -295,8 +295,10 @@ mod tests {
 
     #[test]
     fn test_apply_env_overrides_model() {
-        let mut rc = RuntimeConfig::default();
-        rc.model = Some("from-file".into());
+        let mut rc = RuntimeConfig {
+            model: Some("from-file".into()),
+            ..Default::default()
+        };
 
         unsafe { std::env::set_var("NOCODE_MODEL", "from-env"); }
         apply_env_overrides(&mut rc);
@@ -330,9 +332,11 @@ mod tests {
     fn test_apply_env_overrides_no_env_no_change() {
         // Test that apply_env_overrides preserves existing values when
         // the env var is set to the same value (avoids race with parallel tests).
-        let mut rc = RuntimeConfig::default();
-        rc.model = Some("original".into());
-        rc.permission_mode = Some("safe".into());
+        let mut rc = RuntimeConfig {
+            model: Some("original".into()),
+            permission_mode: Some("safe".into()),
+            ..Default::default()
+        };
         // We can't reliably unset env vars in parallel tests, so just verify
         // that the function doesn't crash and preserves structure.
         let model_before = rc.model.clone();

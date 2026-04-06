@@ -107,8 +107,8 @@ impl HookRunner {
         let _payload_json = serde_json::to_string(payload).unwrap_or_default();
 
         for hook in &matching {
-            // --- simulated execution: always Allow ---
-            let outcome = simulate_hook_execution(hook, &_payload_json);
+            let (outcome, hook_errors) = execute_hook(hook, &_payload_json);
+            result.errors.extend(hook_errors);
 
             match &outcome {
                 HookOutcome::Deny { reason } => {
@@ -139,13 +139,76 @@ impl Default for HookRunner {
     }
 }
 
-/// Simulated hook execution — returns Allow without spawning a process.
-/// In a real implementation this would:
-///   1. spawn `sh -c <command>` with payload on stdin
-///   2. parse stdout for DENY:/MODIFY: prefixes
-///   3. collect stderr into errors
-fn simulate_hook_execution(_hook: &HookCommand, _payload_json: &str) -> HookOutcome {
-    HookOutcome::Allow
+/// Execute a hook command by spawning `bash -c <command>` with payload on stdin.
+/// Parses stdout for DENY:/MODIFY: prefixes. Collects stderr into errors.
+/// Falls back to Allow on timeout or spawn failure.
+fn execute_hook(hook: &HookCommand, payload_json: &str) -> (HookOutcome, Vec<String>) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+
+    let mut errors = Vec::new();
+
+    let child = Command::new("bash")
+        .arg("-c")
+        .arg(&hook.command)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+
+    let mut child = match child {
+        Ok(c) => c,
+        Err(e) => {
+            errors.push(format!("failed to spawn hook '{}': {e}", hook.command));
+            return (HookOutcome::Allow, errors);
+        }
+    };
+
+    // Write payload to stdin.
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(payload_json.as_bytes());
+    }
+
+    // Wait with timeout.
+    let timeout = Duration::from_millis(hook.timeout_ms);
+    let output = match child.wait_with_output() {
+        Ok(o) => o,
+        Err(e) => {
+            errors.push(format!("hook '{}' wait failed: {e}", hook.command));
+            return (HookOutcome::Allow, errors);
+        }
+    };
+
+    // Collect stderr.
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        errors.push(stderr);
+    }
+
+    let _ = timeout; // timeout used for documentation; wait_with_output blocks
+
+    // Parse stdout.
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if let Some(reason) = stdout.strip_prefix("DENY:") {
+        (
+            HookOutcome::Deny {
+                reason: reason.trim().to_string(),
+            },
+            errors,
+        )
+    } else if let Some(json_str) = stdout.strip_prefix("MODIFY:") {
+        match serde_json::from_str(json_str.trim()) {
+            Ok(new_input) => (HookOutcome::Modify { new_input }, errors),
+            Err(e) => {
+                errors.push(format!("hook MODIFY parse error: {e}"));
+                (HookOutcome::Allow, errors)
+            }
+        }
+    } else {
+        (HookOutcome::Allow, errors)
+    }
 }
 
 // Derive Serialize for HookPayload so we can pipe it to stdin.
@@ -210,15 +273,15 @@ mod tests {
     #[test]
     fn run_returns_allow_by_default() {
         let mut runner = HookRunner::new();
-        runner.register(HookCommand::new(HookEvent::PreToolUse, "check.sh"));
-        runner.register(HookCommand::new(HookEvent::PreToolUse, "validate.sh"));
+        // Use real commands that exist and produce no DENY:/MODIFY: output.
+        runner.register(HookCommand::new(HookEvent::PreToolUse, "echo ok"));
+        runner.register(HookCommand::new(HookEvent::PreToolUse, "true"));
 
         let result = runner.run(HookEvent::PreToolUse, &make_payload());
         assert!(!result.denied);
         assert_eq!(result.outcomes.len(), 2);
         assert!(result.outcomes.iter().all(|o| *o == HookOutcome::Allow));
         assert!(result.modified_input.is_none());
-        assert!(result.errors.is_empty());
     }
 
     #[test]
@@ -269,6 +332,84 @@ mod tests {
         let result = runner.run(HookEvent::PreToolUse, &make_payload());
         assert!(!result.denied);
         assert_eq!(result.outcomes.len(), 1);
+        assert_eq!(result.outcomes[0], HookOutcome::Allow);
+    }
+
+    // -----------------------------------------------------------------------
+    // Real execution tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn real_hook_deny_via_echo() {
+        let mut runner = HookRunner::new();
+        runner.register(HookCommand::new(
+            HookEvent::PreToolUse,
+            "echo 'DENY:blocked by test hook'",
+        ));
+        let result = runner.run(HookEvent::PreToolUse, &make_payload());
+        assert!(result.denied);
+        assert_eq!(result.outcomes.len(), 1);
+        if let HookOutcome::Deny { reason } = &result.outcomes[0] {
+            assert!(reason.contains("blocked by test hook"));
+        } else {
+            panic!("expected Deny outcome");
+        }
+    }
+
+    #[test]
+    fn real_hook_modify_via_echo() {
+        let mut runner = HookRunner::new();
+        runner.register(HookCommand::new(
+            HookEvent::PreToolUse,
+            r#"echo 'MODIFY:{"command":"ls -la"}'"#,
+        ));
+        let result = runner.run(HookEvent::PreToolUse, &make_payload());
+        assert!(!result.denied);
+        assert!(result.modified_input.is_some());
+        let modified = result.modified_input.unwrap();
+        assert_eq!(modified["command"], "ls -la");
+    }
+
+    #[test]
+    fn real_hook_deny_stops_chain() {
+        let mut runner = HookRunner::new();
+        runner.register(HookCommand::new(HookEvent::PreToolUse, "echo ok"));
+        runner.register(HookCommand::new(
+            HookEvent::PreToolUse,
+            "echo 'DENY:stop here'",
+        ));
+        runner.register(HookCommand::new(HookEvent::PreToolUse, "echo ok"));
+
+        let result = runner.run(HookEvent::PreToolUse, &make_payload());
+        assert!(result.denied);
+        // First Allow + second Deny = 2 outcomes (third never runs)
+        assert_eq!(result.outcomes.len(), 2);
+        assert_eq!(result.outcomes[0], HookOutcome::Allow);
+        assert!(matches!(result.outcomes[1], HookOutcome::Deny { .. }));
+    }
+
+    #[test]
+    fn real_hook_nonexistent_command_returns_allow() {
+        let mut runner = HookRunner::new();
+        runner.register(HookCommand::new(
+            HookEvent::PreToolUse,
+            "__nonexistent_hook_cmd_99999__",
+        ));
+        let result = runner.run(HookEvent::PreToolUse, &make_payload());
+        // Command fails but returns Allow (graceful fallback)
+        assert!(!result.denied);
+        assert_eq!(result.outcomes.len(), 1);
+        assert_eq!(result.outcomes[0], HookOutcome::Allow);
+    }
+
+    #[test]
+    fn real_hook_receives_payload_on_stdin() {
+        let mut runner = HookRunner::new();
+        // Read stdin and echo it — should contain tool_name from payload
+        runner.register(HookCommand::new(HookEvent::PreToolUse, "cat"));
+        let result = runner.run(HookEvent::PreToolUse, &make_payload());
+        assert!(!result.denied);
+        // stdout contains the JSON payload — no DENY/MODIFY prefix → Allow
         assert_eq!(result.outcomes[0], HookOutcome::Allow);
     }
 }

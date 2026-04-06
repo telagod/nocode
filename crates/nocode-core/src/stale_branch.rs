@@ -127,6 +127,92 @@ pub fn apply_policy(freshness: BranchFreshness, policy: StaleBranchPolicy) -> St
     }
 }
 
+// ---------------------------------------------------------------------------
+// Policy execution — real git operations
+// ---------------------------------------------------------------------------
+
+/// Result of executing a stale branch policy action.
+#[derive(Debug, Clone)]
+pub struct PolicyExecutionResult {
+    pub action: StaleBranchActionKind,
+    pub success: bool,
+    pub message: String,
+}
+
+/// Execute the git operation corresponding to a `StaleBranchAction`.
+///
+/// - `Noop` / `Warn` — no git operation, always succeeds.
+/// - `Block` — returns an error (blocks the operation).
+/// - `Rebase` — runs `git rebase <base>`.
+/// - `MergeForward` — runs `git merge <base> --no-edit`.
+pub fn execute_policy(
+    action: &StaleBranchAction,
+    branch: &str,
+    base: &str,
+    cwd: &str,
+) -> PolicyExecutionResult {
+    match action.action {
+        StaleBranchActionKind::Noop => PolicyExecutionResult {
+            action: StaleBranchActionKind::Noop,
+            success: true,
+            message: "no action needed".to_string(),
+        },
+        StaleBranchActionKind::Warn => PolicyExecutionResult {
+            action: StaleBranchActionKind::Warn,
+            success: true,
+            message: action.detail.clone().unwrap_or_else(|| "stale branch warning".to_string()),
+        },
+        StaleBranchActionKind::Block => PolicyExecutionResult {
+            action: StaleBranchActionKind::Block,
+            success: false,
+            message: action.detail.clone().unwrap_or_else(|| "blocked by stale branch policy".to_string()),
+        },
+        StaleBranchActionKind::Rebase => {
+            let result = run_git(cwd, &["rebase", base]);
+            PolicyExecutionResult {
+                action: StaleBranchActionKind::Rebase,
+                success: result.0,
+                message: if result.0 {
+                    format!("rebased {branch} onto {base}")
+                } else {
+                    format!("rebase failed: {}", result.1)
+                },
+            }
+        }
+        StaleBranchActionKind::MergeForward => {
+            let result = run_git(cwd, &["merge", base, "--no-edit"]);
+            PolicyExecutionResult {
+                action: StaleBranchActionKind::MergeForward,
+                success: result.0,
+                message: if result.0 {
+                    format!("merged {base} into {branch}")
+                } else {
+                    format!("merge-forward failed: {}", result.1)
+                },
+            }
+        }
+    }
+}
+
+fn run_git(cwd: &str, args: &[&str]) -> (bool, String) {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output();
+
+    match output {
+        Ok(o) => {
+            let combined = if o.status.success() {
+                String::from_utf8_lossy(&o.stdout).trim().to_string()
+            } else {
+                String::from_utf8_lossy(&o.stderr).trim().to_string()
+            };
+            (o.status.success(), combined)
+        }
+        Err(e) => (false, format!("git command failed: {e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,5 +260,63 @@ mod tests {
         let a = apply_policy(BranchFreshness::Diverged, StaleBranchPolicy::WarnOnly);
         assert_eq!(a.action, StaleBranchActionKind::MergeForward);
         assert!(a.detail.unwrap().contains("diverged"));
+    }
+
+    // -----------------------------------------------------------------------
+    // execute_policy tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn execute_noop_succeeds() {
+        let action = apply_policy(BranchFreshness::Fresh, StaleBranchPolicy::WarnOnly);
+        let result = execute_policy(&action, "main", "main", "/tmp");
+        assert!(result.success);
+        assert_eq!(result.action, StaleBranchActionKind::Noop);
+    }
+
+    #[test]
+    fn execute_warn_succeeds_with_message() {
+        let action = apply_policy(BranchFreshness::Stale, StaleBranchPolicy::WarnOnly);
+        let result = execute_policy(&action, "feature", "main", "/tmp");
+        assert!(result.success);
+        assert_eq!(result.action, StaleBranchActionKind::Warn);
+        assert!(result.message.contains("stale"));
+    }
+
+    #[test]
+    fn execute_block_fails() {
+        let action = apply_policy(BranchFreshness::Stale, StaleBranchPolicy::Block);
+        let result = execute_policy(&action, "feature", "main", "/tmp");
+        assert!(!result.success);
+        assert_eq!(result.action, StaleBranchActionKind::Block);
+        assert!(result.message.contains("blocked") || result.message.contains("stale"));
+    }
+
+    #[test]
+    fn execute_rebase_on_head() {
+        // Rebase HEAD onto HEAD — should succeed (noop rebase).
+        let action = StaleBranchAction {
+            freshness: BranchFreshness::Stale,
+            policy: StaleBranchPolicy::AutoRebase,
+            action: StaleBranchActionKind::Rebase,
+            detail: Some("auto-rebase".into()),
+        };
+        let cwd = env!("CARGO_MANIFEST_DIR");
+        let result = execute_policy(&action, "HEAD", "HEAD", cwd);
+        // May succeed or fail depending on git state, but should not panic.
+        assert_eq!(result.action, StaleBranchActionKind::Rebase);
+    }
+
+    #[test]
+    fn execute_merge_forward_on_head() {
+        let action = StaleBranchAction {
+            freshness: BranchFreshness::Diverged,
+            policy: StaleBranchPolicy::AutoMergeForward,
+            action: StaleBranchActionKind::MergeForward,
+            detail: Some("merge-forward".into()),
+        };
+        let cwd = env!("CARGO_MANIFEST_DIR");
+        let result = execute_policy(&action, "HEAD", "HEAD", cwd);
+        assert_eq!(result.action, StaleBranchActionKind::MergeForward);
     }
 }

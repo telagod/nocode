@@ -9,7 +9,7 @@ pub struct ModelPricing {
     pub cache_read_per_million: f64,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct CostEstimate {
     pub input_cost: f64,
     pub output_cost: f64,
