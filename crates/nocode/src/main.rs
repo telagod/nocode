@@ -1,4 +1,5 @@
 mod claudemd;
+mod ide_server;
 #[allow(dead_code)]
 mod markdown_render;
 #[allow(dead_code, clippy::collapsible_if)]
@@ -285,6 +286,11 @@ fn main() {
     }
     if args.iter().any(|arg| arg == "--process-agent-host") {
         run_process_agent_host();
+        return;
+    }
+    if args.iter().any(|arg| arg == "--ide-server") {
+        let engine = QueryEngine::new(bootstrap_config());
+        ide_server::run_ide_server(engine);
         return;
     }
     if args.iter().any(|arg| arg == "--tui") {
