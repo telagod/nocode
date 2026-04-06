@@ -25,9 +25,9 @@ impl ApiFormat {
 
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
-            "claude" | "anthropic" | "messages" => Some(Self::Claude),
-            "openai" | "gpt" | "chat" | "responses" => Some(Self::OpenAi),
-            "gemini" | "google" | "generatecontent" => Some(Self::Gemini),
+            "anthropic" | "messages" => Some(Self::Claude),
+            "openai" | "chat" | "responses" => Some(Self::OpenAi),
+            "google" | "generatecontent" => Some(Self::Gemini),
             _ => None,
         }
     }
@@ -75,14 +75,11 @@ impl ModelProvider {
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "mock" => Some(Self::Mock),
-            "claude" | "claude-messages" | "anthropic" => Some(Self::Claude),
-            "openai"
-            | "openai-responses"
-            | "openai-chat"
-            | "openai-chat-completions"
-            | "gpt"
-            | "responses" => Some(Self::OpenAi),
-            "gemini" | "google" | "google-gemini" => Some(Self::Gemini),
+            "anthropic" => Some(Self::Claude),
+            "openai" | "openai-responses" | "openai-chat" | "openai-chat-completions" => {
+                Some(Self::OpenAi)
+            }
+            "google" => Some(Self::Gemini),
             "custom" => Some(Self::Custom),
             _ => None,
         }
