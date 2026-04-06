@@ -903,15 +903,6 @@ impl std::fmt::Debug for PendingSubmission {
 // W2: TUI permission request types
 // ---------------------------------------------------------------------------
 
-/// A permission request surfaced in the TUI overlay.
-#[derive(Debug)]
-pub struct TuiPermissionRequest {
-    pub id: String,
-    pub tool_name: String,
-    pub description: String,
-    pub response_tx: mpsc::Sender<bool>,
-}
-
 /// All recognized slash command names for tab completion.
 #[allow(dead_code)]
 const SLASH_COMMAND_NAMES: &[&str] = &[
@@ -980,9 +971,10 @@ pub struct ReplSession {
     pending_intent: Option<ReplIntent>,
     tui_mode: bool,
     // W2: permission prompts
-    permission_rx: Option<mpsc::Receiver<TuiPermissionRequest>>,
-    pending_permissions: Vec<TuiPermissionRequest>,
+    permission_rx: Option<mpsc::Receiver<crate::tui_permission::TuiPermissionBridgeRequest>>,
+    pending_permissions: Vec<crate::tui_permission::TuiPermissionBridgeRequest>,
     permission_cursor: usize,
+    tui_prompter: Option<crate::tui_permission::TuiPermissionPrompter>,
     // T7: status bar HUD
     status_hud: StatusHud,
 }
@@ -1021,8 +1013,13 @@ impl ReplSession {
             permission_rx: None,
             pending_permissions: Vec::new(),
             permission_cursor: 0,
+            tui_prompter: None,
             status_hud: StatusHud::new("pending", "pending"),
         }
+    }
+
+    pub fn set_tui_prompter(&mut self, prompter: crate::tui_permission::TuiPermissionPrompter) {
+        self.tui_prompter = Some(prompter);
     }
 
     pub fn prompt_text(&self) -> String {
@@ -1165,7 +1162,10 @@ impl ReplSession {
 
     /// Install the receiving end of the permission channel.
     #[allow(dead_code)]
-    pub fn set_permission_rx(&mut self, rx: mpsc::Receiver<TuiPermissionRequest>) {
+    pub fn set_permission_rx(
+        &mut self,
+        rx: mpsc::Receiver<crate::tui_permission::TuiPermissionBridgeRequest>,
+    ) {
         self.permission_rx = Some(rx);
     }
 
@@ -1378,13 +1378,9 @@ impl ReplSession {
             } else {
                 " "
             };
-            lines.push(format!(
-                "{marker} [{id}] {tool}",
-                id = req.id,
-                tool = req.tool_name
-            ));
-            if !req.description.is_empty() {
-                lines.push(format!("    {}", req.description));
+            lines.push(format!("{marker} {tool}", tool = req.tool_name));
+            if !req.arguments_summary.is_empty() {
+                lines.push(format!("    {}", req.arguments_summary));
             }
         }
 

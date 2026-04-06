@@ -36,8 +36,10 @@ pub(crate) fn run_tui() -> io::Result<()> {
     // W2: Create permission channel and inject into session.
     let (permission_tx, permission_rx) = mpsc::channel();
     session.set_permission_rx(permission_rx);
-    // permission_tx is available for bridge/tool transports to send requests.
-    let _permission_tx = permission_tx;
+    // Store permission_tx for tool execution to send permission requests.
+    let tui_prompter =
+        crate::tui_permission::TuiPermissionPrompter::with_default_timeout(permission_tx);
+    session.set_tui_prompter(tui_prompter);
 
     let mut app = TuiApp::new();
     app.push_block("tui ready: Alt-1..4 focus pane, ? help, F2 inspector, F3 permissions");

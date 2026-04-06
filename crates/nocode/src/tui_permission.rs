@@ -7,7 +7,6 @@ use std::time::Duration;
 
 /// A permission request sent to the TUI overlay for interactive approval.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct TuiPermissionBridgeRequest {
     pub tool_name: String,
     pub arguments_summary: String,
@@ -16,13 +15,11 @@ pub struct TuiPermissionBridgeRequest {
 
 /// PermissionPrompter implementation that sends requests to the TUI overlay
 /// and blocks until the user approves or denies via F3 overlay (a/d keys).
-#[allow(dead_code)]
 pub struct TuiPermissionPrompter {
     tx: mpsc::Sender<TuiPermissionBridgeRequest>,
     timeout: Duration,
 }
 
-#[allow(dead_code)]
 impl TuiPermissionPrompter {
     pub fn new(tx: mpsc::Sender<TuiPermissionBridgeRequest>, timeout: Duration) -> Self {
         Self { tx, timeout }

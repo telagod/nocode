@@ -30,7 +30,7 @@ use nocode_core::{
     ThinkingMode, ToolExecutionModule, ToolPermissionContext, ToolRegistryModule, ToolRuntimeMode,
     default_roadmap, render_status,
 };
-use repl::{ReplSession, TuiPermissionRequest};
+use repl::ReplSession;
 use std::env;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::Path;
@@ -678,7 +678,7 @@ fn run_bridge_once(prompt: String) {
 
 #[derive(Debug)]
 struct CliLoopbackRemoteTransport {
-    permission_tx: Option<mpsc::Sender<TuiPermissionRequest>>,
+    permission_tx: Option<mpsc::Sender<tui_permission::TuiPermissionBridgeRequest>>,
 }
 
 impl CliLoopbackRemoteTransport {
@@ -689,7 +689,9 @@ impl CliLoopbackRemoteTransport {
     }
 
     #[allow(dead_code)]
-    fn with_permission_channel(tx: mpsc::Sender<TuiPermissionRequest>) -> Self {
+    fn with_permission_channel(
+        tx: mpsc::Sender<tui_permission::TuiPermissionBridgeRequest>,
+    ) -> Self {
         Self {
             permission_tx: Some(tx),
         }
@@ -721,10 +723,9 @@ impl RemoteBridgeTransport for CliLoopbackRemoteTransport {
         // If a TUI permission channel is wired, send the request and wait for response.
         if let Some(tx) = &self.permission_tx {
             let (response_tx, response_rx) = mpsc::channel();
-            let tui_req = TuiPermissionRequest {
-                id: decoded.request_id.clone(),
+            let tui_req = tui_permission::TuiPermissionBridgeRequest {
                 tool_name: decoded.mode.as_str().to_string(),
-                description: decoded.prompt.clone(),
+                arguments_summary: decoded.prompt.clone(),
                 response_tx,
             };
             tx.send(tui_req).map_err(|error| {
