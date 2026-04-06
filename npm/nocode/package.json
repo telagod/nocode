@@ -17,6 +17,7 @@
   },
   "optionalDependencies": {
     "@telagod/nocode-linux-x64": "0.1.1",
+    "@telagod/nocode-linux-arm64": "0.1.1",
     "@telagod/nocode-darwin-x64": "0.1.1",
     "@telagod/nocode-darwin-arm64": "0.1.1",
     "@telagod/nocode-win32-x64": "0.1.1"

@@ -3,6 +3,7 @@ dist/
 .nocode/
 **/.nocode/
 npm/nocode-linux-x64/bin/nocode
+npm/nocode-linux-arm64/bin/nocode
 npm/nocode-darwin-x64/bin/nocode
 npm/nocode-darwin-arm64/bin/nocode
 npm/nocode-win32-x64/bin/nocode.exe

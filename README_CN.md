@@ -173,6 +173,7 @@ export NOCODE_MODEL=llama3
 | 平台 | npm 包 |
 |------|--------|
 | Linux x64 | `@telagod/nocode-linux-x64` |
+| Linux ARM64 | `@telagod/nocode-linux-arm64` |
 | macOS x64 | `@telagod/nocode-darwin-x64` |
 | macOS ARM64 | `@telagod/nocode-darwin-arm64` |
 | Windows x64 | `@telagod/nocode-win32-x64` |
