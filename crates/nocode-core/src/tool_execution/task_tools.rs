@@ -193,6 +193,9 @@ pub fn execute_task_stop(call: ToolCallInput) -> ToolExecutionTrace {
                 crate::task_runtime::StopTaskError::UnsupportedType => {
                     format!("task {task_id_str} has unsupported type for stop")
                 }
+                crate::task_runtime::StopTaskError::KillFailed(reason) => {
+                    format!("task {task_id_str} kill failed: {reason}")
+                }
             };
             drop(guard);
             ok_response(&call, "TaskStop", &msg)

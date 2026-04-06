@@ -617,6 +617,9 @@ pub(crate) fn render_task_stop_error(task_id: &str, error: &StopTaskError) -> St
         StopTaskError::NotFound => "not_found",
         StopTaskError::NotRunning => "not_running",
         StopTaskError::UnsupportedType => "unsupported_type",
+        StopTaskError::KillFailed(reason) => {
+            return format!("task stop error: {task_id} kill_failed: {reason}");
+        }
     };
     format!("task stop error: {task_id} {reason}")
 }

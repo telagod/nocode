@@ -2210,6 +2210,90 @@ impl TaskCoordinator {
             result_preview: record.result().map(|result| result.preview(192)),
         })
     }
+
+    /// Resume tasks from persisted records. Running tasks from a prior session
+    /// are marked as Failed (interrupted by restart). Completed/Failed/Killed
+    /// tasks are restored as-is for history visibility.
+    pub fn resume_from_persisted(
+        &mut self,
+        records: &[crate::session_persistence::PersistedTaskRecord],
+    ) -> ResumeResult {
+        let mut result = ResumeResult::default();
+        for record in records {
+            let task_type = match record.task_type.as_str() {
+                "shell" | "local_shell" => TaskType::LocalShell,
+                "agent" | "local_agent" => TaskType::LocalAgent,
+                "dream" => TaskType::Dream,
+                _ => {
+                    result.skipped += 1;
+                    continue;
+                }
+            };
+            self.counter += 1;
+            let id = TaskId::new(task_type.prefix(), self.counter);
+            let status = match record.status.as_str() {
+                "running" => {
+                    // Running tasks from a dead session are failed-on-resume.
+                    result.interrupted += 1;
+                    TaskStatus::Failed
+                }
+                "completed" => TaskStatus::Completed,
+                "failed" => TaskStatus::Failed,
+                "killed" => TaskStatus::Killed,
+                "pending" => {
+                    // Re-queue pending tasks.
+                    result.requeued += 1;
+                    TaskStatus::Pending
+                }
+                _ => {
+                    result.skipped += 1;
+                    continue;
+                }
+            };
+            let mut base = TaskStateBase::new(id.clone(), task_type, record.summary.clone());
+            base.status = status;
+            base.start_time = record.timestamp_ms;
+            if status != TaskStatus::Pending {
+                base.end_time = Some(record.timestamp_ms);
+            }
+            // Restore as shell stub — payload details are lost across sessions.
+            let payload = TaskPayload::LocalShell(LocalShellTaskData {
+                command: record.summary.clone(),
+                kind: BashTaskKind::Bash,
+                result: match status {
+                    TaskStatus::Completed => Some(CommandResult {
+                        code: 0,
+                        interrupted: false,
+                    }),
+                    TaskStatus::Failed => Some(CommandResult {
+                        code: -1,
+                        interrupted: true,
+                    }),
+                    _ => None,
+                },
+            });
+            let task_record = TaskRecord { base, payload };
+            if status == TaskStatus::Pending {
+                self.queue.push_back(id.clone());
+            }
+            self.tasks.insert(id, task_record);
+            result.restored += 1;
+        }
+        result
+    }
+}
+
+/// Summary of a task resume operation.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResumeResult {
+    /// Total tasks restored into coordinator.
+    pub restored: usize,
+    /// Running tasks that were marked Failed (interrupted by restart).
+    pub interrupted: usize,
+    /// Pending tasks that were re-queued.
+    pub requeued: usize,
+    /// Records skipped due to unknown type/status.
+    pub skipped: usize,
 }
 
 fn render_shell_activity(result: &CommandResult) -> String {
@@ -2303,6 +2387,7 @@ pub enum StopTaskError {
     NotFound,
     NotRunning,
     UnsupportedType,
+    KillFailed(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2323,15 +2408,31 @@ pub fn stop_task(
     if record.base.status != TaskStatus::Running {
         return Err(StopTaskError::NotRunning);
     }
-    record.base.mark_killed();
+
+    // Extract info before marking killed.
+    let task_type = record.base.task_type;
+    let summary = record.base.description.clone();
     let command = match &record.payload {
         TaskPayload::LocalShell(shell) => Some(shell.command.clone()),
         _ => None,
     };
+
+    // Mark shell tasks as interrupted so callers know it was user-initiated.
+    if let TaskPayload::LocalShell(ref mut shell) = record.payload
+        && shell.result.is_none()
+    {
+        shell.result = Some(CommandResult {
+            code: -1,
+            interrupted: true,
+        });
+    }
+
+    record.base.mark_killed();
+
     Ok(StopTaskResult {
         task_id: task_id.clone(),
-        task_type: record.base.task_type,
-        summary: record.base.description.clone(),
+        task_type,
+        summary,
         command,
     })
 }
