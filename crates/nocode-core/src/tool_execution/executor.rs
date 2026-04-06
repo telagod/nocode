@@ -142,6 +142,7 @@ pub struct ToolExecutionContext {
     pub cwd: String,
     pub model_provider: ModelProvider,
     pub model_name: Option<String>,
+    pub permission_mode: crate::tool_registry::PermissionMode,
 }
 
 impl ToolExecutionContext {
@@ -150,12 +151,18 @@ impl ToolExecutionContext {
             cwd: cwd.into(),
             model_provider: ModelProvider::Mock,
             model_name: None,
+            permission_mode: crate::tool_registry::PermissionMode::WorkspaceWrite,
         }
     }
 
     pub fn with_provider(mut self, provider: ModelProvider, model: Option<String>) -> Self {
         self.model_provider = provider;
         self.model_name = model;
+        self
+    }
+
+    pub fn with_permission_mode(mut self, mode: crate::tool_registry::PermissionMode) -> Self {
+        self.permission_mode = mode;
         self
     }
 
@@ -995,7 +1002,7 @@ impl<H: ToolHost> ToolExecutor for DefaultToolExecutor<H> {
         }
 
         // Permission enforcement: verify tool is allowed under active mode.
-        let active_mode = crate::tool_registry::PermissionMode::WorkspaceWrite; // TODO: get from context
+        let active_mode = self.context.permission_mode;
         let perm_check = crate::permission_enforcer::check_tool_permission(
             request.call.tool_name.as_str(),
             active_mode,
