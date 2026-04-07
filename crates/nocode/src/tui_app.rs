@@ -118,10 +118,34 @@ impl TuiApp {
         self.on_message_added();
     }
 
+    #[allow(dead_code)]
     pub fn push_tool_event(&mut self, line: &str) {
         self.chat_messages
             .push(ChatMessage::plain(ChatMessageKind::Tool, line));
         self.on_message_added();
+    }
+
+    /// Structured tool call start — shows tool name + args with collapse arrow.
+    pub fn push_tool_start(&mut self, tool_name: &str, args_summary: &str) {
+        use crate::tui_widgets::ToolCallInfo;
+        let info = ToolCallInfo::new(tool_name, args_summary);
+        self.chat_messages
+            .push(ChatMessage::tool_call(info, Vec::new()));
+        self.on_message_added();
+    }
+
+    /// Structured tool call done — update the last matching tool message.
+    pub fn push_tool_done(&mut self, tool_name: &str) {
+        // Find the last tool message with this name and mark it done
+        for msg in self.chat_messages.iter_mut().rev() {
+            if let Some(info) = &mut msg.tool_info
+                && info.tool_name == tool_name
+            {
+                info.result_preview = Some(String::from("done"));
+                break;
+            }
+        }
+        self.dirty = true;
     }
 
     pub fn push_spinner_frame(&mut self, frame_text: &str) {
@@ -578,8 +602,18 @@ pub(crate) fn run_app_loop(
         // 3. Poll stream events
         let (stream_lines, returned_engine) = session.poll_pending_stream();
         for line in &stream_lines {
-            if line.contains("[CALL]") || line.contains("[DONE]") {
-                app.push_tool_event(line);
+            if line.contains("[CALL]") {
+                // Parse tool call: extract tool name and args summary
+                let tool_name = extract_between(line, "[CALL] ", " ")
+                    .or_else(|| extract_after(line, "[CALL] "))
+                    .unwrap_or("tool");
+                let args = extract_after(line, &format!("{tool_name} ")).unwrap_or("");
+                app.push_tool_start(tool_name, args);
+            } else if line.contains("[DONE]") {
+                let tool_name = extract_between(line, "[DONE] ", " ")
+                    .or_else(|| extract_after(line, "[DONE] "))
+                    .unwrap_or("tool");
+                app.push_tool_done(tool_name);
             } else if line.starts_with("stream start:") {
                 // Internal event — don't display in chat, just dismiss banner
                 app.show_banner = false;
@@ -729,4 +763,19 @@ fn next_char_boundary(s: &str, pos: usize) -> usize {
 fn display_width_of(s: &str) -> usize {
     use unicode_width::UnicodeWidthChar;
     s.chars().map(|c| c.width().unwrap_or(0)).sum()
+}
+
+// ---------------------------------------------------------------------------
+// String extraction helpers for parsing tool call lines
+// ---------------------------------------------------------------------------
+
+/// Extract text between `start` and `end` markers.
+fn extract_between<'a>(s: &'a str, start: &str, end: &str) -> Option<&'a str> {
+    let after = s.find(start).map(|i| &s[i + start.len()..])?;
+    after.find(end).map(|i| &after[..i])
+}
+
+/// Extract everything after `prefix`.
+fn extract_after<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    s.find(prefix).map(|i| &s[i + prefix.len()..])
 }
