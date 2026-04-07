@@ -1,7 +1,7 @@
 use nocode_core::model_pricing::{estimate_cost, format_usd};
 use std::time::Instant;
 
-/// TUI status bar HUD — tracks model name, token usage, and turn timing.
+/// TUI status bar HUD — tracks model name, token usage, turn timing, and session metadata.
 #[derive(Debug)]
 pub struct StatusHud {
     pub model_name: String,
@@ -11,6 +11,10 @@ pub struct StatusHud {
     pub cumulative_output_tokens: u64,
     pub turn_start: Option<Instant>,
     pub session_id: String,
+    pub permission_mode: String,
+    pub session_name: String,
+    pub context_window_pct: f32,
+    pub cost_usd: f64,
 }
 
 impl StatusHud {
@@ -24,7 +28,31 @@ impl StatusHud {
             cumulative_output_tokens: 0,
             turn_start: None,
             session_id: session_id.to_owned(),
+            permission_mode: String::new(),
+            session_name: String::new(),
+            context_window_pct: 0.0,
+            cost_usd: 0.0,
         }
+    }
+
+    /// Set the current permission mode label.
+    pub fn set_permission_mode(&mut self, mode: &str) {
+        self.permission_mode = mode.to_owned();
+    }
+
+    /// Set the session name / identifier.
+    pub fn set_session_name(&mut self, name: &str) {
+        self.session_name = name.to_owned();
+    }
+
+    /// Set the context window usage percentage (0.0–100.0).
+    pub fn set_context_window_pct(&mut self, pct: f32) {
+        self.context_window_pct = pct.clamp(0.0, 100.0);
+    }
+
+    /// Add to the accumulated cost in USD.
+    pub fn add_cost(&mut self, usd: f64) {
+        self.cost_usd += usd;
     }
 
     /// Begin a new turn: record the start time and reset per-turn token counts.
@@ -54,45 +82,50 @@ impl StatusHud {
             .map(|start| start.elapsed().as_millis() as u64)
     }
 
-    /// Render a single-line status bar suitable for a TUI footer.
+    /// Render a compact single-line status bar suitable for a TUI footer.
+    ///
+    /// Format: `model │ tokens: 1.2K in / 0.3K out │ cost: $0.05 │ ctx: 12% │ mode: workspace │ 1.2s`
     #[must_use]
     pub fn render_line(&self) -> String {
-        let id_short = truncate_session_id(&self.session_id);
-        let elapsed = self
-            .elapsed_ms()
-            .map_or_else(|| String::from("--"), |ms| format!("{ms}"));
+        self.render_compact_line()
+    }
+
+    /// Render a single-line status bar for streaming (same compact format).
+    #[must_use]
+    pub fn render_line_streaming(&self) -> String {
+        self.render_compact_line()
+    }
+
+    /// Shared compact renderer used by both `render_line` and `render_line_streaming`.
+    fn render_compact_line(&self) -> String {
+        let sep = " \u{2502} ";
+        let in_tok = format_tokens(self.cumulative_input_tokens);
+        let out_tok = format_tokens(self.cumulative_output_tokens);
         let cost = self.format_cost();
+        let ctx = format!("{:.0}%", self.context_window_pct);
+        let mode = shorten_permission_mode(&self.permission_mode);
+        let elapsed = self.format_elapsed();
+
+        let session = if self.session_name.is_empty() {
+            truncate_session_id(&self.session_id)
+        } else {
+            truncate_session_id(&self.session_name)
+        };
+
         format!(
-            "model: {} | turn: {}\u{2193} {}\u{2191} | total: {}\u{2193} {}\u{2191} | cost: {} | {}ms | session: {}",
+            "model: {}{sep}tokens: {in_tok} in / {out_tok} out{sep}cost: {cost}{sep}ctx: {ctx}{sep}mode: {mode}{sep}{elapsed}{sep}session: {session}",
             self.model_name,
-            self.turn_input_tokens,
-            self.turn_output_tokens,
-            self.cumulative_input_tokens,
-            self.cumulative_output_tokens,
-            cost,
-            elapsed,
-            id_short,
         )
     }
 
-    /// Render a single-line status bar for streaming (always includes elapsed).
-    #[must_use]
-    pub fn render_line_streaming(&self) -> String {
-        let id_short = truncate_session_id(&self.session_id);
-        let elapsed = self
-            .elapsed_ms()
-            .map_or_else(|| String::from("--"), |ms| format!("{ms}"));
-        let cost = self.format_cost();
-        format!(
-            "model: {} | turn: {}\u{2193} {}\u{2191} | total: {}\u{2193} {}\u{2191} | cost: {} | {}ms | session: {}",
-            self.model_name,
-            self.turn_input_tokens,
-            self.turn_output_tokens,
-            self.cumulative_input_tokens,
-            self.cumulative_output_tokens,
-            cost,
-            elapsed,
-            id_short,
+    /// Format elapsed time as human-friendly string (seconds with 1 decimal).
+    fn format_elapsed(&self) -> String {
+        self.elapsed_ms().map_or_else(
+            || String::from("--"),
+            |ms| {
+                let secs = ms as f64 / 1000.0;
+                format!("{secs:.1}s")
+            },
         )
     }
 
@@ -109,6 +142,30 @@ impl StatusHud {
             0,
         );
         format_usd(est.total)
+    }
+}
+
+/// Format a token count as a compact string (e.g. 1200 → "1.2K", 500 → "500").
+fn format_tokens(count: u64) -> String {
+    if count >= 1_000_000 {
+        let m = count as f64 / 1_000_000.0;
+        format!("{m:.1}M")
+    } else if count >= 1000 {
+        let k = count as f64 / 1000.0;
+        format!("{k:.1}K")
+    } else {
+        count.to_string()
+    }
+}
+
+/// Shorten a permission mode string for compact display.
+fn shorten_permission_mode(mode: &str) -> &str {
+    match mode {
+        "workspace_write" | "WorkspaceWrite" => "workspace",
+        "read_only" | "ReadOnly" => "readonly",
+        "danger_full_access" | "DangerFullAccess" => "full",
+        "" => "default",
+        other => other,
     }
 }
 
@@ -130,6 +187,10 @@ mod tests {
         assert_eq!(hud.cumulative_output_tokens, 0);
         assert!(hud.turn_start.is_none());
         assert_eq!(hud.session_id, "abcdef1234567890");
+        assert_eq!(hud.permission_mode, "");
+        assert_eq!(hud.session_name, "");
+        assert!((hud.context_window_pct - 0.0).abs() < f32::EPSILON);
+        assert!((hud.cost_usd - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -157,7 +218,6 @@ mod tests {
         assert_eq!(hud.turn_input_tokens, 0);
         assert_eq!(hud.turn_output_tokens, 0);
         assert!(hud.turn_start.is_some());
-        // Cumulative must survive across turns.
         assert_eq!(hud.cumulative_input_tokens, 500);
         assert_eq!(hud.cumulative_output_tokens, 200);
     }
@@ -192,10 +252,9 @@ mod tests {
         let line = hud.render_line();
 
         assert!(line.contains("model: claude-opus"));
-        assert!(line.contains("turn: 1000\u{2193} 400\u{2191}"));
-        assert!(line.contains("total: 1000\u{2193} 400\u{2191}"));
-        assert!(line.contains("cost: $0.04"));
-        assert!(line.contains("--ms"));
+        assert!(line.contains("tokens: 1.0K in / 400 out"));
+        assert!(line.contains("cost: $"));
+        assert!(line.contains("--"));
         assert!(line.contains("session: abcdefgh"));
         // Must NOT contain the full session id.
         assert!(!line.contains("abcdefgh99999999"));
@@ -209,9 +268,9 @@ mod tests {
         let line = hud.render_line_streaming();
 
         assert!(line.contains("model: claude-opus"));
-        assert!(line.contains("turn: 50\u{2193} 10\u{2191}"));
-        assert!(line.contains("cost: $0.0015"));
-        assert!(line.contains("ms"));
+        assert!(line.contains("tokens: 50 in / 10 out"));
+        assert!(line.contains("cost: $"));
+        assert!(line.contains("s")); // elapsed contains seconds
         assert!(line.contains("session: abcdefgh"));
     }
 

@@ -301,8 +301,8 @@ impl TuiApp {
 
         // Scrollbar
         if total_h > visible {
-            let mut scrollbar_state = ScrollbarState::new(max_scroll as usize)
-                .position(scroll_from_top as usize);
+            let mut scrollbar_state =
+                ScrollbarState::new(max_scroll as usize).position(scroll_from_top as usize);
             frame.render_stateful_widget(
                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
                     .style(Style::default().fg(Color::DarkGray)),
@@ -374,26 +374,42 @@ impl TuiApp {
         }
 
         match (key.code, key.modifiers) {
-            // Scroll
+            // Scroll — up releases sticky, down at bottom re-engages
             (KeyCode::Up, KeyModifiers::NONE) => {
                 self.chat_scroll = self.chat_scroll.saturating_add(1);
+                self.sticky_scroll = false;
                 self.dirty = true;
             }
             (KeyCode::Down, KeyModifiers::NONE) => {
-                self.chat_scroll = self.chat_scroll.saturating_sub(1);
+                if self.chat_scroll > 0 {
+                    self.chat_scroll = self.chat_scroll.saturating_sub(1);
+                }
+                if self.chat_scroll == 0 {
+                    self.sticky_scroll = true;
+                    self.unseen_count = 0;
+                }
                 self.dirty = true;
             }
             (KeyCode::PageUp, _) => {
                 self.chat_scroll = self.chat_scroll.saturating_add(10);
+                self.sticky_scroll = false;
                 self.dirty = true;
             }
             (KeyCode::PageDown, _) => {
                 self.chat_scroll = self.chat_scroll.saturating_sub(10);
+                if self.chat_scroll == 0 {
+                    self.sticky_scroll = true;
+                    self.unseen_count = 0;
+                }
                 self.dirty = true;
             }
             // Clear
             (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
                 self.chat_messages.clear();
+                self.invalidate_height_cache();
+                self.sticky_scroll = true;
+                self.unseen_count = 0;
+                self.chat_scroll = 0;
                 self.dirty = true;
             }
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
@@ -412,6 +428,8 @@ impl TuiApp {
                     self.push_user_message(&text);
                     session.submit_prompt(&text);
                     self.chat_scroll = 0;
+                    self.sticky_scroll = true;
+                    self.unseen_count = 0;
                 }
             }
             // Cursor movement
@@ -587,10 +605,17 @@ pub(crate) fn run_app_loop(
                             (KeyCode::Char('c'), KeyModifiers::CONTROL) => break,
                             (KeyCode::Up, _) => {
                                 app.chat_scroll = app.chat_scroll.saturating_add(1);
+                                app.sticky_scroll = false;
                                 app.dirty = true;
                             }
                             (KeyCode::Down, _) => {
-                                app.chat_scroll = app.chat_scroll.saturating_sub(1);
+                                if app.chat_scroll > 0 {
+                                    app.chat_scroll = app.chat_scroll.saturating_sub(1);
+                                }
+                                if app.chat_scroll == 0 {
+                                    app.sticky_scroll = true;
+                                    app.unseen_count = 0;
+                                }
                                 app.dirty = true;
                             }
                             _ => {
@@ -599,7 +624,10 @@ pub(crate) fn run_app_loop(
                         }
                     }
                 }
-                Event::Resize(_, _) => app.dirty = true,
+                Event::Resize(_, _) => {
+                    app.invalidate_height_cache();
+                    app.dirty = true;
+                }
                 _ => {}
             }
         }

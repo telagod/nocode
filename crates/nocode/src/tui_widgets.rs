@@ -1,6 +1,7 @@
 //! Custom ratatui widgets for the nocode TUI.
 
 use crate::markdown_render::{LineSegment, RenderedLine};
+use crate::tui_theme::default_theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -49,14 +50,15 @@ pub(crate) enum ChatMessageKind {
 }
 
 impl ChatMessageKind {
-    fn badge(&self) -> (&str, Color) {
+    fn badge(&self) -> (&str, Color, Color) {
+        let theme = default_theme();
         match self {
-            Self::System => ("SYS", Color::DarkGray),
-            Self::User => ("YOU", Color::Green),
-            Self::Assistant => ("AST", Color::Cyan),
-            Self::Error => ("ERR", Color::Red),
-            Self::Tool => ("TUL", Color::Yellow),
-            Self::Spinner => ("...", Color::DarkGray),
+            Self::System => ("SYS", theme.badge_system_bg, theme.badge_system_fg),
+            Self::User => ("YOU", theme.badge_user_bg, theme.badge_user_fg),
+            Self::Assistant => ("AST", theme.badge_assistant_bg, theme.badge_assistant_fg),
+            Self::Error => ("ERR", theme.badge_error_bg, theme.badge_error_fg),
+            Self::Tool => ("TUL", theme.badge_tool_bg, theme.badge_tool_fg),
+            Self::Spinner => ("...", theme.system, theme.text_dim),
         }
     }
 }
@@ -73,7 +75,6 @@ impl ChatMessage {
     }
 
     pub fn plain(kind: ChatMessageKind, text: &str) -> Self {
-        let color = kind.badge().1;
         let lines = text
             .lines()
             .map(|l| {
@@ -82,20 +83,19 @@ impl ChatMessage {
                 rl
             })
             .collect();
-        let _ = color; // kind determines badge color, not text color
         Self { kind, lines }
     }
 
     /// Convert to ratatui Lines for rendering.
     pub fn to_ratatui_lines(&self) -> Vec<Line<'_>> {
-        let (badge, badge_color) = self.kind.badge();
-        let mut result = Vec::with_capacity(self.lines.len() + 1);
+        let (badge, badge_bg, badge_fg) = self.kind.badge();
+        let mut result = Vec::with_capacity(self.lines.len() + 3);
 
         // Badge line
         if !matches!(self.kind, ChatMessageKind::Spinner) {
             result.push(Line::from(Span::styled(
                 format!(" {badge} "),
-                Style::default().fg(Color::Black).bg(badge_color),
+                Style::default().fg(badge_fg).bg(badge_bg),
             )));
         }
 
@@ -117,6 +117,9 @@ impl ChatMessage {
                 .collect();
             result.push(Line::from(spans));
         }
+
+        // Blank line after each message for spacing
+        result.push(Line::from(""));
 
         result
     }
@@ -156,16 +159,18 @@ impl<'a> InputBox<'a> {
 
 impl Widget for InputBox<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let theme = default_theme();
         let block = Block::default()
             .borders(Borders::TOP)
-            .border_style(Style::default().fg(Color::DarkGray))
+            .border_style(Style::default().fg(theme.input_border))
             .title(" input ")
-            .title_style(Style::default().fg(Color::DarkGray));
+            .title_style(Style::default().fg(theme.input_border));
         let inner = block.inner(area);
         block.render(area, buf);
 
-        let text = format!("{}{}", self.prompt, self.input);
-        let paragraph = Paragraph::new(text).style(Style::default().fg(Color::White));
+        let prompt_span = Span::styled(self.prompt, Style::default().fg(theme.text_dim));
+        let input_span = Span::styled(self.input, Style::default().fg(theme.text));
+        let paragraph = Paragraph::new(Line::from(vec![prompt_span, input_span]));
         paragraph.render(inner, buf);
     }
 }
@@ -186,12 +191,15 @@ impl<'a> StatusBar<'a> {
 
 impl Widget for StatusBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let style = Style::default().fg(Color::White).bg(Color::DarkGray);
+        let theme = default_theme();
+        let style = Style::default()
+            .fg(theme.status_bar_fg)
+            .bg(theme.status_bar_bg);
         // Fill entire area with background
         for x in area.left()..area.right() {
             buf[(x, area.top())].set_char(' ').set_style(style);
         }
-        let paragraph = Paragraph::new(format!(" {}", self.content)).style(style);
+        let paragraph = Paragraph::new(format!("  {}", self.content)).style(style);
         paragraph.render(area, buf);
     }
 }
@@ -213,6 +221,7 @@ impl<'a> OverlayBlock<'a> {
 
 impl Widget for OverlayBlock<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let theme = default_theme();
         // Center the overlay at 80% width, 60% height
         let w = (area.width * 4 / 5).max(20);
         let h = (area.height * 3 / 5).max(8);
@@ -224,18 +233,18 @@ impl Widget for OverlayBlock<'_> {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_style(Style::default().fg(theme.claude))
             .title(format!(" {} ", self.title))
             .title_style(
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(theme.claude)
                     .add_modifier(Modifier::BOLD),
             );
         let inner = block.inner(overlay_area);
         block.render(overlay_area, buf);
 
         let paragraph = Paragraph::new(self.body)
-            .style(Style::default().fg(Color::White))
+            .style(Style::default().fg(theme.text))
             .wrap(Wrap { trim: false });
         paragraph.render(inner, buf);
     }
