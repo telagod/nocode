@@ -2731,6 +2731,13 @@ impl ReplSession {
         self.status_hud.turn_output_tokens = snap.output_tokens;
         self.status_hud.cumulative_input_tokens = snap.total_usage.input_tokens;
         self.status_hud.cumulative_output_tokens = snap.total_usage.output_tokens;
+        // Context window: estimate % from total tokens vs budget
+        let budget = plan.budget_state.task_budget.as_ref().map_or(200_000u64, |b| u64::from(b.total));
+        let total_used = snap.total_usage.input_tokens + snap.total_usage.output_tokens;
+        if budget > 0 {
+            let pct = (total_used as f64 / budget as f64 * 100.0) as f32;
+            self.status_hud.set_context_window_pct(pct);
+        }
         self.status_hud.end_turn();
     }
 
