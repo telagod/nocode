@@ -194,6 +194,44 @@ impl TuiApp {
         self.dirty = true;
     }
 
+    /// Attach output content to the last tool message (for bash output, file content, etc).
+    pub fn attach_tool_output(&mut self, content: &str) {
+        // Find the last tool message and add output lines
+        for msg in self.chat_messages.iter_mut().rev() {
+            if msg.tool_info.is_some() {
+                // Truncate to last 5 lines for compact display
+                let output_lines: Vec<&str> = content.lines().collect();
+                let total = output_lines.len();
+                let display_lines = if total > 5 {
+                    &output_lines[total - 5..]
+                } else {
+                    &output_lines[..]
+                };
+                let mut rendered = Vec::new();
+                if total > 5 {
+                    let mut rl = crate::markdown_render::RenderedLine::new();
+                    rl.push(crate::markdown_render::LineSegment::new(
+                        format!("... {total} lines total"),
+                        crossterm::style::Color::DarkGrey,
+                    ));
+                    rendered.push(rl);
+                }
+                for &line in display_lines {
+                    let mut rl = crate::markdown_render::RenderedLine::new();
+                    rl.push(crate::markdown_render::LineSegment::new(
+                        line,
+                        crossterm::style::Color::White,
+                    ));
+                    rendered.push(rl);
+                }
+                msg.lines = rendered;
+                self.invalidate_height_cache();
+                self.dirty = true;
+                break;
+            }
+        }
+    }
+
     pub fn push_spinner_frame(&mut self, frame_text: &str) {
         // Replace last spinner message or add new one
         if let Some(last) = self.chat_messages.last_mut()
@@ -709,6 +747,16 @@ pub(crate) fn run_app_loop(
                     .or_else(|| extract_after(line, "[DONE] "))
                     .unwrap_or("tool");
                 app.push_tool_done(tool_name);
+            } else if line.starts_with("tool result: ") {
+                // Attach result output to the last tool message
+                let content = line.strip_prefix("tool result: ").unwrap_or("");
+                app.attach_tool_output(content);
+            } else if line.starts_with("tool progress: ") {
+                // Show progress under the last tool message
+                let content = line.strip_prefix("tool progress: ").unwrap_or("");
+                if !content.is_empty() {
+                    app.attach_tool_output(content);
+                }
             } else if line.starts_with("stream start:") {
                 // Internal event — don't display in chat, just dismiss banner
                 app.show_banner = false;

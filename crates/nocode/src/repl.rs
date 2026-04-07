@@ -1162,6 +1162,21 @@ impl ReplSession {
                     error.retryable
                 ));
             }
+            // Extract tool results from transcript for TUI display
+            for entry in &plan.transcript.entries {
+                match entry.role {
+                    nocode_core::TranscriptRole::ToolResult => {
+                        lines.push(format!("tool result: {}", normalize_session_content(&entry.content)));
+                    }
+                    nocode_core::TranscriptRole::ToolProgress => {
+                        // Only show meaningful progress (skip sandbox/internal)
+                        if !entry.content.contains("sandbox:") {
+                            lines.push(format!("tool progress: {}", normalize_session_content(&entry.content)));
+                        }
+                    }
+                    _ => {}
+                }
+            }
             let _rendered = self.render_submission(&plan);
             // Note: render_submission updates session_view internally.
             // We do NOT push the rendered transcript into TUI stream lines —
