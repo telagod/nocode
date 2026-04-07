@@ -225,8 +225,9 @@ impl TuiApp {
         let input_widget = InputBox::new(&self.input, self.cursor_pos);
         frame.render_widget(input_widget, chunks[3]);
 
-        // Cursor position: "> " prefix = 2 chars
-        let cursor_x = chunks[3].x + 2 + self.cursor_pos as u16;
+        // Cursor position: "> " prefix = 2 chars, then display width of text before cursor
+        let display_width = display_width_of(&self.input[..self.cursor_pos]);
+        let cursor_x = chunks[3].x + 2 + display_width as u16;
         let cursor_y = chunks[3].y;
         frame.set_cursor_position((cursor_x, cursor_y));
 
@@ -440,14 +441,16 @@ impl TuiApp {
                     self.unseen_count = 0;
                 }
             }
-            // Cursor movement
+            // Cursor movement (char-boundary aware for multibyte UTF-8)
             (KeyCode::Left, _) => {
-                self.cursor_pos = self.cursor_pos.saturating_sub(1);
+                if self.cursor_pos > 0 {
+                    self.cursor_pos = prev_char_boundary(&self.input, self.cursor_pos);
+                }
                 self.dirty = true;
             }
             (KeyCode::Right, _) => {
                 if self.cursor_pos < self.input.len() {
-                    self.cursor_pos += 1;
+                    self.cursor_pos = next_char_boundary(&self.input, self.cursor_pos);
                     self.dirty = true;
                 }
             }
@@ -459,24 +462,26 @@ impl TuiApp {
                 self.cursor_pos = self.input.len();
                 self.dirty = true;
             }
-            // Backspace / Delete
+            // Backspace / Delete (char-boundary aware)
             (KeyCode::Backspace, _) => {
                 if self.cursor_pos > 0 {
-                    self.input.remove(self.cursor_pos - 1);
-                    self.cursor_pos -= 1;
+                    let prev = prev_char_boundary(&self.input, self.cursor_pos);
+                    self.input.drain(prev..self.cursor_pos);
+                    self.cursor_pos = prev;
                     self.dirty = true;
                 }
             }
             (KeyCode::Delete, _) => {
                 if self.cursor_pos < self.input.len() {
-                    self.input.remove(self.cursor_pos);
+                    let next = next_char_boundary(&self.input, self.cursor_pos);
+                    self.input.drain(self.cursor_pos..next);
                     self.dirty = true;
                 }
             }
-            // Character input
+            // Character input (insert at char boundary, advance by char's byte len)
             (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 self.input.insert(self.cursor_pos, c);
-                self.cursor_pos += 1;
+                self.cursor_pos += c.len_utf8();
                 self.dirty = true;
             }
             _ => {}
@@ -678,4 +683,32 @@ fn launch_async_submission(
         let plan = eng.submit_message_with_stream(intent.prompt, intent.options, &mut sink);
         let _ = result_tx.send((plan, eng));
     });
+}
+
+// ---------------------------------------------------------------------------
+// UTF-8 char boundary helpers
+// ---------------------------------------------------------------------------
+
+/// Move backward to the previous char boundary in `s` from byte position `pos`.
+fn prev_char_boundary(s: &str, pos: usize) -> usize {
+    let mut p = pos.saturating_sub(1);
+    while p > 0 && !s.is_char_boundary(p) {
+        p -= 1;
+    }
+    p
+}
+
+/// Move forward to the next char boundary in `s` from byte position `pos`.
+fn next_char_boundary(s: &str, pos: usize) -> usize {
+    let mut p = pos + 1;
+    while p < s.len() && !s.is_char_boundary(p) {
+        p += 1;
+    }
+    p.min(s.len())
+}
+
+/// Compute display width of a string (CJK chars = 2 columns, ASCII = 1).
+fn display_width_of(s: &str) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    s.chars().map(|c| c.width().unwrap_or(0)).sum()
 }
