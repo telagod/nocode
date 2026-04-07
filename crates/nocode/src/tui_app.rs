@@ -43,6 +43,14 @@ pub(crate) struct TuiApp {
     thinking_spinner: Option<Spinner>,
     md_stream: MarkdownStreamState,
     dirty: bool,
+    /// Cached rendered height (in terminal rows) per message at last known width.
+    height_cache: Vec<u16>,
+    /// Width used to compute `height_cache`. Invalidated on resize.
+    height_cache_width: u16,
+    /// When true, new messages auto-scroll to bottom. Released on manual scroll up.
+    sticky_scroll: bool,
+    /// Number of messages added while the user is scrolled away from the bottom.
+    unseen_count: usize,
 }
 
 impl TuiApp {
@@ -56,6 +64,10 @@ impl TuiApp {
             thinking_spinner: None,
             md_stream: MarkdownStreamState::new(),
             dirty: true,
+            height_cache: Vec::new(),
+            height_cache_width: 0,
+            sticky_scroll: true,
+            unseen_count: 0,
         };
         app.push_system("nocode v0.1.6 ready. Type a message or /help. F1=help Ctrl-C=quit");
         app
@@ -63,41 +75,46 @@ impl TuiApp {
 
     // -- content push methods --
 
+    fn on_message_added(&mut self) {
+        self.trim_log();
+        self.invalidate_height_cache();
+        if self.sticky_scroll {
+            self.chat_scroll = 0;
+        } else {
+            self.unseen_count += 1;
+        }
+        self.dirty = true;
+    }
+
     pub fn push_system(&mut self, text: &str) {
         self.chat_messages
             .push(ChatMessage::plain(ChatMessageKind::System, text));
-        self.trim_log();
-        self.dirty = true;
+        self.on_message_added();
     }
 
     pub fn push_user_message(&mut self, text: &str) {
         self.chat_messages
             .push(ChatMessage::plain(ChatMessageKind::User, text));
-        self.trim_log();
-        self.dirty = true;
+        self.on_message_added();
     }
 
     pub fn push_assistant_markdown(&mut self, markdown: &str) {
         let lines = render_markdown_to_lines(markdown);
         self.chat_messages
             .push(ChatMessage::new(ChatMessageKind::Assistant, lines));
-        self.trim_log();
-        self.chat_scroll = 0; // auto-scroll to bottom
-        self.dirty = true;
+        self.on_message_added();
     }
 
     pub fn push_error(&mut self, message: &str) {
         self.chat_messages
             .push(ChatMessage::plain(ChatMessageKind::Error, message));
-        self.trim_log();
-        self.dirty = true;
+        self.on_message_added();
     }
 
     pub fn push_tool_event(&mut self, line: &str) {
         self.chat_messages
             .push(ChatMessage::plain(ChatMessageKind::Tool, line));
-        self.trim_log();
-        self.dirty = true;
+        self.on_message_added();
     }
 
     pub fn push_spinner_frame(&mut self, frame_text: &str) {

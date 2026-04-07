@@ -8,3 +8,4 @@ npm/nocode-darwin-x64/bin/nocode
 npm/nocode-darwin-arm64/bin/nocode
 npm/nocode-win32-x64/bin/nocode.exe
 npm/nocode-win32-arm64/bin/nocode.exe
+.tmp/
