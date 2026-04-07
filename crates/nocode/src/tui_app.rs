@@ -136,11 +136,18 @@ impl TuiApp {
 
     /// Structured tool call done — update the last matching tool message.
     pub fn push_tool_done(&mut self, tool_name: &str) {
-        // Find the last tool message with this name and mark it done
+        self.push_tool_done_with_args(tool_name, "");
+    }
+
+    /// Structured tool call done with arguments summary.
+    pub fn push_tool_done_with_args(&mut self, tool_name: &str, args: &str) {
         for msg in self.chat_messages.iter_mut().rev() {
             if let Some(info) = &mut msg.tool_info
                 && info.tool_name == tool_name
             {
+                if !args.is_empty() {
+                    info.arguments_summary = args.to_owned();
+                }
                 info.result_preview = Some(String::from("done"));
                 break;
             }
@@ -602,8 +609,15 @@ pub(crate) fn run_app_loop(
         // 3. Poll stream events
         let (stream_lines, returned_engine) = session.poll_pending_stream();
         for line in &stream_lines {
-            if line.contains("[CALL]") {
-                // Parse tool call: extract tool name and args summary
+            if line.starts_with("tool start: ") {
+                let tool_name = line.strip_prefix("tool start: ").unwrap_or("tool");
+                app.push_tool_start(tool_name, "");
+            } else if line.starts_with("tool done: ") {
+                let rest = line.strip_prefix("tool done: ").unwrap_or("");
+                let (tool_name, args) = rest.split_once(' ').unwrap_or((rest, ""));
+                // Update existing tool start message with args, or create new
+                app.push_tool_done_with_args(tool_name, args);
+            } else if line.contains("[CALL]") {
                 let tool_name = extract_between(line, "[CALL] ", " ")
                     .or_else(|| extract_after(line, "[CALL] "))
                     .unwrap_or("tool");

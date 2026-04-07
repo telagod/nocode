@@ -1137,6 +1137,16 @@ impl ReplSession {
                         normalize_session_content(message.as_str())
                     ));
                 }
+                ModelStreamEvent::ToolUseStart { tool_name, .. } => {
+                    lines.push(format!("tool start: {tool_name}"));
+                }
+                ModelStreamEvent::ToolUseDone {
+                    tool_name,
+                    arguments_summary,
+                    ..
+                } => {
+                    lines.push(format!("tool done: {tool_name} {arguments_summary}"));
+                }
             }
         }
 
@@ -3130,6 +3140,16 @@ impl<W: Write> ModelStreamSink for ReplLiveStreamCapture<'_, W> {
                     "stream error: {}",
                     normalize_session_content(message.as_str())
                 )
+            }
+            ModelStreamEvent::ToolUseStart { tool_name, .. } => {
+                format!("tool start: {tool_name}")
+            }
+            ModelStreamEvent::ToolUseDone {
+                tool_name,
+                arguments_summary,
+                ..
+            } => {
+                format!("tool done: {tool_name} {arguments_summary}")
             }
         };
         self.push_line(line);

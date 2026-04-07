@@ -544,6 +544,17 @@ pub enum ModelStreamEvent {
     Complete {
         message: QueryMessage,
     },
+    /// Model is starting a tool call.
+    ToolUseStart {
+        tool_id: String,
+        tool_name: String,
+    },
+    /// Model finished building a tool call (arguments complete).
+    ToolUseDone {
+        tool_id: String,
+        tool_name: String,
+        arguments_summary: String,
+    },
 }
 
 impl ModelStreamEvent {
@@ -553,6 +564,8 @@ impl ModelStreamEvent {
             Self::Delta { .. } => "delta",
             Self::StreamError { .. } => "stream_error",
             Self::Complete { .. } => "complete",
+            Self::ToolUseStart { .. } => "tool_use_start",
+            Self::ToolUseDone { .. } => "tool_use_done",
         }
     }
 }
@@ -639,6 +652,15 @@ impl From<&ModelStreamEvent> for ModelStreamEventWire {
                 role: message.role.as_str().to_string(),
                 content: message.content.clone(),
             },
+            ModelStreamEvent::ToolUseStart { .. } | ModelStreamEvent::ToolUseDone { .. } => {
+                // Tool events don't have a wire representation — map to Delta placeholder
+                Self::Delta {
+                    text: String::new(),
+                    sequence: 0,
+                    timestamp_ms: 0,
+                    chunk_bytes: 0,
+                }
+            }
         }
     }
 }
@@ -843,6 +865,7 @@ impl ModelInvocation {
                 }
                 ModelStreamEvent::StreamError { .. } => stats.total_events += 0,
                 ModelStreamEvent::Complete { .. } => stats.completed = true,
+                ModelStreamEvent::ToolUseStart { .. } | ModelStreamEvent::ToolUseDone { .. } => {}
             }
         }
         stats
@@ -1722,6 +1745,10 @@ impl<'a> StreamingModelParser<'a> {
         {
             let id = block.get("id").and_then(Value::as_str).unwrap_or("").to_string();
             let name = block.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+            stream.push(ModelStreamEvent::ToolUseStart {
+                tool_id: id.clone(),
+                tool_name: name.clone(),
+            });
             self.pending_tool = Some((id, name, String::new()));
         }
 
@@ -1741,6 +1768,19 @@ impl<'a> StreamingModelParser<'a> {
             && let Some((id, name, input_json)) = self.pending_tool.take()
         {
             let arguments = parse_tool_arguments(&input_json);
+            let args_summary = arguments
+                .iter()
+                .map(|(k, v)| {
+                    let short = if v.len() > 40 { &v[..40] } else { v.as_str() };
+                    format!("{k}={short}")
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            stream.push(ModelStreamEvent::ToolUseDone {
+                tool_id: id.clone(),
+                tool_name: name.clone(),
+                arguments_summary: args_summary,
+            });
             self.tool_calls.push(ToolCallRequest {
                 id,
                 name,
