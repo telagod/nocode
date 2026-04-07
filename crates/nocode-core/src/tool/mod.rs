@@ -1,10 +1,12 @@
 pub mod agent;
 pub mod bash;
+pub mod bash_validation;
 pub mod cron_tools;
 pub mod definitions;
 pub mod discovery_tools;
 pub mod edit;
 pub mod executor;
+pub mod file_safety;
 pub mod glob;
 pub mod grep;
 pub mod memory_tools;
@@ -12,6 +14,7 @@ pub mod permission;
 pub mod read;
 pub mod task_tools;
 pub mod team_tools;
+pub mod tool_validation;
 pub mod web;
 pub mod write;
 
