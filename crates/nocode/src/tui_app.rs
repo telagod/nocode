@@ -55,6 +55,12 @@ pub(crate) struct TuiApp {
     banner_info: WelcomeBannerInfo,
     /// Accumulated assistant text during streaming — rendered incrementally.
     streaming_text: String,
+    /// Input history for Ctrl-P/N navigation.
+    input_history: Vec<String>,
+    /// Current position in history (-1 = current input, 0 = most recent).
+    history_index: Option<usize>,
+    /// Saved current input when navigating history.
+    saved_input: String,
 }
 
 impl TuiApp {
@@ -75,6 +81,9 @@ impl TuiApp {
             show_banner: true,
             banner_info: WelcomeBannerInfo::default(),
             streaming_text: String::new(),
+            input_history: Vec::new(),
+            history_index: None,
+            saved_input: String::new(),
         }
     }
 
@@ -579,9 +588,13 @@ impl TuiApp {
                 self.cursor_pos = 0;
                 self.dirty = true;
             }
-            // History — simplified: Ctrl-P/N not yet wired
-            (KeyCode::Char('p'), KeyModifiers::CONTROL) => {}
-            (KeyCode::Char('n'), KeyModifiers::CONTROL) => {}
+            // History navigation
+            (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+                self.history_prev();
+            }
+            (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
+                self.history_next();
+            }
             // Tab — toggle expand/collapse on tool messages
             (KeyCode::Tab, _) => {
                 // Toggle the last tool message's collapsed state
@@ -600,8 +613,16 @@ impl TuiApp {
                     self.show_banner = false;
                     let text = std::mem::take(&mut self.input);
                     self.cursor_pos = 0;
-                    self.push_user_message(&text);
-                    session.submit_prompt(&text);
+
+                    if text.starts_with('/') {
+                        // Slash command — handle locally
+                        self.handle_slash_command(&text);
+                    } else {
+                        // Normal prompt — send to model
+                        self.push_user_message(&text);
+                        session.submit_prompt(&text);
+                        self.save_to_history(&text);
+                    }
                     self.chat_scroll = 0;
                     self.sticky_scroll = true;
                     self.unseen_count = 0;
@@ -694,6 +715,100 @@ impl TuiApp {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// Handle slash commands locally.
+    fn handle_slash_command(&mut self, cmd: &str) {
+        let (command, _args) = cmd.split_once(' ').unwrap_or((cmd, ""));
+        match command {
+            "/help" | "/h" => {
+                self.push_system("Commands: /help /clear /status /model /quit");
+                self.push_system("Keys: Ctrl-C quit · Tab expand tool · Ctrl-L clear · Ctrl-P/N history");
+            }
+            "/clear" | "/c" => {
+                self.chat_messages.clear();
+                self.invalidate_height_cache();
+                self.sticky_scroll = true;
+                self.unseen_count = 0;
+                self.chat_scroll = 0;
+                self.dirty = true;
+            }
+            "/status" | "/s" => {
+                self.push_system(&format!(
+                    "messages: {} · history: {} · banner: {}",
+                    self.chat_messages.len(),
+                    self.input_history.len(),
+                    if self.show_banner { "on" } else { "off" }
+                ));
+            }
+            "/model" => {
+                self.push_system(&format!(
+                    "model: {} · mode: {}",
+                    self.banner_info.model, self.banner_info.mode
+                ));
+            }
+            "/quit" | "/q" | "/exit" => {
+                self.push_system("bye");
+            }
+            _ => {
+                self.push_system(&format!("unknown command: {command}. Try /help"));
+            }
+        }
+        self.save_to_history(cmd);
+    }
+
+    /// Save input to history (max 50 entries).
+    fn save_to_history(&mut self, text: &str) {
+        if !text.is_empty()
+            && self.input_history.last().is_none_or(|last| last != text)
+        {
+            self.input_history.push(text.to_owned());
+            if self.input_history.len() > 50 {
+                self.input_history.remove(0);
+            }
+        }
+        self.history_index = None;
+    }
+
+    /// Navigate history backward (older).
+    fn history_prev(&mut self) {
+        if self.input_history.is_empty() {
+            return;
+        }
+        match self.history_index {
+            None => {
+                self.saved_input = self.input.clone();
+                self.history_index = Some(self.input_history.len() - 1);
+            }
+            Some(idx) if idx > 0 => {
+                self.history_index = Some(idx - 1);
+            }
+            _ => return,
+        }
+        if let Some(idx) = self.history_index {
+            self.input.clone_from(&self.input_history[idx]);
+            self.cursor_pos = self.input.len();
+            self.dirty = true;
+        }
+    }
+
+    /// Navigate history forward (newer).
+    fn history_next(&mut self) {
+        match self.history_index {
+            Some(idx) if idx + 1 < self.input_history.len() => {
+                self.history_index = Some(idx + 1);
+                self.input.clone_from(&self.input_history[idx + 1]);
+                self.cursor_pos = self.input.len();
+                self.dirty = true;
+            }
+            Some(_) => {
+                self.history_index = None;
+                self.input = std::mem::take(&mut self.saved_input);
+                self.cursor_pos = self.input.len();
+                self.dirty = true;
+            }
+            None => {}
         }
     }
 }
