@@ -106,7 +106,7 @@ impl StatusHud {
         };
         let mode = shorten_permission_mode(&self.permission_mode);
         let cost = self.format_cost();
-        let ctx = format!("{}% ctx", self.context_window_pct as u32);
+        let ctx = format_context_bar(self.context_window_pct);
         let total_tok = self.cumulative_input_tokens + self.cumulative_output_tokens;
         let tok = format!("{} tok", format_tokens(total_tok));
 
@@ -150,6 +150,20 @@ impl StatusHud {
             0,
         );
         format_usd(est.total)
+    }
+}
+
+/// Format context window usage as a visual mini-bar: "▰▰▰▱▱ 42%"
+/// Warns with ⚠ when >80%.
+fn format_context_bar(pct: f32) -> String {
+    let pct_u = pct.clamp(0.0, 100.0) as u32;
+    let filled = (pct_u / 20) as usize; // 5 segments, each = 20%
+    let empty = 5_usize.saturating_sub(filled);
+    let bar: String = "\u{25B0}".repeat(filled) + &"\u{25B1}".repeat(empty);
+    if pct_u >= 80 {
+        format!("{bar} {pct_u}% \u{26A0}")
+    } else {
+        format!("{bar} {pct_u}%")
     }
 }
 
@@ -262,7 +276,7 @@ mod tests {
         assert!(line.contains("claude-opus"));
         assert!(line.contains("1.4K tok"));
         assert!(line.contains("$"));
-        assert!(line.contains("% ctx"));
+        assert!(line.contains("0%"));
     }
 
     #[test]
@@ -335,7 +349,7 @@ mod tests {
         let mut hud = StatusHud::new("sonnet", "sess");
         hud.set_context_window_pct(42.7);
         let line = hud.render_line();
-        assert!(line.contains("42% ctx"));
+        assert!(line.contains("42%"));
     }
 
     #[test]
