@@ -1,4 +1,26 @@
 mod repl;
+#[allow(dead_code)]
+mod markdown_render;
+#[allow(dead_code, clippy::collapsible_if)]
+mod markdown_stream;
+#[allow(dead_code)]
+mod spinner;
+#[allow(dead_code)]
+mod tool_render;
+#[allow(dead_code, clippy::empty_line_after_doc_comments)]
+mod tool_truncate;
+#[allow(dead_code)]
+mod status_hud;
+mod tui;
+mod tui_app;
+#[allow(dead_code)]
+mod tui_input;
+#[allow(dead_code)]
+mod tui_permission;
+#[allow(dead_code)]
+mod tui_theme;
+#[allow(dead_code)]
+mod tui_widgets;
 
 use nocode_core::config::claude_md;
 use nocode_core::config::settings::Settings;
@@ -41,6 +63,20 @@ fn main() {
 
     let provider_box = build_provider(&provider, &settings);
 
+    if args.iter().any(|a| a == "--tui") {
+        if let Err(e) = tui::run_tui(
+            provider_box,
+            registry,
+            system,
+            model,
+            max_tokens,
+            max_turns,
+        ) {
+            eprintln!("TUI error: {e}");
+        }
+        return;
+    }
+
     if args.iter().any(|a| a == "--repl") {
         repl::run_repl(
             provider_box.as_ref(),
@@ -64,7 +100,7 @@ fn main() {
     );
 }
 
-fn resolve_provider(settings: &Settings) -> ModelProvider {
+fn resolve_provider(_settings: &Settings) -> ModelProvider {
     if let Ok(p) = env::var("NOCODE_MODEL_PROVIDER") {
         if let Some(provider) = ModelProvider::parse(&p) {
             return provider;
@@ -93,7 +129,7 @@ fn resolve_model(settings: &Settings) -> String {
         .unwrap_or_else(|| String::from("claude-sonnet-4-20250514"))
 }
 
-fn build_provider(provider: &ModelProvider, settings: &Settings) -> Box<dyn Provider> {
+fn build_provider(provider: &ModelProvider, _settings: &Settings) -> Box<dyn Provider> {
     match provider {
         ModelProvider::Claude => {
             let key = env::var("ANTHROPIC_API_KEY").unwrap_or_default();

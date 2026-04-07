@@ -1,5 +1,5 @@
 use crate::message::ContentBlock;
-use crate::tool::{ToolOutput, ToolRegistry};
+use crate::tool::ToolRegistry;
 use serde_json::Value;
 
 /// Executes tool calls from model responses, producing tool_result content blocks.

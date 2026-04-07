@@ -1,6 +1,5 @@
 use crate::tool::{Tool, ToolOutput};
 use serde_json::{Value, json};
-use std::path::Path;
 
 pub struct GlobTool;
 

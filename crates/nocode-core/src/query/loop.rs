@@ -1,6 +1,6 @@
-use crate::message::{ContentBlock, Message, Role, SystemBlock};
+use crate::message::{ContentBlock, Message, SystemBlock};
 use crate::provider::types::{
-    CreateMessageRequest, CreateMessageResponse, ProviderError, StopReason, StreamEvent,
+    CreateMessageRequest, ProviderError, StopReason, StreamEvent,
     ToolDefinition,
 };
 use crate::provider::Provider;

@@ -35,7 +35,7 @@ impl Tool for BashTool {
             return ToolOutput::error("Missing required parameter: command");
         };
 
-        let timeout_ms = input["timeout"].as_u64().unwrap_or(120_000).min(600_000);
+        let _timeout_ms = input["timeout"].as_u64().unwrap_or(120_000).min(600_000);
 
         let result = Command::new("sh")
             .arg("-c")
