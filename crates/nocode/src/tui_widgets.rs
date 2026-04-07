@@ -143,7 +143,7 @@ impl ChatMessage {
         let (prefix, prefix_color) = self.kind.prefix();
         let mut result = Vec::with_capacity(self.lines.len() + 3);
 
-        // Tool call: "● ToolName args..." with status indicator
+        // Tool call: "● **ToolName** (args)" with status indicator — Claude Code style
         if let Some(info) = &self.tool_info {
             let indicator_color = if info.result_preview.is_some() {
                 theme.success // green = done
@@ -155,21 +155,25 @@ impl ChatMessage {
             } else {
                 " \u{2026}" // …
             };
-            result.push(Line::from(vec![
+            // Tool-specific user-facing summary
+            let display_name = tool_user_facing_name(&info.tool_name, &info.arguments_summary);
+            let args_display = tool_args_display(&info.tool_name, &info.arguments_summary);
+
+            let mut spans = vec![
+                Span::styled("\u{25CF} ", Style::default().fg(indicator_color)),
                 Span::styled(
-                    "\u{25CF} ",
-                    Style::default().fg(indicator_color),
-                ),
-                Span::styled(
-                    info.tool_name.as_str(),
+                    display_name,
                     Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    format!(" {}", info.arguments_summary),
+            ];
+            if !args_display.is_empty() {
+                spans.push(Span::styled(
+                    format!(" ({args_display})"),
                     Style::default().fg(theme.text_dim),
-                ),
-                Span::styled(status_suffix, Style::default().fg(indicator_color)),
-            ]));
+                ));
+            }
+            spans.push(Span::styled(status_suffix, Style::default().fg(indicator_color)));
+            result.push(Line::from(spans));
 
             // Tool output lines with ⎿ prefix
             if !info.collapsed {
@@ -509,5 +513,86 @@ impl Widget for WelcomeBanner<'_> {
 
         let paragraph = Paragraph::new(lines);
         paragraph.render(inner, buf);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tool-specific display helpers
+// ---------------------------------------------------------------------------
+
+/// Map tool name to a user-facing display name (Claude Code style).
+fn tool_user_facing_name(tool_name: &str, args: &str) -> String {
+    match tool_name {
+        "Bash" => {
+            // Show the command itself as the name
+            let cmd = extract_kv(args, "command").unwrap_or_default();
+            if cmd.is_empty() {
+                String::from("Bash")
+            } else {
+                let short = truncate_str(&cmd, 50);
+                format!("$ {short}")
+            }
+        }
+        "Read" => String::from("Read"),
+        "Edit" => String::from("Edit"),
+        "Write" => String::from("Write"),
+        "Glob" => String::from("Glob"),
+        "Grep" => String::from("Grep"),
+        "WebFetch" => String::from("Fetch"),
+        "WebSearch" => String::from("Search"),
+        "Agent" => String::from("Agent"),
+        "TaskCreate" => String::from("Task"),
+        "TaskUpdate" => String::from("Task"),
+        "TaskList" => String::from("Tasks"),
+        other => other.to_string(),
+    }
+}
+
+/// Extract the most relevant argument for display in parentheses.
+fn tool_args_display(tool_name: &str, args: &str) -> String {
+    match tool_name {
+        "Read" | "Edit" | "Write" => {
+            extract_kv(args, "file_path").unwrap_or_default()
+        }
+        "Glob" => extract_kv(args, "pattern").unwrap_or_default(),
+        "Grep" => extract_kv(args, "pattern").unwrap_or_default(),
+        "WebFetch" => extract_kv(args, "url").unwrap_or_default(),
+        "WebSearch" => extract_kv(args, "query").unwrap_or_default(),
+        "Agent" => extract_kv(args, "prompt")
+            .map(|s| truncate_str(&s, 40))
+            .unwrap_or_default(),
+        "TaskCreate" => extract_kv(args, "description")
+            .map(|s| truncate_str(&s, 40))
+            .unwrap_or_default(),
+        "TaskUpdate" => {
+            let id = extract_kv(args, "task_id").unwrap_or_default();
+            let status = extract_kv(args, "status").unwrap_or_default();
+            if id.is_empty() { String::new() } else { format!("{id} → {status}") }
+        }
+        "Bash" => String::new(), // command already in display name
+        _ => {
+            // Generic: show first key=value, truncated
+            truncate_str(args, 50)
+        }
+    }
+}
+
+/// Extract value for a key from "key=value key2=value2" format.
+fn extract_kv(args: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}=");
+    let start = args.find(&prefix)?;
+    let after = &args[start + prefix.len()..];
+    let end = after.find(' ').unwrap_or(after.len());
+    let val = &after[..end];
+    if val.is_empty() { None } else { Some(val.to_string()) }
+}
+
+/// Truncate a string to max chars, adding … if truncated.
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max.saturating_sub(1)).collect();
+        format!("{truncated}\u{2026}")
     }
 }
