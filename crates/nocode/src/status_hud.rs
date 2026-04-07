@@ -308,4 +308,48 @@ mod tests {
         assert_eq!(truncate_session_id("12345678"), "12345678");
         assert_eq!(truncate_session_id("123456789"), "12345678");
     }
+
+    #[test]
+    fn render_line_uses_session_name_when_set() {
+        let mut hud = StatusHud::new("sonnet", "fallback-id-long");
+        hud.set_session_name("my-session-name-long");
+        let line = hud.render_line();
+        assert!(line.contains("session: my-sessi"));
+        assert!(!line.contains("fallback"));
+    }
+
+    #[test]
+    fn render_line_includes_permission_mode() {
+        let mut hud = StatusHud::new("sonnet", "sess");
+        hud.set_permission_mode("WorkspaceWrite");
+        let line = hud.render_line();
+        assert!(line.contains("mode: workspace"));
+    }
+
+    #[test]
+    fn render_line_includes_context_pct() {
+        let mut hud = StatusHud::new("sonnet", "sess");
+        hud.set_context_window_pct(42.7);
+        let line = hud.render_line();
+        assert!(line.contains("ctx: 43%"));
+    }
+
+    #[test]
+    fn format_tokens_scales_correctly() {
+        assert_eq!(format_tokens(0), "0");
+        assert_eq!(format_tokens(999), "999");
+        assert_eq!(format_tokens(1000), "1.0K");
+        assert_eq!(format_tokens(1500), "1.5K");
+        assert_eq!(format_tokens(1_000_000), "1.0M");
+        assert_eq!(format_tokens(2_500_000), "2.5M");
+    }
+
+    #[test]
+    fn shorten_permission_mode_maps_known_values() {
+        assert_eq!(shorten_permission_mode("WorkspaceWrite"), "workspace");
+        assert_eq!(shorten_permission_mode("ReadOnly"), "readonly");
+        assert_eq!(shorten_permission_mode("DangerFullAccess"), "full");
+        assert_eq!(shorten_permission_mode(""), "default");
+        assert_eq!(shorten_permission_mode("custom"), "custom");
+    }
 }

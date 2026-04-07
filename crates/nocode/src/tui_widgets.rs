@@ -67,11 +67,47 @@ impl ChatMessageKind {
 pub(crate) struct ChatMessage {
     pub kind: ChatMessageKind,
     pub lines: Vec<RenderedLine>,
+    /// Optional timestamp for display (formatted string, e.g. "14:32:05").
+    pub timestamp: Option<String>,
+    /// For Tool messages: structured tool call info.
+    pub tool_info: Option<ToolCallInfo>,
+}
+
+/// Structured tool call information for rendering.
+#[derive(Debug, Clone)]
+pub(crate) struct ToolCallInfo {
+    pub tool_name: String,
+    pub arguments_summary: String,
+    pub result_preview: Option<String>,
+    pub collapsed: bool,
+}
+
+impl ToolCallInfo {
+    #[allow(dead_code)]
+    pub fn new(tool_name: &str, arguments_summary: &str) -> Self {
+        Self {
+            tool_name: tool_name.to_owned(),
+            arguments_summary: arguments_summary.to_owned(),
+            result_preview: None,
+            collapsed: true,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_result(mut self, result: &str) -> Self {
+        self.result_preview = Some(result.to_owned());
+        self
+    }
 }
 
 impl ChatMessage {
     pub fn new(kind: ChatMessageKind, lines: Vec<RenderedLine>) -> Self {
-        Self { kind, lines }
+        Self {
+            kind,
+            lines,
+            timestamp: Some(current_timestamp()),
+            tool_info: None,
+        }
     }
 
     pub fn plain(kind: ChatMessageKind, text: &str) -> Self {
@@ -83,43 +119,117 @@ impl ChatMessage {
                 rl
             })
             .collect();
-        Self { kind, lines }
+        Self {
+            kind,
+            lines,
+            timestamp: Some(current_timestamp()),
+            tool_info: None,
+        }
+    }
+
+    /// Create a tool call message with structured info.
+    #[allow(dead_code)]
+    pub fn tool_call(tool_info: ToolCallInfo, result_lines: Vec<RenderedLine>) -> Self {
+        Self {
+            kind: ChatMessageKind::Tool,
+            lines: result_lines,
+            timestamp: Some(current_timestamp()),
+            tool_info: Some(tool_info),
+        }
     }
 
     /// Convert to ratatui Lines for rendering.
     pub fn to_ratatui_lines(&self) -> Vec<Line<'_>> {
+        let theme = default_theme();
         let (badge, badge_bg, badge_fg) = self.kind.badge();
-        let mut result = Vec::with_capacity(self.lines.len() + 3);
+        let mut result = Vec::with_capacity(self.lines.len() + 4);
 
-        // Badge line
+        // Message background color based on kind
+        let msg_bg = match self.kind {
+            ChatMessageKind::User => theme.user_msg_bg,
+            ChatMessageKind::Error => theme.error_msg_bg,
+            ChatMessageKind::Assistant => theme.assistant_msg_bg,
+            _ => Color::Reset,
+        };
+
+        // Badge line with optional timestamp
         if !matches!(self.kind, ChatMessageKind::Spinner) {
-            result.push(Line::from(Span::styled(
+            let mut badge_spans = vec![Span::styled(
                 format!(" {badge} "),
                 Style::default().fg(badge_fg).bg(badge_bg),
+            )];
+            if let Some(ts) = &self.timestamp {
+                badge_spans.push(Span::styled(
+                    format!(" {ts}"),
+                    Style::default().fg(theme.text_dim),
+                ));
+            }
+            result.push(Line::from(badge_spans));
+        }
+
+        // Tool call header (structured rendering)
+        if let Some(info) = &self.tool_info {
+            let header = format!(
+                " {} {}",
+                if info.collapsed {
+                    "\u{25B6}"
+                } else {
+                    "\u{25BC}"
+                },
+                info.tool_name
+            );
+            result.push(Line::from(vec![
+                Span::styled(
+                    header,
+                    Style::default().fg(theme.tool).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" {}", info.arguments_summary),
+                    Style::default().fg(theme.text_dim),
+                ),
+            ]));
+        }
+
+        // Content lines with message background
+        let content_style_base = if msg_bg == Color::Reset {
+            Style::default()
+        } else {
+            Style::default().bg(msg_bg)
+        };
+
+        // For collapsed tool calls with result, show only first line
+        let show_content = if let Some(info) = &self.tool_info {
+            !info.collapsed || info.result_preview.is_none()
+        } else {
+            true
+        };
+
+        if show_content {
+            for rendered_line in &self.lines {
+                let spans: Vec<Span<'_>> = rendered_line
+                    .segments
+                    .iter()
+                    .map(|seg| {
+                        let mut style = content_style_base.fg(convert_color(seg.color));
+                        if seg.bold {
+                            style = style.add_modifier(Modifier::BOLD);
+                        }
+                        if seg.italic {
+                            style = style.add_modifier(Modifier::ITALIC);
+                        }
+                        Span::styled(seg.text.as_str(), style)
+                    })
+                    .collect();
+                result.push(Line::from(spans));
+            }
+        } else if let Some(info) = &self.tool_info
+            && let Some(preview) = &info.result_preview
+        {
+            result.push(Line::from(Span::styled(
+                preview.as_str(),
+                Style::default().fg(theme.text_dim),
             )));
         }
-
-        // Content lines
-        for rendered_line in &self.lines {
-            let spans: Vec<Span<'_>> = rendered_line
-                .segments
-                .iter()
-                .map(|seg| {
-                    let mut style = Style::default().fg(convert_color(seg.color));
-                    if seg.bold {
-                        style = style.add_modifier(Modifier::BOLD);
-                    }
-                    if seg.italic {
-                        style = style.add_modifier(Modifier::ITALIC);
-                    }
-                    Span::styled(seg.text.as_str(), style)
-                })
-                .collect();
-            result.push(Line::from(spans));
-        }
-
-        // Blank line after each message for spacing
-        result.push(Line::from(""));
 
         result
     }
@@ -134,6 +244,21 @@ impl ChatMessage {
         };
         (self.lines.len() as u16).saturating_add(badge_line).max(1)
     }
+}
+
+/// Generate a timestamp string for the current local time (HH:MM:SS).
+/// Uses libc localtime to avoid adding chrono as a dependency.
+fn current_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // Simple UTC-based HH:MM:SS — good enough for a TUI timestamp.
+    let h = (secs / 3600) % 24;
+    let m = (secs / 60) % 60;
+    let s = secs % 60;
+    format!("{h:02}:{m:02}:{s:02}")
 }
 
 // ---------------------------------------------------------------------------
