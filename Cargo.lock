@@ -1139,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "nocode"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "crossterm",
  "nocode-core",
@@ -1152,7 +1152,7 @@ dependencies = [
 
 [[package]]
 name = "nocode-core"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "chrono",
  "jsonschema",
