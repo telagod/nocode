@@ -44,20 +44,17 @@ pub(crate) struct TuiApp {
     chat_scroll: u16,
     overlay: Overlay,
     thinking_spinner: Option<Spinner>,
+    #[allow(dead_code)]
     md_stream: MarkdownStreamState,
     dirty: bool,
-    /// Cached rendered height (in terminal rows) per message at last known width.
     height_cache: Vec<u16>,
-    /// Width used to compute `height_cache`. Invalidated on resize.
     height_cache_width: u16,
-    /// When true, new messages auto-scroll to bottom. Released on manual scroll up.
     sticky_scroll: bool,
-    /// Number of messages added while the user is scrolled away from the bottom.
     unseen_count: usize,
-    /// Show welcome banner until first user input.
     show_banner: bool,
-    /// Info displayed in the welcome banner.
     banner_info: WelcomeBannerInfo,
+    /// Accumulated assistant text during streaming — rendered incrementally.
+    streaming_text: String,
 }
 
 impl TuiApp {
@@ -77,6 +74,7 @@ impl TuiApp {
             unseen_count: 0,
             show_banner: true,
             banner_info: WelcomeBannerInfo::default(),
+            streaming_text: String::new(),
         }
     }
 
@@ -105,11 +103,31 @@ impl TuiApp {
         self.on_message_added();
     }
 
+    #[allow(dead_code)]
     pub fn push_assistant_markdown(&mut self, markdown: &str) {
         let lines = render_markdown_to_lines(markdown);
         self.chat_messages
             .push(ChatMessage::new(ChatMessageKind::Assistant, lines));
         self.on_message_added();
+    }
+
+    /// Update the current streaming assistant message, or create one if none exists.
+    /// This gives the real-time typing effect — one message grows incrementally.
+    pub fn update_streaming_assistant(&mut self, accumulated_markdown: &str) {
+        let lines = render_markdown_to_lines(accumulated_markdown);
+        // Find the last assistant message and update it in-place
+        if let Some(last) = self.chat_messages.last_mut()
+            && last.kind == ChatMessageKind::Assistant
+        {
+            last.lines = lines;
+            self.invalidate_height_cache();
+            self.dirty = true;
+        } else {
+            // First delta — create the message
+            self.chat_messages
+                .push(ChatMessage::new(ChatMessageKind::Assistant, lines));
+            self.on_message_added();
+        }
     }
 
     pub fn push_error(&mut self, message: &str) {
@@ -633,17 +651,21 @@ pub(crate) fn run_app_loop(
                 app.show_banner = false;
             } else if line.starts_with("stream delta:") {
                 let text = line.strip_prefix("stream delta: ").unwrap_or(line);
-                if let Some(rendered) = app.md_stream.push(text) {
-                    app.push_assistant_markdown(&rendered);
+                // Remove spinner on first delta
+                if app.streaming_text.is_empty() {
+                    app.chat_messages
+                        .retain(|m| m.kind != ChatMessageKind::Spinner);
+                    app.thinking_spinner = None;
                 }
+                app.streaming_text.push_str(text);
+                app.update_streaming_assistant(&app.streaming_text.clone());
             } else if line.starts_with("stream error:") {
                 let msg = line.strip_prefix("stream error: ").unwrap_or(line);
                 app.push_error(msg);
             } else if line.starts_with("stream complete:") {
-                // Flush remaining markdown buffer
-                if let Some(rendered) = app.md_stream.flush() {
-                    app.push_assistant_markdown(&rendered);
-                }
+                // Finalize: if we have accumulated text, it's already rendered.
+                // Reset streaming state for next turn.
+                app.streaming_text.clear();
             } else {
                 // Filter out system prompt / bootstrap noise — only show short, meaningful lines
                 let dominated_by_noise = line.contains("] system:")
@@ -659,8 +681,11 @@ pub(crate) fn run_app_loop(
             }
         }
         if let Some(eng) = returned_engine {
-            if let Some(rendered) = app.md_stream.flush() {
-                app.push_assistant_markdown(&rendered);
+            // Finalize any remaining streaming text
+            if !app.streaming_text.is_empty() {
+                let final_text = app.streaming_text.clone();
+                app.update_streaming_assistant(&final_text);
+                app.streaming_text.clear();
             }
             // Remove spinner messages from chat history
             app.chat_messages
