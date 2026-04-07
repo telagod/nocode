@@ -576,7 +576,17 @@ pub(crate) fn run_app_loop(
                     app.push_assistant_markdown(&rendered);
                 }
             } else {
-                app.push_system(line);
+                // Filter out system prompt / bootstrap noise — only show short, meaningful lines
+                let dominated_by_noise = line.contains("] system:")
+                    || line.contains("system prompt")
+                    || line.contains("You are nocode")
+                    || line.contains("OVERRIDE")
+                    || line.contains("Available tools")
+                    || line.contains("Codebase and user instructions")
+                    || line.len() > 300;
+                if !dominated_by_noise {
+                    app.push_system(line);
+                }
             }
         }
         if let Some(eng) = returned_engine {

@@ -1152,8 +1152,11 @@ impl ReplSession {
                     error.retryable
                 ));
             }
-            let rendered = self.render_submission(&plan);
-            lines.push(rendered);
+            let _rendered = self.render_submission(&plan);
+            // Note: render_submission updates session_view internally.
+            // We do NOT push the rendered transcript into TUI stream lines —
+            // the TUI already received content via stream delta/complete events.
+            // Pushing it would dump system prompts and conversation history into chat.
             self.last_plan_summary = Some(render_plan_status(&plan));
             self.last_plan_diagnostics = Some(render_plan_diagnostics(&plan));
             self.last_plan_response_result_pretty = plan.response_result_pretty();
