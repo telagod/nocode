@@ -580,6 +580,9 @@ pub(crate) fn run_app_loop(
         for line in &stream_lines {
             if line.contains("[CALL]") || line.contains("[DONE]") {
                 app.push_tool_event(line);
+            } else if line.starts_with("stream start:") {
+                // Internal event — don't display in chat, just dismiss banner
+                app.show_banner = false;
             } else if line.starts_with("stream delta:") {
                 let text = line.strip_prefix("stream delta: ").unwrap_or(line);
                 if let Some(rendered) = app.md_stream.push(text) {
@@ -611,10 +614,12 @@ pub(crate) fn run_app_loop(
             if let Some(rendered) = app.md_stream.flush() {
                 app.push_assistant_markdown(&rendered);
             }
-            if let Some(spinner) = app.thinking_spinner.as_mut() {
-                spinner.finish("Done");
-            }
+            // Remove spinner messages from chat history
+            app.chat_messages
+                .retain(|m| m.kind != ChatMessageKind::Spinner);
+            app.invalidate_height_cache();
             app.thinking_spinner = None;
+            app.dirty = true;
             *engine_slot = Some(eng);
         }
 
