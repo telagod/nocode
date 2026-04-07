@@ -47,6 +47,8 @@ pub(crate) enum ChatMessageKind {
     Error,
     Tool,
     Spinner,
+    /// Inline permission prompt — waiting for user y/n/a.
+    Permission,
 }
 
 impl ChatMessageKind {
@@ -54,12 +56,13 @@ impl ChatMessageKind {
     fn prefix(&self) -> (&str, Color) {
         let theme = default_theme();
         match self {
-            Self::User => ("\u{276F} ", theme.user),        // ❯
-            Self::Assistant => ("\u{23BF} ", theme.assistant), // ⎿ (not exact but close)
-            Self::System => ("\u{2022} ", theme.system),     // •
-            Self::Error => ("\u{2716} ", theme.error),       // ✖
-            Self::Tool => ("\u{25CF} ", theme.tool),         // ●
-            Self::Spinner => ("\u{2234} ", theme.spinner),   // ∴
+            Self::User => ("\u{276F} ", theme.user),          // ❯
+            Self::Assistant => ("\u{23BF} ", theme.assistant), // ⎿
+            Self::System => ("\u{2022} ", theme.system),      // •
+            Self::Error => ("\u{2716} ", theme.error),        // ✖
+            Self::Tool => ("\u{25CF} ", theme.tool),          // ●
+            Self::Spinner => ("\u{2234} ", theme.spinner),    // ∴
+            Self::Permission => ("\u{26A0} ", theme.warning), // ⚠
         }
     }
 }

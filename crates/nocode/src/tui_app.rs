@@ -136,6 +136,27 @@ impl TuiApp {
         self.on_message_added();
     }
 
+    /// Push an inline permission prompt into the chat area.
+    pub fn push_permission_prompt(&mut self, description: &str) {
+        let text = format!("{description}  [y]es / [n]o / [a]lways");
+        self.chat_messages
+            .push(ChatMessage::plain(ChatMessageKind::Permission, &text));
+        self.on_message_added();
+    }
+
+    /// Remove the last permission prompt from chat.
+    pub fn remove_permission_prompt(&mut self) {
+        if let Some(pos) = self
+            .chat_messages
+            .iter()
+            .rposition(|m| m.kind == ChatMessageKind::Permission)
+        {
+            self.chat_messages.remove(pos);
+            self.invalidate_height_cache();
+            self.dirty = true;
+        }
+    }
+
     #[allow(dead_code)]
     pub fn push_tool_event(&mut self, line: &str) {
         self.chat_messages
@@ -429,6 +450,36 @@ impl TuiApp {
             return Ok(false);
         }
 
+        // Inline permission prompt — intercept y/n/a before anything else
+        let has_permission = self
+            .chat_messages
+            .iter()
+            .any(|m| m.kind == ChatMessageKind::Permission);
+        if has_permission {
+            match key.code {
+                KeyCode::Char('y' | 'Y') => {
+                    session.resolve_permission(true);
+                    self.remove_permission_prompt();
+                    return Ok(true);
+                }
+                KeyCode::Char('n' | 'N') => {
+                    session.resolve_permission(false);
+                    self.remove_permission_prompt();
+                    return Ok(true);
+                }
+                KeyCode::Char('a' | 'A') => {
+                    // "always" — approve and mark for future auto-approve
+                    session.resolve_permission(true);
+                    self.remove_permission_prompt();
+                    return Ok(true);
+                }
+                _ => {
+                    // Ignore other keys while permission is pending
+                    return Ok(true);
+                }
+            }
+        }
+
         // Overlay toggles
         if self.handle_overlay_key(key, session) {
             return Ok(true);
@@ -490,6 +541,18 @@ impl TuiApp {
             // History — simplified: Ctrl-P/N not yet wired
             (KeyCode::Char('p'), KeyModifiers::CONTROL) => {}
             (KeyCode::Char('n'), KeyModifiers::CONTROL) => {}
+            // Tab — toggle expand/collapse on tool messages
+            (KeyCode::Tab, _) => {
+                // Toggle the last tool message's collapsed state
+                for msg in self.chat_messages.iter_mut().rev() {
+                    if let Some(info) = &mut msg.tool_info {
+                        info.collapsed = !info.collapsed;
+                        self.invalidate_height_cache();
+                        self.dirty = true;
+                        break;
+                    }
+                }
+            }
             // Submit
             (KeyCode::Enter, _) => {
                 if !self.input.is_empty() {
@@ -696,10 +759,10 @@ pub(crate) fn run_app_loop(
             *engine_slot = Some(eng);
         }
 
-        // 4. Poll permissions
+        // 4. Poll permissions — show inline prompt instead of overlay
         if session.poll_permissions() {
-            app.overlay = Overlay::Permission;
-            app.dirty = true;
+            let perm_text = session.render_tui_permission_overlay();
+            app.push_permission_prompt(&perm_text);
         }
 
         // 5. Render
