@@ -4,7 +4,9 @@ use serde_json::{Value, json};
 pub struct GlobTool;
 
 impl Tool for GlobTool {
-    fn name(&self) -> &str { "Glob" }
+    fn name(&self) -> &str {
+        "Glob"
+    }
 
     fn description(&self) -> &str {
         "Find files matching a glob pattern. Returns matching file paths sorted by modification time."
@@ -39,14 +41,12 @@ impl Tool for GlobTool {
         };
 
         let mut files: Vec<(std::time::SystemTime, String)> = Vec::new();
-        for entry in entries {
-            if let Ok(path) = entry {
-                let mtime = path
-                    .metadata()
-                    .and_then(|m| m.modified())
-                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                files.push((mtime, path.display().to_string()));
-            }
+        for path in entries.flatten() {
+            let mtime = path
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            files.push((mtime, path.display().to_string()));
         }
 
         files.sort_by(|a, b| b.0.cmp(&a.0));

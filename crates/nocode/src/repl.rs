@@ -1,9 +1,9 @@
 use nocode_core::message::{ContentBlock, Message, SystemBlock};
-use nocode_core::provider::types::{StreamDelta, StreamEvent};
 use nocode_core::provider::Provider;
+use nocode_core::provider::types::{StreamDelta, StreamEvent};
 use nocode_core::query::r#loop::{self, LoopConfig, LoopObserver};
-use nocode_core::tool::executor::ToolExecutor;
 use nocode_core::tool::ToolRegistry;
+use nocode_core::tool::executor::ToolExecutor;
 use std::io::{self, BufRead, Write};
 
 /// Run the interactive REPL.
@@ -66,7 +66,13 @@ pub fn run_repl(
 
         let mut observer = ReplObserver::new();
 
-        match r#loop::run_agentic_loop(provider, &executor, &config, messages.clone(), &mut observer) {
+        match r#loop::run_agentic_loop(
+            provider,
+            &executor,
+            &config,
+            messages.clone(),
+            &mut observer,
+        ) {
             Ok(result) => {
                 // Print final newline if streaming didn't end with one
                 if observer.needs_newline {
@@ -89,29 +95,28 @@ struct ReplObserver {
 
 impl ReplObserver {
     fn new() -> Self {
-        Self { needs_newline: false }
+        Self {
+            needs_newline: false,
+        }
     }
 }
 
 impl LoopObserver for ReplObserver {
     fn on_stream_event(&mut self, event: &StreamEvent) {
-        match event {
-            StreamEvent::ContentBlockDelta { delta, .. } => {
-                match delta {
-                    StreamDelta::TextDelta { text } => {
-                        print!("{text}");
-                        let _ = io::stdout().flush();
-                        self.needs_newline = !text.ends_with('\n');
-                    }
-                    StreamDelta::ThinkingDelta { thinking } => {
-                        // Show thinking in dim
-                        print!("\x1b[2m{thinking}\x1b[0m");
-                        let _ = io::stdout().flush();
-                    }
-                    _ => {}
+        if let StreamEvent::ContentBlockDelta { delta, .. } = event {
+            match delta {
+                StreamDelta::TextDelta { text } => {
+                    print!("{text}");
+                    let _ = io::stdout().flush();
+                    self.needs_newline = !text.ends_with('\n');
                 }
+                StreamDelta::ThinkingDelta { thinking } => {
+                    // Show thinking in dim
+                    print!("\x1b[2m{thinking}\x1b[0m");
+                    let _ = io::stdout().flush();
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 
@@ -124,18 +129,22 @@ impl LoopObserver for ReplObserver {
     }
 
     fn on_tool_done(&mut self, name: &str, _id: &str, result: &ContentBlock) {
-        match result {
-            ContentBlock::ToolResult { content, is_error, .. } => {
-                let prefix = if *is_error { "\x1b[31m✗" } else { "\x1b[32m✓" };
-                // Show truncated result
-                let display = if content.len() > 200 {
-                    format!("{}...", &content[..200])
-                } else {
-                    content.clone()
-                };
-                println!("{prefix} {name}\x1b[0m {display}");
-            }
-            _ => {}
+        if let ContentBlock::ToolResult {
+            content, is_error, ..
+        } = result
+        {
+            let prefix = if *is_error {
+                "\x1b[31m✗"
+            } else {
+                "\x1b[32m✓"
+            };
+            // Show truncated result
+            let display = if content.len() > 200 {
+                format!("{}...", &content[..200])
+            } else {
+                content.clone()
+            };
+            println!("{prefix} {name}\x1b[0m {display}");
         }
     }
 }

@@ -14,11 +14,11 @@ use crate::tui_widgets::{
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use nocode_core::message::{ContentBlock, Message, SystemBlock};
-use nocode_core::provider::types::{StreamDelta, StreamEvent};
 use nocode_core::provider::Provider;
+use nocode_core::provider::types::{StreamDelta, StreamEvent};
 use nocode_core::query::r#loop::{self, LoopConfig, LoopObserver, LoopResult};
-use nocode_core::tool::executor::ToolExecutor;
 use nocode_core::tool::ToolRegistry;
+use nocode_core::tool::executor::ToolExecutor;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::widgets::{Block, Borders};
@@ -38,8 +38,14 @@ use std::sync::Arc;
 enum TuiEvent {
     TextDelta(String),
     ThinkingDelta(String),
-    ToolStart { name: String },
-    ToolDone { name: String, content: String, is_error: bool },
+    ToolStart {
+        name: String,
+    },
+    ToolDone {
+        name: String,
+        content: String,
+        is_error: bool,
+    },
     Complete(Result<LoopResult, String>, ToolRegistry),
 }
 
@@ -171,8 +177,10 @@ impl TuiApp {
     }
 
     pub fn push_tool_start(&mut self, name: &str) {
-        self.chat_messages
-            .push(ChatMessage::plain(ChatMessageKind::Tool, &format!("● {name}")));
+        self.chat_messages.push(ChatMessage::plain(
+            ChatMessageKind::Tool,
+            &format!("● {name}"),
+        ));
         self.on_message_added();
     }
 
@@ -183,21 +191,23 @@ impl TuiApp {
         } else {
             content.to_string()
         };
-        self.chat_messages
-            .push(ChatMessage::plain(ChatMessageKind::Tool, &format!("{prefix} {name} {display}")));
+        self.chat_messages.push(ChatMessage::plain(
+            ChatMessageKind::Tool,
+            &format!("{prefix} {name} {display}"),
+        ));
         self.on_message_added();
     }
 
     /// Update streaming assistant text incrementally.
     pub fn update_streaming_assistant(&mut self, accumulated: &str) {
         let lines = render_markdown_to_lines(accumulated);
-        if let Some(last) = self.chat_messages.last_mut() {
-            if last.kind == ChatMessageKind::Assistant {
-                last.lines = lines;
-                self.invalidate_height_cache();
-                self.dirty = true;
-                return;
-            }
+        if let Some(last) = self.chat_messages.last_mut()
+            && last.kind == ChatMessageKind::Assistant
+        {
+            last.lines = lines;
+            self.invalidate_height_cache();
+            self.dirty = true;
+            return;
         }
         self.chat_messages
             .push(ChatMessage::new(ChatMessageKind::Assistant, lines));
@@ -217,13 +227,13 @@ impl TuiApp {
                 rl
             })
             .collect();
-        if let Some(last) = self.chat_messages.last_mut() {
-            if last.kind == ChatMessageKind::Thinking {
-                last.lines = lines;
-                self.invalidate_height_cache();
-                self.dirty = true;
-                return;
-            }
+        if let Some(last) = self.chat_messages.last_mut()
+            && last.kind == ChatMessageKind::Thinking
+        {
+            last.lines = lines;
+            self.invalidate_height_cache();
+            self.dirty = true;
+            return;
         }
         self.chat_messages
             .push(ChatMessage::new(ChatMessageKind::Thinking, lines));
@@ -420,7 +430,10 @@ Keyboard shortcuts:\n\
     /// Returns false if the app should quit.
     pub fn handle_key(&mut self, key: KeyEvent) -> HandleKeyResult {
         // Ctrl-C = quit
-        if matches!((key.code, key.modifiers), (KeyCode::Char('c'), KeyModifiers::CONTROL)) {
+        if matches!(
+            (key.code, key.modifiers),
+            (KeyCode::Char('c'), KeyModifiers::CONTROL)
+        ) {
             return HandleKeyResult::Quit;
         }
 
@@ -591,7 +604,10 @@ Keyboard shortcuts:\n\
 
     fn handle_vim_key(&mut self, c: char) {
         match c {
-            'i' => { self.input_mode = InputMode::Insert; self.dirty = true; }
+            'i' => {
+                self.input_mode = InputMode::Insert;
+                self.dirty = true;
+            }
             'a' => {
                 self.input_mode = InputMode::Insert;
                 if self.cursor_pos < self.input.len() {
@@ -628,7 +644,10 @@ Keyboard shortcuts:\n\
                     self.dirty = true;
                 }
             }
-            '0' => { self.cursor_pos = 0; self.dirty = true; }
+            '0' => {
+                self.cursor_pos = 0;
+                self.dirty = true;
+            }
             '$' => {
                 self.cursor_pos = self.input.len();
                 if self.cursor_pos > 0 {
@@ -659,12 +678,15 @@ Keyboard shortcuts:\n\
     }
 
     fn history_prev(&mut self) {
-        if self.input_history.is_empty() { return; }
+        if self.input_history.is_empty() {
+            return;
+        }
         match self.history_index {
             None => {
                 self.saved_input = self.input.clone();
                 self.history_index = Some(0);
-                self.input.clone_from(&self.input_history[self.input_history.len() - 1]);
+                self.input
+                    .clone_from(&self.input_history[self.input_history.len() - 1]);
                 self.cursor_pos = self.input.len();
                 self.dirty = true;
             }
@@ -721,8 +743,8 @@ struct ChannelObserver {
 
 impl LoopObserver for ChannelObserver {
     fn on_stream_event(&mut self, event: &StreamEvent) {
-        match event {
-            StreamEvent::ContentBlockDelta { delta, .. } => match delta {
+        if let StreamEvent::ContentBlockDelta { delta, .. } = event {
+            match delta {
                 StreamDelta::TextDelta { text } => {
                     let _ = self.tx.send(TuiEvent::TextDelta(text.clone()));
                 }
@@ -730,8 +752,7 @@ impl LoopObserver for ChannelObserver {
                     let _ = self.tx.send(TuiEvent::ThinkingDelta(thinking.clone()));
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
     }
 
@@ -1010,10 +1031,7 @@ fn next_word_boundary(s: &str, pos: usize) -> usize {
 
 fn prev_word_boundary(s: &str, pos: usize) -> usize {
     let bytes = s.as_bytes();
-    let mut p = pos;
-    if p > 0 {
-        p -= 1;
-    }
+    let mut p = pos.saturating_sub(1);
     // Skip whitespace backwards
     while p > 0 && bytes[p].is_ascii_whitespace() {
         p -= 1;

@@ -5,7 +5,9 @@ use std::process::Command;
 pub struct GrepTool;
 
 impl Tool for GrepTool {
-    fn name(&self) -> &str { "Grep" }
+    fn name(&self) -> &str {
+        "Grep"
+    }
 
     fn description(&self) -> &str {
         "Search file contents using regex patterns. Uses ripgrep if available, falls back to grep."
@@ -34,7 +36,9 @@ impl Tool for GrepTool {
         // Try ripgrep first, fall back to grep
         let mut cmd = if which_exists("rg") {
             let mut c = Command::new("rg");
-            c.arg("--no-heading").arg("--line-number").arg("--max-count=50");
+            c.arg("--no-heading")
+                .arg("--line-number")
+                .arg("--max-count=50");
             if let Some(g) = glob_filter {
                 c.arg("--glob").arg(g);
             }

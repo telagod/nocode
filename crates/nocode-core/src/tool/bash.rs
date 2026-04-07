@@ -13,7 +13,9 @@ impl BashTool {
 }
 
 impl Tool for BashTool {
-    fn name(&self) -> &str { "Bash" }
+    fn name(&self) -> &str {
+        "Bash"
+    }
 
     fn description(&self) -> &str {
         "Execute a shell command and return its output."

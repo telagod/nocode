@@ -187,7 +187,10 @@ mod tests {
         let json = serde_json::to_value(&block).unwrap();
         assert_eq!(json["type"], "tool_result");
         assert_eq!(json["tool_use_id"], "id-1");
-        assert!(!json.get("is_error").is_some_and(|v| v.as_bool() == Some(true)));
+        assert!(
+            json.get("is_error")
+                .is_none_or(|v| v.as_bool() != Some(true))
+        );
         let parsed: ContentBlock = serde_json::from_value(json).unwrap();
         assert_eq!(parsed, block);
     }
@@ -220,9 +223,7 @@ mod tests {
 
     #[test]
     fn message_roundtrip() {
-        let msg = Message::user(vec![
-            ContentBlock::tool_result("id-1", "output"),
-        ]);
+        let msg = Message::user(vec![ContentBlock::tool_result("id-1", "output")]);
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: Message = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, msg);

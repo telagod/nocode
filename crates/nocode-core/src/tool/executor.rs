@@ -13,12 +13,7 @@ impl<'a> ToolExecutor<'a> {
     }
 
     /// Execute a single tool_use block and return a tool_result content block.
-    pub fn execute_tool_use(
-        &self,
-        id: &str,
-        name: &str,
-        input: &Value,
-    ) -> ContentBlock {
+    pub fn execute_tool_use(&self, id: &str, name: &str, input: &Value) -> ContentBlock {
         let Some(tool) = self.registry.get(name) else {
             return ContentBlock::tool_error(id, format!("Tool '{name}' not found"));
         };

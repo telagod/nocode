@@ -43,10 +43,7 @@ impl TuiPermissionBridge {
             return false;
         }
 
-        match response_rx.recv_timeout(self.timeout) {
-            Ok(approved) => approved,
-            Err(_) => false,
-        }
+        response_rx.recv_timeout(self.timeout).unwrap_or_default()
     }
 }
 

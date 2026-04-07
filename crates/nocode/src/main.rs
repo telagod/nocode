@@ -1,16 +1,16 @@
-mod repl;
 #[allow(dead_code)]
 mod markdown_render;
 #[allow(dead_code, clippy::collapsible_if)]
 mod markdown_stream;
+mod repl;
 #[allow(dead_code)]
 mod spinner;
+#[allow(dead_code)]
+mod status_hud;
 #[allow(dead_code)]
 mod tool_render;
 #[allow(dead_code, clippy::empty_line_after_doc_comments)]
 mod tool_truncate;
-#[allow(dead_code)]
-mod status_hud;
 mod tui;
 mod tui_app;
 #[allow(dead_code)]
@@ -25,9 +25,9 @@ mod tui_widgets;
 use nocode_core::config::claude_md;
 use nocode_core::config::settings::Settings;
 use nocode_core::prompt::system::assemble_system_prompt;
+use nocode_core::provider::Provider;
 use nocode_core::provider::claude::ClaudeProvider;
 use nocode_core::provider::types::ModelProvider;
-use nocode_core::provider::Provider;
 use nocode_core::tool::ToolRegistry;
 use std::env;
 
@@ -64,14 +64,7 @@ fn main() {
     let provider_box = build_provider(&provider, &settings);
 
     if args.iter().any(|a| a == "--tui") {
-        if let Err(e) = tui::run_tui(
-            provider_box,
-            registry,
-            system,
-            model,
-            max_tokens,
-            max_turns,
-        ) {
+        if let Err(e) = tui::run_tui(provider_box, registry, system, model, max_tokens, max_turns) {
             eprintln!("TUI error: {e}");
         }
         return;
@@ -101,10 +94,10 @@ fn main() {
 }
 
 fn resolve_provider(_settings: &Settings) -> ModelProvider {
-    if let Ok(p) = env::var("NOCODE_MODEL_PROVIDER") {
-        if let Some(provider) = ModelProvider::parse(&p) {
-            return provider;
-        }
+    if let Ok(p) = env::var("NOCODE_MODEL_PROVIDER")
+        && let Some(provider) = ModelProvider::parse(&p)
+    {
+        return provider;
     }
     // Auto-detect from available API keys
     if env::var("ANTHROPIC_API_KEY").is_ok() {

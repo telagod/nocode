@@ -40,7 +40,11 @@ impl McpBridge {
     }
 
     /// Call a tool by its original (unprefixed) name.
-    pub fn call_tool(&self, name: &str, arguments: &HashMap<String, String>) -> Result<McpToolResult, String> {
+    pub fn call_tool(
+        &self,
+        name: &str,
+        arguments: &HashMap<String, String>,
+    ) -> Result<McpToolResult, String> {
         let mut client = self.client.lock().map_err(|e| format!("lock error: {e}"))?;
         client.call_tool(name, arguments)
     }

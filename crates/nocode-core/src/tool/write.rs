@@ -6,7 +6,9 @@ use std::path::Path;
 pub struct WriteTool;
 
 impl Tool for WriteTool {
-    fn name(&self) -> &str { "Write" }
+    fn name(&self) -> &str {
+        "Write"
+    }
 
     fn description(&self) -> &str {
         "Create or overwrite a file with the given content."
@@ -32,12 +34,11 @@ impl Tool for WriteTool {
         };
 
         // Ensure parent directory exists
-        if let Some(parent) = Path::new(path).parent() {
-            if !parent.exists() {
-                if let Err(e) = fs::create_dir_all(parent) {
-                    return ToolOutput::error(format!("Failed to create directory: {e}"));
-                }
-            }
+        if let Some(parent) = Path::new(path).parent()
+            && !parent.exists()
+            && fs::create_dir_all(parent).is_err()
+        {
+            return ToolOutput::error("Failed to create parent directory");
         }
 
         match fs::write(path, content) {

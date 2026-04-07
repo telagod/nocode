@@ -89,11 +89,13 @@ impl McpClient {
                     .filter_map(|v| {
                         Some(McpTool {
                             name: v.get("name")?.as_str()?.to_string(),
-                            description: v.get("description")
+                            description: v
+                                .get("description")
                                 .and_then(Value::as_str)
                                 .unwrap_or("")
                                 .to_string(),
-                            input_schema: v.get("inputSchema")
+                            input_schema: v
+                                .get("inputSchema")
                                 .cloned()
                                 .unwrap_or(json!({"type": "object"})),
                         })
@@ -116,10 +118,8 @@ impl McpClient {
             .collect::<serde_json::Map<String, Value>>()
             .into();
 
-        let response = self.request(
-            "tools/call",
-            json!({"name": name, "arguments": args_value}),
-        )?;
+        let response =
+            self.request("tools/call", json!({"name": name, "arguments": args_value}))?;
 
         let content = response
             .get("content")
@@ -149,30 +149,39 @@ impl McpClient {
             params,
         };
 
-        let stdin = self.child.stdin.as_mut()
+        let stdin = self
+            .child
+            .stdin
+            .as_mut()
             .ok_or("MCP server stdin unavailable")?;
-        let payload = serde_json::to_string(&request)
-            .map_err(|e| format!("failed to serialize: {e}"))?;
-        writeln!(stdin, "{payload}")
-            .map_err(|e| format!("failed to write to MCP server: {e}"))?;
-        stdin.flush()
+        let payload =
+            serde_json::to_string(&request).map_err(|e| format!("failed to serialize: {e}"))?;
+        writeln!(stdin, "{payload}").map_err(|e| format!("failed to write to MCP server: {e}"))?;
+        stdin
+            .flush()
             .map_err(|e| format!("failed to flush MCP server stdin: {e}"))?;
 
-        let stdout = self.child.stdout.as_mut()
+        let stdout = self
+            .child
+            .stdout
+            .as_mut()
             .ok_or("MCP server stdout unavailable")?;
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
-        reader.read_line(&mut line)
+        reader
+            .read_line(&mut line)
             .map_err(|e| format!("failed to read from MCP server: {e}"))?;
 
-        let response: JsonRpcResponse = serde_json::from_str(&line)
-            .map_err(|e| format!("invalid JSON-RPC response: {e}"))?;
+        let response: JsonRpcResponse =
+            serde_json::from_str(&line).map_err(|e| format!("invalid JSON-RPC response: {e}"))?;
 
         if let Some(error) = response.error {
             return Err(format!("MCP error: {}", error.message));
         }
 
-        response.result.ok_or_else(|| String::from("MCP response missing result"))
+        response
+            .result
+            .ok_or_else(|| String::from("MCP response missing result"))
     }
 
     fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
@@ -182,13 +191,16 @@ impl McpClient {
             "params": params,
         });
 
-        let stdin = self.child.stdin.as_mut()
+        let stdin = self
+            .child
+            .stdin
+            .as_mut()
             .ok_or("MCP server stdin unavailable")?;
         let payload = serde_json::to_string(&notification)
             .map_err(|e| format!("failed to serialize: {e}"))?;
-        writeln!(stdin, "{payload}")
-            .map_err(|e| format!("failed to write notification: {e}"))?;
-        stdin.flush()
+        writeln!(stdin, "{payload}").map_err(|e| format!("failed to write notification: {e}"))?;
+        stdin
+            .flush()
             .map_err(|e| format!("failed to flush notification: {e}"))?;
         Ok(())
     }

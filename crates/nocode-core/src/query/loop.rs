@@ -1,9 +1,8 @@
 use crate::message::{ContentBlock, Message, SystemBlock};
-use crate::provider::types::{
-    CreateMessageRequest, ProviderError, StopReason, StreamEvent,
-    ToolDefinition,
-};
 use crate::provider::Provider;
+use crate::provider::types::{
+    CreateMessageRequest, ProviderError, StopReason, StreamEvent, ToolDefinition,
+};
 use crate::tool::executor::ToolExecutor;
 
 /// Configuration for the agentic loop.

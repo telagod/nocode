@@ -1,2 +1,2 @@
-pub mod client;
 pub mod bridge;
+pub mod client;

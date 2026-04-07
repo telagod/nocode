@@ -1,10 +1,10 @@
+use crate::message::ContentBlock;
+use crate::provider::Provider;
+use crate::provider::transport::{HttpTransport, with_retry};
 use crate::provider::types::{
     CreateMessageRequest, CreateMessageResponse, ProviderError, StopReason, StreamDelta,
     StreamEvent, Usage,
 };
-use crate::provider::transport::{HttpTransport, with_retry};
-use crate::provider::Provider;
-use crate::message::ContentBlock;
 use std::io::BufRead;
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
@@ -43,13 +43,10 @@ impl Provider for ClaudeProvider {
         req.stream = false;
         let body = self.serialize_request(&req)?;
 
-        let response_text = with_retry(3, || {
-            self.transport.post_json("/v1/messages", &body)
-        })?;
+        let response_text = with_retry(3, || self.transport.post_json("/v1/messages", &body))?;
 
-        serde_json::from_str::<CreateMessageResponse>(&response_text).map_err(|e| {
-            ProviderError::non_retryable(format!("Failed to parse response: {e}"))
-        })
+        serde_json::from_str::<CreateMessageResponse>(&response_text)
+            .map_err(|e| ProviderError::non_retryable(format!("Failed to parse response: {e}")))
     }
 
     fn create_message_stream(
@@ -61,9 +58,7 @@ impl Provider for ClaudeProvider {
         req.stream = true;
         let body = self.serialize_request(&req)?;
 
-        let reader = with_retry(3, || {
-            self.transport.post_json_stream("/v1/messages", &body)
-        })?;
+        let reader = with_retry(3, || self.transport.post_json_stream("/v1/messages", &body))?;
 
         parse_sse_stream(reader, on_event)
     }
@@ -84,7 +79,8 @@ fn parse_sse_stream(
     let mut usage = Usage::default();
 
     // Accumulator for tool_use input JSON fragments
-    let mut tool_input_bufs: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+    let mut tool_input_bufs: std::collections::HashMap<u32, String> =
+        std::collections::HashMap::new();
 
     let mut event_type = String::new();
 
@@ -92,7 +88,7 @@ fn parse_sse_stream(
         let line = line.map_err(|e| ProviderError::retryable(format!("Stream read error: {e}")))?;
 
         if line.starts_with("event: ") {
-            event_type = line[7..].to_string();
+            event_type = line.strip_prefix("event: ").unwrap_or("").to_string();
             continue;
         }
 
@@ -176,9 +172,8 @@ fn parse_sse_stream(
                     }
                     "thinking_delta" => {
                         let thinking = delta["thinking"].as_str().unwrap_or("").to_string();
-                        if let Some(ContentBlock::Thinking {
-                            thinking: t,
-                        }) = content_blocks.get_mut(index as usize)
+                        if let Some(ContentBlock::Thinking { thinking: t }) =
+                            content_blocks.get_mut(index as usize)
                         {
                             t.push_str(&thinking);
                         }
@@ -196,20 +191,18 @@ fn parse_sse_stream(
                 let index = json["index"].as_u64().unwrap_or(0) as u32;
 
                 // Finalize tool_use input from accumulated JSON
-                if let Some(json_buf) = tool_input_bufs.remove(&index) {
-                    if let Some(ContentBlock::ToolUse { input, .. }) =
+                if let Some(json_buf) = tool_input_bufs.remove(&index)
+                    && let Some(ContentBlock::ToolUse { input, .. }) =
                         content_blocks.get_mut(index as usize)
-                    {
-                        *input = serde_json::from_str(&json_buf).unwrap_or(serde_json::Value::Null);
-                    }
+                {
+                    *input = serde_json::from_str(&json_buf).unwrap_or(serde_json::Value::Null);
                 }
 
                 on_event(StreamEvent::ContentBlockStop { index });
             }
             "message_delta" => {
                 let delta = &json["delta"];
-                if let Ok(sr) = serde_json::from_value::<StopReason>(delta["stop_reason"].clone())
-                {
+                if let Ok(sr) = serde_json::from_value::<StopReason>(delta["stop_reason"].clone()) {
                     stop_reason = sr;
                 }
                 if let Ok(u) = serde_json::from_value::<Usage>(json["usage"].clone()) {

@@ -1,2 +1,2 @@
-pub mod sql;
 pub mod memory;
+pub mod sql;

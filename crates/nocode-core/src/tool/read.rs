@@ -5,7 +5,9 @@ use std::fs;
 pub struct ReadTool;
 
 impl Tool for ReadTool {
-    fn name(&self) -> &str { "Read" }
+    fn name(&self) -> &str {
+        "Read"
+    }
 
     fn description(&self) -> &str {
         "Read a file from the filesystem. Returns the file contents with line numbers."

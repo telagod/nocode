@@ -67,7 +67,9 @@ impl MemoryEntry {
         let mut fields: HashMap<&str, &str> = HashMap::new();
         for line in frontmatter.lines() {
             let line = line.trim();
-            if line.is_empty() { continue; }
+            if line.is_empty() {
+                continue;
+            }
             if let Some(colon) = line.find(':') {
                 let key = line[..colon].trim();
                 let val = line[colon + 1..].trim();
@@ -110,16 +112,29 @@ impl MemoryIndex {
         let mut entries = Vec::new();
         for line in content.lines() {
             let line = line.trim();
-            if !line.starts_with("- [") { continue; }
+            if !line.starts_with("- [") {
+                continue;
+            }
             let after_bracket = &line[3..];
-            let Some(close_bracket) = after_bracket.find("](") else { continue };
+            let Some(close_bracket) = after_bracket.find("](") else {
+                continue;
+            };
             let title = after_bracket[..close_bracket].to_string();
             let after_paren = &after_bracket[close_bracket + 2..];
-            let Some(close_paren) = after_paren.find(')') else { continue };
+            let Some(close_paren) = after_paren.find(')') else {
+                continue;
+            };
             let file_name = after_paren[..close_paren].to_string();
             let rest = &after_paren[close_paren + 1..];
-            let hook = rest.trim_start_matches([' ', '\u{2014}', '-']).trim().to_string();
-            entries.push(MemoryIndexEntry { title, file_name, hook });
+            let hook = rest
+                .trim_start_matches([' ', '\u{2014}', '-'])
+                .trim()
+                .to_string();
+            entries.push(MemoryIndexEntry {
+                title,
+                file_name,
+                hook,
+            });
         }
         Self { entries }
     }
@@ -127,7 +142,10 @@ impl MemoryIndex {
     pub fn render(&self) -> String {
         let mut out = String::new();
         for e in &self.entries {
-            out.push_str(&format!("- [{}]({}) \u{2014} {}\n", e.title, e.file_name, e.hook));
+            out.push_str(&format!(
+                "- [{}]({}) \u{2014} {}\n",
+                e.title, e.file_name, e.hook
+            ));
         }
         out
     }
@@ -143,7 +161,9 @@ pub struct MemoryStore {
 
 impl MemoryStore {
     pub fn new(base_dir: &str) -> Self {
-        Self { base_dir: PathBuf::from(base_dir) }
+        Self {
+            base_dir: PathBuf::from(base_dir),
+        }
     }
 
     pub fn ensure_dir(&self) -> Result<(), String> {
@@ -159,8 +179,8 @@ impl MemoryStore {
 
     pub fn load(&self, file_name: &str) -> Result<MemoryEntry, String> {
         let path = self.base_dir.join(file_name);
-        let raw = fs::read_to_string(&path)
-            .map_err(|e| format!("failed to read {file_name}: {e}"))?;
+        let raw =
+            fs::read_to_string(&path).map_err(|e| format!("failed to read {file_name}: {e}"))?;
         MemoryEntry::from_markdown(file_name, &raw)
             .ok_or_else(|| format!("failed to parse {file_name}"))
     }
@@ -171,15 +191,19 @@ impl MemoryStore {
     }
 
     pub fn list(&self) -> Result<Vec<MemoryEntry>, String> {
-        let dir = fs::read_dir(&self.base_dir)
-            .map_err(|e| format!("failed to read memory dir: {e}"))?;
+        let dir =
+            fs::read_dir(&self.base_dir).map_err(|e| format!("failed to read memory dir: {e}"))?;
         let mut entries = Vec::new();
         for item in dir {
             let item = item.map_err(|e| format!("dir entry error: {e}"))?;
             let path = item.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("md") { continue; }
+            if path.extension().and_then(|s| s.to_str()) != Some("md") {
+                continue;
+            }
             let fname = item.file_name().to_string_lossy().to_string();
-            if fname == "MEMORY.md" { continue; }
+            if fname == "MEMORY.md" {
+                continue;
+            }
             if let Ok(entry) = self.load(&fname) {
                 entries.push(entry);
             }
@@ -190,11 +214,14 @@ impl MemoryStore {
     pub fn search(&self, query: &str) -> Result<Vec<MemoryEntry>, String> {
         let q = query.to_lowercase();
         let all = self.list()?;
-        Ok(all.into_iter().filter(|e| {
-            e.name.to_lowercase().contains(&q)
-                || e.content.to_lowercase().contains(&q)
-                || e.description.to_lowercase().contains(&q)
-        }).collect())
+        Ok(all
+            .into_iter()
+            .filter(|e| {
+                e.name.to_lowercase().contains(&q)
+                    || e.content.to_lowercase().contains(&q)
+                    || e.description.to_lowercase().contains(&q)
+            })
+            .collect())
     }
 
     pub fn find_by_name(&self, name: &str) -> Result<Option<MemoryEntry>, String> {
@@ -209,18 +236,19 @@ impl MemoryStore {
     pub fn load_index(&self) -> Result<MemoryIndex, String> {
         let path = self.index_path();
         if !path.exists() {
-            return Ok(MemoryIndex { entries: Vec::new() });
+            return Ok(MemoryIndex {
+                entries: Vec::new(),
+            });
         }
-        let raw = fs::read_to_string(&path)
-            .map_err(|e| format!("failed to read MEMORY.md: {e}"))?;
+        let raw =
+            fs::read_to_string(&path).map_err(|e| format!("failed to read MEMORY.md: {e}"))?;
         Ok(MemoryIndex::parse(&raw))
     }
 
     pub fn save_index(&self, index: &MemoryIndex) -> Result<(), String> {
         self.ensure_dir()?;
         let path = self.index_path();
-        fs::write(&path, index.render())
-            .map_err(|e| format!("failed to write MEMORY.md: {e}"))
+        fs::write(&path, index.render()).map_err(|e| format!("failed to write MEMORY.md: {e}"))
     }
 
     pub fn add_to_index(&self, entry: &MemoryEntry) -> Result<(), String> {
@@ -257,7 +285,12 @@ mod tests {
 
     #[test]
     fn memory_type_roundtrip() {
-        for ty in &[MemoryType::User, MemoryType::Feedback, MemoryType::Project, MemoryType::Reference] {
+        for ty in &[
+            MemoryType::User,
+            MemoryType::Feedback,
+            MemoryType::Project,
+            MemoryType::Reference,
+        ] {
             assert_eq!(MemoryType::parse(ty.as_str()), Some(*ty));
         }
         assert_eq!(MemoryType::parse("bogus"), None);
@@ -291,7 +324,8 @@ mod tests {
 
     #[test]
     fn parse_index() {
-        let content = "- [Role](user_role.md) \u{2014} pentester\n- [FB](fb.md) \u{2014} no mocks\n";
+        let content =
+            "- [Role](user_role.md) \u{2014} pentester\n- [FB](fb.md) \u{2014} no mocks\n";
         let idx = MemoryIndex::parse(content);
         assert_eq!(idx.entries.len(), 2);
         assert_eq!(idx.entries[0].title, "Role");
@@ -330,13 +364,15 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         let store = MemoryStore::new(tmp.to_str().unwrap());
         store.save(&sample_entry()).unwrap();
-        store.save(&MemoryEntry {
-            name: "feedback_testing".to_string(),
-            description: "no mocks".to_string(),
-            memory_type: MemoryType::Feedback,
-            content: "Use real database.".to_string(),
-            file_name: "feedback_testing.md".to_string(),
-        }).unwrap();
+        store
+            .save(&MemoryEntry {
+                name: "feedback_testing".to_string(),
+                description: "no mocks".to_string(),
+                memory_type: MemoryType::Feedback,
+                content: "Use real database.".to_string(),
+                file_name: "feedback_testing.md".to_string(),
+            })
+            .unwrap();
         assert_eq!(store.list().unwrap().len(), 2);
         assert_eq!(store.search("pentester").unwrap().len(), 1);
         assert_eq!(store.search("database").unwrap().len(), 1);

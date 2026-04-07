@@ -1,7 +1,7 @@
+use crate::provider::Provider;
 use crate::provider::types::{
     CreateMessageRequest, CreateMessageResponse, ProviderError, StreamEvent,
 };
-use crate::provider::Provider;
 
 /// Gemini generateContent API provider (stub).
 pub struct GeminiProvider;
@@ -11,7 +11,9 @@ impl Provider for GeminiProvider {
         &self,
         _request: &CreateMessageRequest,
     ) -> Result<CreateMessageResponse, ProviderError> {
-        Err(ProviderError::non_retryable("Gemini provider not yet implemented"))
+        Err(ProviderError::non_retryable(
+            "Gemini provider not yet implemented",
+        ))
     }
 
     fn create_message_stream(
@@ -19,6 +21,8 @@ impl Provider for GeminiProvider {
         _request: &CreateMessageRequest,
         _on_event: &mut dyn FnMut(StreamEvent),
     ) -> Result<CreateMessageResponse, ProviderError> {
-        Err(ProviderError::non_retryable("Gemini streaming not yet implemented"))
+        Err(ProviderError::non_retryable(
+            "Gemini streaming not yet implemented",
+        ))
     }
 }

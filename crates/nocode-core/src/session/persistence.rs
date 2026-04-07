@@ -103,7 +103,7 @@ impl SessionPersistence {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::{ContentBlock, Message};
+    use crate::message::Message;
 
     #[test]
     fn incremental_flush_and_load() {

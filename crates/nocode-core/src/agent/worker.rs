@@ -132,7 +132,10 @@ mod tests {
         assert_eq!(reg.get(&id).unwrap().state, WorkerState::Running);
         reg.set_result(&id, "build succeeded".to_string());
         assert_eq!(reg.get(&id).unwrap().state, WorkerState::Finished);
-        assert_eq!(reg.get(&id).unwrap().result.as_deref(), Some("build succeeded"));
+        assert_eq!(
+            reg.get(&id).unwrap().result.as_deref(),
+            Some("build succeeded")
+        );
     }
 
     #[test]
@@ -141,7 +144,14 @@ mod tests {
         let id = reg.register("tester", "run tests");
         reg.set_error(&id, "compilation failed".to_string());
         assert_eq!(reg.get(&id).unwrap().state, WorkerState::Failed);
-        assert!(reg.get(&id).unwrap().error.as_ref().unwrap().contains("compilation"));
+        assert!(
+            reg.get(&id)
+                .unwrap()
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("compilation")
+        );
     }
 
     #[test]

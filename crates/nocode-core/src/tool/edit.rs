@@ -5,7 +5,9 @@ use std::fs;
 pub struct EditTool;
 
 impl Tool for EditTool {
-    fn name(&self) -> &str { "Edit" }
+    fn name(&self) -> &str {
+        "Edit"
+    }
 
     fn description(&self) -> &str {
         "Replace an exact string in a file with new content. The old_string must be unique in the file."

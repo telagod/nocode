@@ -78,14 +78,17 @@ impl TaskCoordinator {
 
     /// List all non-deleted tasks.
     pub fn list(&self) -> Vec<&Task> {
-        self.tasks.values()
+        self.tasks
+            .values()
             .filter(|t| t.status != TaskStatus::Deleted)
             .collect()
     }
 
     /// Update task status.
     pub fn set_status(&mut self, id: &str, status: TaskStatus) -> Result<(), String> {
-        let task = self.tasks.get_mut(id)
+        let task = self
+            .tasks
+            .get_mut(id)
             .ok_or_else(|| format!("task {id} not found"))?;
         task.status = status;
 
@@ -101,7 +104,9 @@ impl TaskCoordinator {
 
     /// Set task owner.
     pub fn set_owner(&mut self, id: &str, owner: &str) -> Result<(), String> {
-        let task = self.tasks.get_mut(id)
+        let task = self
+            .tasks
+            .get_mut(id)
             .ok_or_else(|| format!("task {id} not found"))?;
         task.owner = Some(owner.to_string());
         Ok(())
@@ -112,7 +117,9 @@ impl TaskCoordinator {
         if !self.tasks.contains_key(blocker_id) {
             return Err(format!("blocker task {blocker_id} not found"));
         }
-        let task = self.tasks.get_mut(id)
+        let task = self
+            .tasks
+            .get_mut(id)
             .ok_or_else(|| format!("task {id} not found"))?;
         if !task.blocked_by.contains(&blocker_id.to_string()) {
             task.blocked_by.push(blocker_id.to_string());
@@ -125,7 +132,9 @@ impl TaskCoordinator {
         if !self.tasks.contains_key(blocked_id) {
             return Err(format!("blocked task {blocked_id} not found"));
         }
-        let task = self.tasks.get_mut(id)
+        let task = self
+            .tasks
+            .get_mut(id)
             .ok_or_else(|| format!("task {id} not found"))?;
         if !task.blocks.contains(&blocked_id.to_string()) {
             task.blocks.push(blocked_id.to_string());

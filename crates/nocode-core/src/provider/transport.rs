@@ -42,18 +42,15 @@ impl HttpTransport {
             req = req.header(k.as_str(), v.as_str());
         }
 
-        let resp = req
-            .body(body.to_string())
-            .send()
-            .map_err(|e| {
-                let retryable = e.is_timeout() || e.is_connect();
-                ProviderError::new(format!("HTTP error: {e}"), retryable)
-            })?;
+        let resp = req.body(body.to_string()).send().map_err(|e| {
+            let retryable = e.is_timeout() || e.is_connect();
+            ProviderError::new(format!("HTTP error: {e}"), retryable)
+        })?;
 
         let status = resp.status();
-        let text = resp.text().map_err(|e| {
-            ProviderError::retryable(format!("Failed to read response body: {e}"))
-        })?;
+        let text = resp
+            .text()
+            .map_err(|e| ProviderError::retryable(format!("Failed to read response body: {e}")))?;
 
         if status.is_success() {
             Ok(text)
@@ -89,13 +86,10 @@ impl HttpTransport {
             req = req.header(k.as_str(), v.as_str());
         }
 
-        let resp = req
-            .body(body.to_string())
-            .send()
-            .map_err(|e| {
-                let retryable = e.is_timeout() || e.is_connect();
-                ProviderError::new(format!("HTTP error: {e}"), retryable)
-            })?;
+        let resp = req.body(body.to_string()).send().map_err(|e| {
+            let retryable = e.is_timeout() || e.is_connect();
+            ProviderError::new(format!("HTTP error: {e}"), retryable)
+        })?;
 
         let status = resp.status();
         if !status.is_success() {

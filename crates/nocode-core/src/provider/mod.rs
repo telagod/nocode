@@ -1,12 +1,10 @@
-pub mod types;
-pub mod transport;
 pub mod claude;
-pub mod openai;
 pub mod gemini;
+pub mod openai;
+pub mod transport;
+pub mod types;
 
-use types::{
-    CreateMessageRequest, CreateMessageResponse, ProviderError, StreamEvent,
-};
+use types::{CreateMessageRequest, CreateMessageResponse, ProviderError, StreamEvent};
 
 /// Trait for model providers (Claude, OpenAI, Gemini, etc.)
 pub trait Provider: Send + Sync {

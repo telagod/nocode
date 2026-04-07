@@ -116,14 +116,9 @@ pub enum StreamEvent {
         content_block: ContentBlock,
     },
     /// Incremental delta for a content block.
-    ContentBlockDelta {
-        index: u32,
-        delta: StreamDelta,
-    },
+    ContentBlockDelta { index: u32, delta: StreamDelta },
     /// A content block has finished.
-    ContentBlockStop {
-        index: u32,
-    },
+    ContentBlockStop { index: u32 },
     /// Final message-level metadata (stop_reason, usage).
     MessageDelta {
         stop_reason: StopReason,
@@ -206,7 +201,10 @@ mod tests {
     #[test]
     fn provider_parse() {
         assert_eq!(ModelProvider::parse("claude"), Some(ModelProvider::Claude));
-        assert_eq!(ModelProvider::parse("anthropic"), Some(ModelProvider::Claude));
+        assert_eq!(
+            ModelProvider::parse("anthropic"),
+            Some(ModelProvider::Claude)
+        );
         assert_eq!(ModelProvider::parse("openai"), Some(ModelProvider::OpenAi));
         assert_eq!(ModelProvider::parse("google"), Some(ModelProvider::Gemini));
         assert_eq!(ModelProvider::parse("unknown"), None);
@@ -216,10 +214,7 @@ mod tests {
     fn response_text_extraction() {
         let resp = CreateMessageResponse {
             id: String::from("msg-1"),
-            content: vec![
-                ContentBlock::text("Hello "),
-                ContentBlock::text("world"),
-            ],
+            content: vec![ContentBlock::text("Hello "), ContentBlock::text("world")],
             stop_reason: StopReason::EndTurn,
             usage: Usage::default(),
             model: String::from("claude-opus-4-20250514"),

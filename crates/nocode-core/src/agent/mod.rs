@@ -1,2 +1,2 @@
-pub mod worker;
 pub mod task;
+pub mod worker;
