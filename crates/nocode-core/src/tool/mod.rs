@@ -1,12 +1,17 @@
 pub mod agent;
 pub mod bash;
+pub mod cron_tools;
 pub mod definitions;
+pub mod discovery_tools;
 pub mod edit;
 pub mod executor;
 pub mod glob;
 pub mod grep;
+pub mod memory_tools;
 pub mod permission;
 pub mod read;
+pub mod task_tools;
+pub mod team_tools;
 pub mod web;
 pub mod write;
 
@@ -93,12 +98,37 @@ impl ToolRegistry {
     pub fn with_defaults(cwd: impl Into<String>) -> Self {
         let cwd = cwd.into();
         let mut registry = Self::new();
+        // Core tools
         registry.register(Box::new(bash::BashTool::new(&cwd)));
         registry.register(Box::new(read::ReadTool));
         registry.register(Box::new(write::WriteTool));
         registry.register(Box::new(edit::EditTool));
         registry.register(Box::new(glob::GlobTool));
         registry.register(Box::new(grep::GrepTool));
+        registry.register(Box::new(web::WebFetchTool));
+        registry.register(Box::new(web::WebSearchTool));
+        registry.register(Box::new(agent::AgentTool));
+        // Task tools
+        registry.register(Box::new(task_tools::TaskGetTool));
+        registry.register(Box::new(task_tools::TaskListTool));
+        registry.register(Box::new(task_tools::TaskUpdateTool));
+        registry.register(Box::new(task_tools::TaskStopTool));
+        registry.register(Box::new(task_tools::TaskOutputTool));
+        // Team tools
+        registry.register(Box::new(team_tools::TeamCreateTool));
+        registry.register(Box::new(team_tools::TeamDeleteTool));
+        // Cron tools
+        registry.register(Box::new(cron_tools::CronCreateTool));
+        registry.register(Box::new(cron_tools::CronDeleteTool));
+        registry.register(Box::new(cron_tools::CronListTool));
+        // Discovery tools
+        registry.register(Box::new(discovery_tools::ToolSearchTool));
+        registry.register(Box::new(discovery_tools::LspTool));
+        // Memory tools
+        registry.register(Box::new(memory_tools::MemorySaveTool));
+        registry.register(Box::new(memory_tools::MemoryListTool));
+        registry.register(Box::new(memory_tools::MemorySearchTool));
+        registry.register(Box::new(memory_tools::MemoryDeleteTool));
         registry
     }
 }
