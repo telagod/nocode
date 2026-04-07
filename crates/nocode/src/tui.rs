@@ -24,6 +24,7 @@ pub(crate) fn run_tui() -> io::Result<()> {
     execute!(stdout, EnterAlternateScreen, EnableBracketedPaste, Hide)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?;
 
     // Session setup
     let config = crate::bootstrap_config();
