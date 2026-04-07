@@ -43,6 +43,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Sync Cargo.toml version from tag
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          rm -f Cargo.toml.bak
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -56,11 +68,6 @@ jobs:
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
           fi
           cargo build --release --target ${{ matrix.target }}
-
-      - name: Extract version from tag
-        id: version
-        shell: bash
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Package tarball for GitHub Release
         shell: bash
