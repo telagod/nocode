@@ -214,6 +214,8 @@ impl Default for ToolRegistry {
                     .with_permission(PermissionMode::WorkspaceWrite),
                 ToolDefinition::new("CronList", ToolKind::Orchestration, false)
                     .with_permission(PermissionMode::ReadOnly),
+                ToolDefinition::new("TaskCreate", ToolKind::Orchestration, false)
+                    .with_permission(PermissionMode::WorkspaceWrite),
                 ToolDefinition::new("TaskGet", ToolKind::ReadOnly, false)
                     .with_permission(PermissionMode::ReadOnly),
                 ToolDefinition::new("TaskList", ToolKind::ReadOnly, false)

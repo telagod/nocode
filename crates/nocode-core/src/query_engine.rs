@@ -522,6 +522,74 @@ fn build_tool_schemas(tools: &[String]) -> Vec<ToolSchema> {
                         "required": ["prompt"]
                     }),
                 },
+                "TaskCreate" => ToolSchema {
+                    name: String::from("TaskCreate"),
+                    description: String::from("Create a task to track work progress. Use this to plan and organize multi-step work."),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "subject": {"type": "string", "description": "Brief title for the task"},
+                            "description": {"type": "string", "description": "What needs to be done"},
+                            "type": {"type": "string", "enum": ["shell", "agent", "dream"], "description": "Task type (default: shell)"}
+                        },
+                        "required": ["description"]
+                    }),
+                },
+                "TaskGet" => ToolSchema {
+                    name: String::from("TaskGet"),
+                    description: String::from("Get details of a task by ID."),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "task_id": {"type": "string", "description": "The task ID to retrieve"}
+                        },
+                        "required": ["task_id"]
+                    }),
+                },
+                "TaskList" => ToolSchema {
+                    name: String::from("TaskList"),
+                    description: String::from("List all tasks, optionally filtered by status."),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "filter": {"type": "string", "enum": ["all", "running", "completed", "failed"], "description": "Filter by status (default: all)"}
+                        }
+                    }),
+                },
+                "TaskUpdate" => ToolSchema {
+                    name: String::from("TaskUpdate"),
+                    description: String::from("Update a task's status to completed or failed."),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "task_id": {"type": "string", "description": "The task ID to update"},
+                            "status": {"type": "string", "enum": ["completed", "failed"], "description": "New status"}
+                        },
+                        "required": ["task_id", "status"]
+                    }),
+                },
+                "TaskStop" => ToolSchema {
+                    name: String::from("TaskStop"),
+                    description: String::from("Stop a running task."),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "task_id": {"type": "string", "description": "The task ID to stop"}
+                        },
+                        "required": ["task_id"]
+                    }),
+                },
+                "TaskOutput" => ToolSchema {
+                    name: String::from("TaskOutput"),
+                    description: String::from("Get the full output of a task."),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "task_id": {"type": "string", "description": "The task ID"}
+                        },
+                        "required": ["task_id"]
+                    }),
+                },
                 _ => return None,
             };
             Some(schema)

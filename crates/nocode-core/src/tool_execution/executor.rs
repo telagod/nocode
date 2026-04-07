@@ -1034,6 +1034,7 @@ impl<H: ToolHost> ToolExecutor for DefaultToolExecutor<H> {
             "CronList" => super::cron_tools::execute_cron_list(request.call),
             "TeamCreate" => super::team_tools::execute_team_create(request.call),
             "TeamDelete" => super::team_tools::execute_team_delete(request.call),
+            "TaskCreate" => super::task_tools::execute_task_create(request.call),
             "TaskGet" => super::task_tools::execute_task_get(request.call),
             "TaskList" => super::task_tools::execute_task_list(request.call),
             "TaskUpdate" => super::task_tools::execute_task_update(request.call),

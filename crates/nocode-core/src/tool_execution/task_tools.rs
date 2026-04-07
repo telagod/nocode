@@ -66,6 +66,41 @@ fn format_record(record: &TaskRecord) -> String {
     )
 }
 
+/// Create a new task. The model calls this autonomously to plan and track work.
+pub fn execute_task_create(call: ToolCallInput) -> ToolExecutionTrace {
+    let Some(description) = call.argument("description") else {
+        return missing_argument(call, "description");
+    };
+    let description_str = description.to_string();
+    let subject = call
+        .argument("subject")
+        .unwrap_or(&description_str)
+        .to_string();
+    let task_type = call.argument("type").unwrap_or("shell").to_string();
+
+    let coordinator = global_task_coordinator();
+    let mut guard = coordinator.lock().unwrap();
+    let tid = match task_type.as_str() {
+        "agent" => guard.spawn_local_agent(
+            subject.clone(),
+            description_str.clone(),
+        ),
+        "dream" => guard.spawn_dream(0, Some(description_str.clone())),
+        _ => guard.spawn_local_shell(
+            description_str.clone(),
+            Some(subject.clone()),
+            None,
+        ),
+    };
+    drop(guard);
+
+    ok_response(
+        &call,
+        "TaskCreate",
+        &format!("created task {} — {}", tid.as_str(), subject),
+    )
+}
+
 /// Retrieve details for a single task by ID.
 pub fn execute_task_get(call: ToolCallInput) -> ToolExecutionTrace {
     let Some(task_id) = call.argument("task_id") else {
