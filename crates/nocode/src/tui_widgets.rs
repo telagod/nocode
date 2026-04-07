@@ -50,16 +50,16 @@ pub(crate) enum ChatMessageKind {
 }
 
 impl ChatMessageKind {
-    /// Returns (label, foreground_color) — no background block, just colored text.
-    fn badge(&self) -> (&str, Color) {
+    /// Claude Code style prefixes.
+    fn prefix(&self) -> (&str, Color) {
         let theme = default_theme();
         match self {
-            Self::System => ("system", theme.system),
-            Self::User => ("you", theme.user),
-            Self::Assistant => ("assistant", theme.assistant),
-            Self::Error => ("error", theme.error),
-            Self::Tool => ("tool", theme.tool),
-            Self::Spinner => ("", theme.text_dim),
+            Self::User => ("\u{276F} ", theme.user),        // ❯
+            Self::Assistant => ("\u{23BF} ", theme.assistant), // ⎿ (not exact but close)
+            Self::System => ("\u{2022} ", theme.system),     // •
+            Self::Error => ("\u{2716} ", theme.error),       // ✖
+            Self::Tool => ("\u{25CF} ", theme.tool),         // ●
+            Self::Spinner => ("\u{2234} ", theme.spinner),   // ∴
         }
     }
 }
@@ -68,8 +68,6 @@ impl ChatMessageKind {
 pub(crate) struct ChatMessage {
     pub kind: ChatMessageKind,
     pub lines: Vec<RenderedLine>,
-    /// Optional timestamp for display (formatted string, e.g. "14:32:05").
-    pub timestamp: Option<String>,
     /// For Tool messages: structured tool call info.
     pub tool_info: Option<ToolCallInfo>,
 }
@@ -106,7 +104,6 @@ impl ChatMessage {
         Self {
             kind,
             lines,
-            timestamp: Some(current_timestamp()),
             tool_info: None,
         }
     }
@@ -123,7 +120,6 @@ impl ChatMessage {
         Self {
             kind,
             lines,
-            timestamp: Some(current_timestamp()),
             tool_info: None,
         }
     }
@@ -134,80 +130,111 @@ impl ChatMessage {
         Self {
             kind: ChatMessageKind::Tool,
             lines: result_lines,
-            timestamp: Some(current_timestamp()),
             tool_info: Some(tool_info),
         }
     }
 
-    /// Convert to ratatui Lines for rendering.
+    /// Convert to ratatui Lines — Claude Code visual language.
     pub fn to_ratatui_lines(&self) -> Vec<Line<'_>> {
         let theme = default_theme();
-        let (badge, badge_fg) = self.kind.badge();
+        let (prefix, prefix_color) = self.kind.prefix();
         let mut result = Vec::with_capacity(self.lines.len() + 3);
 
-        // Badge line: "  assistant  14:32:05" — no background block, just colored text
-        if !matches!(self.kind, ChatMessageKind::Spinner) {
-            let mut badge_spans = vec![
-                Span::raw("  "),
-                Span::styled(
-                    badge,
-                    Style::default().fg(badge_fg).add_modifier(Modifier::BOLD),
-                ),
-            ];
-            if let Some(ts) = &self.timestamp {
-                badge_spans.push(Span::styled(
-                    format!("  {ts}"),
-                    Style::default().fg(theme.text_dim),
-                ));
-            }
-            result.push(Line::from(badge_spans));
-        }
-
-        // Tool call header (structured rendering)
+        // Tool call: "● ToolName args..." with status indicator
         if let Some(info) = &self.tool_info {
-            let arrow = if info.collapsed { "\u{25B8}" } else { "\u{25BE}" };
+            let indicator_color = if info.result_preview.is_some() {
+                theme.success // green = done
+            } else {
+                theme.tool // yellow = in progress
+            };
+            let status_suffix = if info.result_preview.is_some() {
+                " \u{2713}" // ✓
+            } else {
+                " \u{2026}" // …
+            };
             result.push(Line::from(vec![
-                Span::raw("  "),
                 Span::styled(
-                    format!("{arrow} {}", info.tool_name),
-                    Style::default().fg(theme.tool),
+                    "\u{25CF} ",
+                    Style::default().fg(indicator_color),
+                ),
+                Span::styled(
+                    info.tool_name.as_str(),
+                    Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     format!(" {}", info.arguments_summary),
                     Style::default().fg(theme.text_dim),
                 ),
+                Span::styled(status_suffix, Style::default().fg(indicator_color)),
             ]));
+
+            // Tool output lines with ⎿ prefix
+            if !info.collapsed {
+                for rendered_line in &self.lines {
+                    let mut spans: Vec<Span<'_>> = vec![Span::styled(
+                        "  \u{23BF} ",
+                        Style::default().fg(theme.border),
+                    )];
+                    spans.extend(rendered_line.segments.iter().map(|seg| {
+                        Span::styled(seg.text.as_str(), Style::default().fg(convert_color(seg.color)))
+                    }));
+                    result.push(Line::from(spans));
+                }
+            }
+            return result;
         }
 
-        // Content lines — 4-char left padding, no background color blocks
-        let show_content = if let Some(info) = &self.tool_info {
-            !info.collapsed || info.result_preview.is_none()
-        } else {
-            true
-        };
-
-        if show_content {
+        // Spinner: "∴ Thinking..."
+        if matches!(self.kind, ChatMessageKind::Spinner) {
             for rendered_line in &self.lines {
-                let mut spans: Vec<Span<'_>> = vec![Span::raw("    ")];
+                let text: String = rendered_line.segments.iter().map(|s| s.text.as_str()).collect();
+                result.push(Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(prefix_color)),
+                    Span::styled(text, Style::default().fg(theme.text_dim)),
+                ]));
+            }
+            return result;
+        }
+
+        // User: "❯ message" — first line gets prefix, rest indented
+        if matches!(self.kind, ChatMessageKind::User) {
+            for (i, rendered_line) in self.lines.iter().enumerate() {
+                let line_prefix = if i == 0 { prefix } else { "  " };
+                let mut spans: Vec<Span<'_>> = vec![Span::styled(
+                    line_prefix,
+                    Style::default().fg(prefix_color),
+                )];
                 spans.extend(rendered_line.segments.iter().map(|seg| {
                     let mut style = Style::default().fg(convert_color(seg.color));
                     if seg.bold {
                         style = style.add_modifier(Modifier::BOLD);
                     }
-                    if seg.italic {
-                        style = style.add_modifier(Modifier::ITALIC);
-                    }
                     Span::styled(seg.text.as_str(), style)
                 }));
                 result.push(Line::from(spans));
             }
-        } else if let Some(info) = &self.tool_info
-            && let Some(preview) = &info.result_preview
-        {
-            result.push(Line::from(vec![
-                Span::raw("    "),
-                Span::styled(preview.as_str(), Style::default().fg(theme.text_dim)),
-            ]));
+            return result;
+        }
+
+        // Assistant/System/Error: content lines with ⎿/•/✖ on first line
+        for (i, rendered_line) in self.lines.iter().enumerate() {
+            let line_prefix = if i == 0 { prefix } else { "  " };
+            let prefix_col = if i == 0 { prefix_color } else { theme.border };
+            let mut spans: Vec<Span<'_>> = vec![Span::styled(
+                line_prefix,
+                Style::default().fg(prefix_col),
+            )];
+            spans.extend(rendered_line.segments.iter().map(|seg| {
+                let mut style = Style::default().fg(convert_color(seg.color));
+                if seg.bold {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                if seg.italic {
+                    style = style.add_modifier(Modifier::ITALIC);
+                }
+                Span::styled(seg.text.as_str(), style)
+            }));
+            result.push(Line::from(spans));
         }
 
         result
@@ -223,21 +250,6 @@ impl ChatMessage {
         };
         (self.lines.len() as u16).saturating_add(badge_line).max(1)
     }
-}
-
-/// Generate a timestamp string for the current local time (HH:MM:SS).
-/// Uses libc localtime to avoid adding chrono as a dependency.
-fn current_timestamp() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    // Simple UTC-based HH:MM:SS — good enough for a TUI timestamp.
-    let h = (secs / 3600) % 24;
-    let m = (secs / 60) % 60;
-    let s = secs % 60;
-    format!("{h:02}:{m:02}:{s:02}")
 }
 
 // ---------------------------------------------------------------------------

@@ -585,7 +585,7 @@ pub(crate) fn run_app_loop(
         if let Some(intent) = session.take_pending_intent() {
             if let Some(eng) = engine_slot.take() {
                 launch_async_submission(session, eng, intent);
-                app.thinking_spinner = Some(Spinner::new("\u{1F980} Thinking..."));
+                app.thinking_spinner = Some(Spinner::new("Thinking..."));
             } else {
                 app.push_system("engine busy — waiting for current submission");
             }
