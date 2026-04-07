@@ -96,26 +96,34 @@ impl StatusHud {
         self.render_compact_line()
     }
 
-    /// Shared compact renderer used by both `render_line` and `render_line_streaming`.
+    /// Shared compact renderer — Claude Code style: "model · mode · $0.05 · 12% ctx · 1.2K tok"
     fn render_compact_line(&self) -> String {
-        let sep = " \u{2502} ";
-        let in_tok = format_tokens(self.cumulative_input_tokens);
-        let out_tok = format_tokens(self.cumulative_output_tokens);
-        let cost = self.format_cost();
-        let ctx = format!("{:.0}%", self.context_window_pct);
-        let mode = shorten_permission_mode(&self.permission_mode);
-        let elapsed = self.format_elapsed();
-
-        let session = if self.session_name.is_empty() {
-            truncate_session_id(&self.session_id)
+        let dot = " \u{00B7} ";
+        let model = if self.model_name.is_empty() {
+            "no model"
         } else {
-            truncate_session_id(&self.session_name)
+            &self.model_name
         };
+        let mode = shorten_permission_mode(&self.permission_mode);
+        let cost = self.format_cost();
+        let ctx = format!("{}% ctx", self.context_window_pct as u32);
+        let total_tok = self.cumulative_input_tokens + self.cumulative_output_tokens;
+        let tok = format!("{} tok", format_tokens(total_tok));
 
-        format!(
-            "model: {}{sep}tokens: {in_tok} in / {out_tok} out{sep}cost: {cost}{sep}ctx: {ctx}{sep}mode: {mode}{sep}{elapsed}{sep}session: {session}",
-            self.model_name,
-        )
+        let mut parts: Vec<&str> = vec![model, mode, &cost, &ctx];
+
+        if total_tok > 0 {
+            parts.push(&tok);
+        }
+
+        let elapsed;
+        if let Some(ms) = self.elapsed_ms() {
+            let secs = ms as f64 / 1000.0;
+            elapsed = format!("{secs:.1}s");
+            parts.push(&elapsed);
+        }
+
+        parts.join(dot)
     }
 
     /// Format elapsed time as human-friendly string (seconds with 1 decimal).
@@ -251,13 +259,10 @@ mod tests {
         hud.record_tokens(1000, 400);
         let line = hud.render_line();
 
-        assert!(line.contains("model: claude-opus"));
-        assert!(line.contains("tokens: 1.0K in / 400 out"));
-        assert!(line.contains("cost: $"));
-        assert!(line.contains("--"));
-        assert!(line.contains("session: abcdefgh"));
-        // Must NOT contain the full session id.
-        assert!(!line.contains("abcdefgh99999999"));
+        assert!(line.contains("claude-opus"));
+        assert!(line.contains("1.4K tok"));
+        assert!(line.contains("$"));
+        assert!(line.contains("% ctx"));
     }
 
     #[test]
@@ -267,11 +272,10 @@ mod tests {
         hud.record_tokens(50, 10);
         let line = hud.render_line_streaming();
 
-        assert!(line.contains("model: claude-opus"));
-        assert!(line.contains("tokens: 50 in / 10 out"));
-        assert!(line.contains("cost: $"));
+        assert!(line.contains("claude-opus"));
+        assert!(line.contains("60 tok"));
+        assert!(line.contains("$"));
         assert!(line.contains("s")); // elapsed contains seconds
-        assert!(line.contains("session: abcdefgh"));
     }
 
     #[test]
@@ -314,8 +318,8 @@ mod tests {
         let mut hud = StatusHud::new("sonnet", "fallback-id-long");
         hud.set_session_name("my-session-name-long");
         let line = hud.render_line();
-        assert!(line.contains("session: my-sessi"));
-        assert!(!line.contains("fallback"));
+        // New format no longer includes session — just verify it renders without panic
+        assert!(line.contains("sonnet"));
     }
 
     #[test]
@@ -323,7 +327,7 @@ mod tests {
         let mut hud = StatusHud::new("sonnet", "sess");
         hud.set_permission_mode("WorkspaceWrite");
         let line = hud.render_line();
-        assert!(line.contains("mode: workspace"));
+        assert!(line.contains("workspace"));
     }
 
     #[test]
@@ -331,7 +335,7 @@ mod tests {
         let mut hud = StatusHud::new("sonnet", "sess");
         hud.set_context_window_pct(42.7);
         let line = hud.render_line();
-        assert!(line.contains("ctx: 43%"));
+        assert!(line.contains("42% ctx"));
     }
 
     #[test]

@@ -4,7 +4,7 @@ use crate::markdown_render::render_markdown_to_lines;
 use crate::markdown_stream::MarkdownStreamState;
 use crate::repl::ReplSession;
 use crate::spinner::Spinner;
-use crate::tui_widgets::{ChatMessage, ChatMessageKind, InputBox, OverlayBlock, StatusBar};
+use crate::tui_widgets::{ChatMessage, ChatMessageKind, HintsBar, InputBox, OverlayBlock, StatusBar};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use nocode_core::QueryEngine;
@@ -194,35 +194,43 @@ impl TuiApp {
     // -- drawing --
 
     pub fn draw(&mut self, frame: &mut Frame, session: &ReplSession) {
+        let is_busy = self.thinking_spinner.is_some();
+        let hints_height = if is_busy { 0 } else { 1 };
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1), // status bar
-                Constraint::Min(4),    // chat area
-                Constraint::Length(3), // input box
+                Constraint::Min(4),                    // chat area (top, fills)
+                Constraint::Length(1),                  // status line
+                Constraint::Length(hints_height),       // keyboard hints (hidden when busy)
+                Constraint::Length(1),                  // input line
             ])
             .split(frame.area());
 
-        // 1. Status bar
+        // 1. Chat area (top)
+        self.draw_chat_area(frame, chunks[0]);
+
+        // 2. Status line (above input)
         let snapshot = session.render_tui_snapshot();
         let status = StatusBar::new(&snapshot.hud_line);
-        frame.render_widget(status, chunks[0]);
+        frame.render_widget(status, chunks[1]);
 
-        // 2. Chat area
-        self.draw_chat_area(frame, chunks[1]);
+        // 3. Keyboard hints (only when idle)
+        if !is_busy {
+            let hints = HintsBar;
+            frame.render_widget(hints, chunks[2]);
+        }
 
-        // 3. Input box
-        let prompt_text = session.prompt_text();
-        let input_widget = InputBox::new(&self.input, self.cursor_pos, &prompt_text);
-        frame.render_widget(input_widget, chunks[2]);
+        // 4. Input line (bottom)
+        let input_widget = InputBox::new(&self.input, self.cursor_pos);
+        frame.render_widget(input_widget, chunks[3]);
 
-        // Cursor position
-        let prompt_len = prompt_text.len() as u16;
-        let cursor_x = chunks[2].x + prompt_len + self.cursor_pos as u16;
-        let cursor_y = chunks[2].y + 1;
+        // Cursor position: "> " prefix = 2 chars
+        let cursor_x = chunks[3].x + 2 + self.cursor_pos as u16;
+        let cursor_y = chunks[3].y;
         frame.set_cursor_position((cursor_x, cursor_y));
 
-        // 4. Overlay (on top)
+        // 5. Overlay (on top)
         if self.overlay.is_open() {
             self.draw_overlay(frame, session, frame.area());
         }

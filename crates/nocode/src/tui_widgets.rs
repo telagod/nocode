@@ -50,15 +50,16 @@ pub(crate) enum ChatMessageKind {
 }
 
 impl ChatMessageKind {
-    fn badge(&self) -> (&str, Color, Color) {
+    /// Returns (label, foreground_color) — no background block, just colored text.
+    fn badge(&self) -> (&str, Color) {
         let theme = default_theme();
         match self {
-            Self::System => ("SYS", theme.badge_system_bg, theme.badge_system_fg),
-            Self::User => ("YOU", theme.badge_user_bg, theme.badge_user_fg),
-            Self::Assistant => ("AST", theme.badge_assistant_bg, theme.badge_assistant_fg),
-            Self::Error => ("ERR", theme.badge_error_bg, theme.badge_error_fg),
-            Self::Tool => ("TUL", theme.badge_tool_bg, theme.badge_tool_fg),
-            Self::Spinner => ("...", theme.system, theme.text_dim),
+            Self::System => ("system", theme.system),
+            Self::User => ("you", theme.user),
+            Self::Assistant => ("assistant", theme.assistant),
+            Self::Error => ("error", theme.error),
+            Self::Tool => ("tool", theme.tool),
+            Self::Spinner => ("", theme.text_dim),
         }
     }
 }
@@ -141,26 +142,21 @@ impl ChatMessage {
     /// Convert to ratatui Lines for rendering.
     pub fn to_ratatui_lines(&self) -> Vec<Line<'_>> {
         let theme = default_theme();
-        let (badge, badge_bg, badge_fg) = self.kind.badge();
-        let mut result = Vec::with_capacity(self.lines.len() + 4);
+        let (badge, badge_fg) = self.kind.badge();
+        let mut result = Vec::with_capacity(self.lines.len() + 3);
 
-        // Message background color based on kind
-        let msg_bg = match self.kind {
-            ChatMessageKind::User => theme.user_msg_bg,
-            ChatMessageKind::Error => theme.error_msg_bg,
-            ChatMessageKind::Assistant => theme.assistant_msg_bg,
-            _ => Color::Reset,
-        };
-
-        // Badge line with optional timestamp
+        // Badge line: "  assistant  14:32:05" — no background block, just colored text
         if !matches!(self.kind, ChatMessageKind::Spinner) {
-            let mut badge_spans = vec![Span::styled(
-                format!(" {badge} "),
-                Style::default().fg(badge_fg).bg(badge_bg),
-            )];
+            let mut badge_spans = vec![
+                Span::raw("  "),
+                Span::styled(
+                    badge,
+                    Style::default().fg(badge_fg).add_modifier(Modifier::BOLD),
+                ),
+            ];
             if let Some(ts) = &self.timestamp {
                 badge_spans.push(Span::styled(
-                    format!(" {ts}"),
+                    format!("  {ts}"),
                     Style::default().fg(theme.text_dim),
                 ));
             }
@@ -169,19 +165,12 @@ impl ChatMessage {
 
         // Tool call header (structured rendering)
         if let Some(info) = &self.tool_info {
-            let header = format!(
-                " {} {}",
-                if info.collapsed {
-                    "\u{25B6}"
-                } else {
-                    "\u{25BC}"
-                },
-                info.tool_name
-            );
+            let arrow = if info.collapsed { "\u{25B8}" } else { "\u{25BE}" };
             result.push(Line::from(vec![
+                Span::raw("  "),
                 Span::styled(
-                    header,
-                    Style::default().fg(theme.tool).add_modifier(Modifier::BOLD),
+                    format!("{arrow} {}", info.tool_name),
+                    Style::default().fg(theme.tool),
                 ),
                 Span::styled(
                     format!(" {}", info.arguments_summary),
@@ -190,14 +179,7 @@ impl ChatMessage {
             ]));
         }
 
-        // Content lines with message background
-        let content_style_base = if msg_bg == Color::Reset {
-            Style::default()
-        } else {
-            Style::default().bg(msg_bg)
-        };
-
-        // For collapsed tool calls with result, show only first line
+        // Content lines — 4-char left padding, no background color blocks
         let show_content = if let Some(info) = &self.tool_info {
             !info.collapsed || info.result_preview.is_none()
         } else {
@@ -206,29 +188,26 @@ impl ChatMessage {
 
         if show_content {
             for rendered_line in &self.lines {
-                let spans: Vec<Span<'_>> = rendered_line
-                    .segments
-                    .iter()
-                    .map(|seg| {
-                        let mut style = content_style_base.fg(convert_color(seg.color));
-                        if seg.bold {
-                            style = style.add_modifier(Modifier::BOLD);
-                        }
-                        if seg.italic {
-                            style = style.add_modifier(Modifier::ITALIC);
-                        }
-                        Span::styled(seg.text.as_str(), style)
-                    })
-                    .collect();
+                let mut spans: Vec<Span<'_>> = vec![Span::raw("    ")];
+                spans.extend(rendered_line.segments.iter().map(|seg| {
+                    let mut style = Style::default().fg(convert_color(seg.color));
+                    if seg.bold {
+                        style = style.add_modifier(Modifier::BOLD);
+                    }
+                    if seg.italic {
+                        style = style.add_modifier(Modifier::ITALIC);
+                    }
+                    Span::styled(seg.text.as_str(), style)
+                }));
                 result.push(Line::from(spans));
             }
         } else if let Some(info) = &self.tool_info
             && let Some(preview) = &info.result_preview
         {
-            result.push(Line::from(Span::styled(
-                preview.as_str(),
-                Style::default().fg(theme.text_dim),
-            )));
+            result.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(preview.as_str(), Style::default().fg(theme.text_dim)),
+            ]));
         }
 
         result
@@ -269,34 +248,22 @@ pub(crate) struct InputBox<'a> {
     pub input: &'a str,
     #[allow(dead_code)]
     pub cursor_pos: usize,
-    pub prompt: &'a str,
 }
 
 impl<'a> InputBox<'a> {
-    pub fn new(input: &'a str, cursor_pos: usize, prompt: &'a str) -> Self {
-        Self {
-            input,
-            cursor_pos,
-            prompt,
-        }
+    pub fn new(input: &'a str, cursor_pos: usize) -> Self {
+        Self { input, cursor_pos }
     }
 }
 
 impl Widget for InputBox<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = default_theme();
-        let block = Block::default()
-            .borders(Borders::TOP)
-            .border_style(Style::default().fg(theme.input_border))
-            .title(" input ")
-            .title_style(Style::default().fg(theme.input_border));
-        let inner = block.inner(area);
-        block.render(area, buf);
-
-        let prompt_span = Span::styled(self.prompt, Style::default().fg(theme.text_dim));
+        // Simple "> input_text" on a single line, no borders
+        let prompt_span = Span::styled("> ", Style::default().fg(theme.text_dim));
         let input_span = Span::styled(self.input, Style::default().fg(theme.text));
         let paragraph = Paragraph::new(Line::from(vec![prompt_span, input_span]));
-        paragraph.render(inner, buf);
+        paragraph.render(area, buf);
     }
 }
 
@@ -317,14 +284,41 @@ impl<'a> StatusBar<'a> {
 impl Widget for StatusBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = default_theme();
-        let style = Style::default()
-            .fg(theme.status_bar_fg)
-            .bg(theme.status_bar_bg);
-        // Fill entire area with background
-        for x in area.left()..area.right() {
-            buf[(x, area.top())].set_char(' ').set_style(style);
+        let style = Style::default().fg(theme.text_dim);
+        // Thin dim separator line with content
+        let sep = "\u{2500}"; // ─
+        let sep_line: String = sep.repeat(area.width as usize);
+        // Render separator as background
+        let paragraph = Paragraph::new(sep_line).style(Style::default().fg(theme.border));
+        paragraph.render(area, buf);
+        // Overlay the status content centered-ish
+        if !self.content.is_empty() {
+            let content = format!(" {} ", self.content);
+            let content_len = content.len() as u16;
+            let x = area.x + 1;
+            let max_w = area.width.saturating_sub(2);
+            let w = content_len.min(max_w);
+            if w > 0 {
+                let status_area = Rect::new(x, area.y, w, 1);
+                let status_p = Paragraph::new(content).style(style);
+                status_p.render(status_area, buf);
+            }
         }
-        let paragraph = Paragraph::new(format!("  {}", self.content)).style(style);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HintsBar — contextual keyboard shortcuts
+// ---------------------------------------------------------------------------
+
+pub(crate) struct HintsBar;
+
+impl Widget for HintsBar {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let theme = default_theme();
+        let dim = Style::default().fg(theme.text_dim);
+        let hints = " enter send \u{00B7} /help commands \u{00B7} ctrl-c quit";
+        let paragraph = Paragraph::new(hints).style(dim);
         paragraph.render(area, buf);
     }
 }
