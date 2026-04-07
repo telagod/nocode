@@ -555,6 +555,10 @@ pub enum ModelStreamEvent {
         tool_name: String,
         arguments_summary: String,
     },
+    /// Model is emitting thinking/reasoning content.
+    ThinkingDelta {
+        text: String,
+    },
 }
 
 impl ModelStreamEvent {
@@ -566,6 +570,7 @@ impl ModelStreamEvent {
             Self::Complete { .. } => "complete",
             Self::ToolUseStart { .. } => "tool_use_start",
             Self::ToolUseDone { .. } => "tool_use_done",
+            Self::ThinkingDelta { .. } => "thinking_delta",
         }
     }
 }
@@ -652,8 +657,10 @@ impl From<&ModelStreamEvent> for ModelStreamEventWire {
                 role: message.role.as_str().to_string(),
                 content: message.content.clone(),
             },
-            ModelStreamEvent::ToolUseStart { .. } | ModelStreamEvent::ToolUseDone { .. } => {
-                // Tool events don't have a wire representation — map to Delta placeholder
+            ModelStreamEvent::ToolUseStart { .. }
+            | ModelStreamEvent::ToolUseDone { .. }
+            | ModelStreamEvent::ThinkingDelta { .. } => {
+                // Tool/thinking events don't have a wire representation — map to Delta placeholder
                 Self::Delta {
                     text: String::new(),
                     sequence: 0,
@@ -865,7 +872,9 @@ impl ModelInvocation {
                 }
                 ModelStreamEvent::StreamError { .. } => stats.total_events += 0,
                 ModelStreamEvent::Complete { .. } => stats.completed = true,
-                ModelStreamEvent::ToolUseStart { .. } | ModelStreamEvent::ToolUseDone { .. } => {}
+                ModelStreamEvent::ToolUseStart { .. }
+                | ModelStreamEvent::ToolUseDone { .. }
+                | ModelStreamEvent::ThinkingDelta { .. } => {}
             }
         }
         stats
@@ -1598,6 +1607,8 @@ pub(crate) struct StreamingModelParser<'a> {
     tool_calls: Vec<ToolCallRequest>,
     /// Currently building tool_use block (id, name, partial JSON input).
     pending_tool: Option<(String, String, String)>,
+    /// Whether we are inside a thinking content block.
+    in_thinking_block: bool,
 }
 
 impl<'a> StreamingModelParser<'a> {
@@ -1615,6 +1626,7 @@ impl<'a> StreamingModelParser<'a> {
             cancelled: false,
             tool_calls: Vec::new(),
             pending_tool: None,
+            in_thinking_block: false,
         }
     }
 
@@ -1718,25 +1730,47 @@ impl<'a> StreamingModelParser<'a> {
             return Err(error);
         }
 
-        // Text delta
-        if let Some(delta) = payload
-            .get("delta")
-            .and_then(|delta| delta.get("text"))
-            .and_then(Value::as_str)
-            .filter(|delta| !delta.is_empty())
+        // Text delta (skip if inside thinking block — handled separately)
+        if !self.in_thinking_block
+            && let Some(delta) = payload
+                .get("delta")
+                .and_then(|delta| delta.get("text"))
+                .and_then(Value::as_str)
+                .filter(|delta| !delta.is_empty())
         {
             self.push_stream_delta(delta, stream);
             return Ok(());
         }
 
-        // Content block text
-        if let Some(block_text) = payload
-            .get("content_block")
-            .and_then(|block| block.get("text"))
-            .and_then(Value::as_str)
-            .filter(|delta| !delta.is_empty())
+        // Content block text (skip if inside thinking block)
+        if !self.in_thinking_block
+            && let Some(block_text) = payload
+                .get("content_block")
+                .and_then(|block| block.get("text"))
+                .and_then(Value::as_str)
+                .filter(|delta| !delta.is_empty())
         {
             self.push_stream_delta(block_text, stream);
+        }
+
+        // Thinking: content_block_start with type=thinking
+        if let Some(block) = payload.get("content_block")
+            && block.get("type").and_then(Value::as_str) == Some("thinking")
+        {
+            self.in_thinking_block = true;
+        }
+
+        // Thinking: delta with thinking text
+        if self.in_thinking_block
+            && let Some(thinking_text) = payload
+                .get("delta")
+                .and_then(|d| d.get("thinking"))
+                .and_then(Value::as_str)
+                .filter(|t| !t.is_empty())
+        {
+            stream.push(ModelStreamEvent::ThinkingDelta {
+                text: thinking_text.to_string(),
+            });
         }
 
         // Tool use: content_block_start with type=tool_use
@@ -1764,28 +1798,33 @@ impl<'a> StreamingModelParser<'a> {
 
         // Tool use: content_block_stop finalizes the pending tool
         let event_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
-        if event_type == "content_block_stop"
-            && let Some((id, name, input_json)) = self.pending_tool.take()
-        {
-            let arguments = parse_tool_arguments(&input_json);
-            let args_summary = arguments
-                .iter()
-                .map(|(k, v)| {
-                    let short = if v.len() > 40 { &v[..40] } else { v.as_str() };
-                    format!("{k}={short}")
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-            stream.push(ModelStreamEvent::ToolUseDone {
-                tool_id: id.clone(),
-                tool_name: name.clone(),
-                arguments_summary: args_summary,
-            });
-            self.tool_calls.push(ToolCallRequest {
-                id,
-                name,
-                arguments,
-            });
+        if event_type == "content_block_stop" {
+            // End thinking block if active
+            if self.in_thinking_block {
+                self.in_thinking_block = false;
+            }
+            // Finalize pending tool
+            if let Some((id, name, input_json)) = self.pending_tool.take() {
+                let arguments = parse_tool_arguments(&input_json);
+                let args_summary = arguments
+                    .iter()
+                    .map(|(k, v)| {
+                        let short = if v.len() > 40 { &v[..40] } else { v.as_str() };
+                        format!("{k}={short}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                stream.push(ModelStreamEvent::ToolUseDone {
+                    tool_id: id.clone(),
+                    tool_name: name.clone(),
+                    arguments_summary: args_summary,
+                });
+                self.tool_calls.push(ToolCallRequest {
+                    id,
+                    name,
+                    arguments,
+                });
+            }
         }
 
         Ok(())

@@ -23,6 +23,25 @@ use std::time::Duration;
 
 const LOG_LIMIT: usize = 256;
 
+/// Vim-style input mode for the TUI.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum InputMode {
+    /// Default mode — direct character input.
+    #[default]
+    Insert,
+    /// Vim normal mode — navigation and commands.
+    Normal,
+}
+
+impl InputMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Insert => "INSERT",
+            Self::Normal => "NORMAL",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum Overlay {
     #[default]
@@ -55,12 +74,18 @@ pub(crate) struct TuiApp {
     banner_info: WelcomeBannerInfo,
     /// Accumulated assistant text during streaming — rendered incrementally.
     streaming_text: String,
+    /// Accumulated thinking text during streaming.
+    streaming_thinking: String,
     /// Input history for Ctrl-P/N navigation.
     input_history: Vec<String>,
     /// Current position in history (-1 = current input, 0 = most recent).
     history_index: Option<usize>,
     /// Saved current input when navigating history.
     saved_input: String,
+    /// Vim input mode.
+    input_mode: InputMode,
+    /// Pending vim operator (e.g. 'd' waiting for motion).
+    vim_pending: Option<char>,
 }
 
 impl TuiApp {
@@ -81,9 +106,12 @@ impl TuiApp {
             show_banner: true,
             banner_info: WelcomeBannerInfo::default(),
             streaming_text: String::new(),
+            streaming_thinking: String::new(),
             input_history: Vec::new(),
             history_index: None,
             saved_input: String::new(),
+            input_mode: InputMode::Insert,
+            vim_pending: None,
         }
     }
 
@@ -136,6 +164,49 @@ impl TuiApp {
             self.chat_messages
                 .push(ChatMessage::new(ChatMessageKind::Assistant, lines));
             self.on_message_added();
+        }
+    }
+
+    /// Update the current streaming thinking message, or create one if none exists.
+    pub fn update_streaming_thinking(&mut self, accumulated_thinking: &str) {
+        let lines: Vec<crate::markdown_render::RenderedLine> = accumulated_thinking
+            .lines()
+            .map(|l| {
+                let mut rl = crate::markdown_render::RenderedLine::new();
+                rl.push(crate::markdown_render::LineSegment::new(
+                    l,
+                    crossterm::style::Color::DarkGrey,
+                ));
+                rl
+            })
+            .collect();
+        // Find the last thinking message and update it in-place
+        if let Some(last) = self.chat_messages.last_mut()
+            && last.kind == ChatMessageKind::Thinking
+        {
+            last.lines = lines;
+            self.invalidate_height_cache();
+            self.dirty = true;
+        } else {
+            // First thinking delta — create the message
+            self.chat_messages
+                .push(ChatMessage::new(ChatMessageKind::Thinking, lines));
+            self.on_message_added();
+        }
+    }
+
+    /// Toggle expand/collapse on all thinking blocks.
+    pub fn toggle_thinking_blocks(&mut self) {
+        let mut any = false;
+        for msg in &mut self.chat_messages {
+            if msg.kind == ChatMessageKind::Thinking {
+                msg.thinking_collapsed = !msg.thinking_collapsed;
+                any = true;
+            }
+        }
+        if any {
+            self.invalidate_height_cache();
+            self.dirty = true;
         }
     }
 
@@ -356,7 +427,12 @@ impl TuiApp {
         }
 
         // 4. Input line (bottom)
-        let input_widget = InputBox::new(&self.input, self.cursor_pos);
+        let mode_label = if self.input_mode == InputMode::Normal {
+            self.input_mode.label()
+        } else {
+            ""
+        };
+        let input_widget = InputBox::new(&self.input, self.cursor_pos).with_mode(mode_label);
         frame.render_widget(input_widget, chunks[3]);
 
         // Cursor position: multi-line aware
@@ -364,7 +440,13 @@ impl TuiApp {
         let cursor_line = text_before_cursor.chars().filter(|&c| c == '\n').count() as u16;
         let last_newline = text_before_cursor.rfind('\n').map_or(0, |p| p + 1);
         let line_text = &self.input[last_newline..self.cursor_pos];
-        let cursor_col = display_width_of(line_text) as u16 + 2; // +2 for "> " or "  "
+        // +2 for "> ", plus mode label width on first line
+        let mode_prefix_width = if cursor_line == 0 && !mode_label.is_empty() {
+            (mode_label.len() + 3) as u16 // "[NORMAL] " = label + "[] "
+        } else {
+            0
+        };
+        let cursor_col = display_width_of(line_text) as u16 + 2 + mode_prefix_width;
         let cursor_x = chunks[3].x + cursor_col;
         let cursor_y = chunks[3].y + cursor_line;
         frame.set_cursor_position((cursor_x, cursor_y));
@@ -478,6 +560,8 @@ impl TuiApp {
                     F1 / ?      Help overlay\n\
                     F3          Permission overlay\n\
                     Ctrl-C      Quit\n\
+                    Ctrl-T      Toggle theme\n\
+                    Ctrl-O      Toggle thinking blocks\n\
                     Up/Down     Scroll chat\n\
                     PgUp/PgDn   Scroll page\n\
                     Ctrl-L      Clear chat\n\
@@ -551,11 +635,20 @@ impl TuiApp {
         }
 
         match (key.code, key.modifiers) {
-            // Esc — clear input when idle
+            // Esc — Insert→Normal, or close overlay
             (KeyCode::Esc, _) => {
-                if !self.input.is_empty() {
+                if self.input_mode == InputMode::Insert {
+                    self.input_mode = InputMode::Normal;
+                    self.vim_pending = None;
+                    // Clamp cursor to last char (vim convention)
+                    if self.cursor_pos > 0 && self.cursor_pos >= self.input.len() {
+                        self.cursor_pos = prev_char_boundary(&self.input, self.input.len());
+                    }
+                    self.dirty = true;
+                } else if !self.input.is_empty() {
                     self.input.clear();
                     self.cursor_pos = 0;
+                    self.input_mode = InputMode::Insert;
                     self.dirty = true;
                 }
             }
@@ -601,6 +694,19 @@ impl TuiApp {
                 self.input.clear();
                 self.cursor_pos = 0;
                 self.dirty = true;
+            }
+            // Theme toggle
+            (KeyCode::Char('t'), KeyModifiers::CONTROL) => {
+                let variant = crate::tui_theme::toggle_theme();
+                let name = match variant {
+                    crate::tui_theme::ThemeVariant::Dark => "dark",
+                    crate::tui_theme::ThemeVariant::Light => "light",
+                };
+                self.push_system(&format!("theme: {name}"));
+            }
+            // Toggle thinking blocks expand/collapse
+            (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
+                self.toggle_thinking_blocks();
             }
             // History navigation
             (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
@@ -687,9 +793,13 @@ impl TuiApp {
             }
             // Character input (insert at char boundary, advance by char's byte len)
             (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
-                self.input.insert(self.cursor_pos, c);
-                self.cursor_pos += c.len_utf8();
-                self.dirty = true;
+                if self.input_mode == InputMode::Normal {
+                    self.handle_vim_normal(c);
+                } else {
+                    self.input.insert(self.cursor_pos, c);
+                    self.cursor_pos += c.len_utf8();
+                    self.dirty = true;
+                }
             }
             _ => {}
         }
@@ -743,7 +853,7 @@ impl TuiApp {
         let (command, _args) = cmd.split_once(' ').unwrap_or((cmd, ""));
         match command {
             "/help" | "/h" => {
-                self.push_system("Commands: /help /clear /status /model /quit");
+                self.push_system("Commands: /help /clear /status /model /sessions /resume /mcp /agents /quit");
                 self.push_system("Keys: Ctrl-C quit · Tab expand tool · Ctrl-L clear · Ctrl-P/N history");
             }
             "/clear" | "/c" => {
@@ -771,11 +881,382 @@ impl TuiApp {
             "/quit" | "/q" | "/exit" => {
                 self.push_system("bye");
             }
+            "/sessions" => {
+                let cwd = std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                let sessions = nocode_core::list_sessions(&cwd);
+                if sessions.is_empty() {
+                    self.push_system("no saved sessions");
+                } else {
+                    self.push_system(&format!("{} sessions:", sessions.len()));
+                    for sid in &sessions {
+                        self.push_system(&format!("  {sid}"));
+                    }
+                }
+            }
+            "/resume" => {
+                let cwd = std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                let session_id = _args.trim();
+                if session_id.is_empty() {
+                    self.push_system("usage: /resume <session-id>. Try /sessions to list.");
+                } else {
+                    let identity = nocode_core::SessionIdentity::new(session_id, &cwd);
+                    let entries = nocode_core::load_transcript(&identity);
+                    if entries.is_empty() {
+                        self.push_system(&format!("no transcript found for {session_id}"));
+                    } else {
+                        self.chat_messages.clear();
+                        self.invalidate_height_cache();
+                        for entry in &entries {
+                            let kind = match entry.role {
+                                nocode_core::transcript::TranscriptRole::Conversation => {
+                                    if entry.content.starts_with("user:") {
+                                        ChatMessageKind::User
+                                    } else {
+                                        ChatMessageKind::Assistant
+                                    }
+                                }
+                                nocode_core::transcript::TranscriptRole::ToolRequest
+                                | nocode_core::transcript::TranscriptRole::ToolResult
+                                | nocode_core::transcript::TranscriptRole::ToolMessage => {
+                                    ChatMessageKind::Tool
+                                }
+                                nocode_core::transcript::TranscriptRole::ToolProgress => {
+                                    ChatMessageKind::System
+                                }
+                            };
+                            self.chat_messages
+                                .push(ChatMessage::plain(kind, &entry.content));
+                        }
+                        self.push_system(&format!(
+                            "resumed session {session_id} ({} entries)",
+                            entries.len()
+                        ));
+                        self.sticky_scroll = true;
+                        self.chat_scroll = 0;
+                        self.show_banner = false;
+                        self.dirty = true;
+                    }
+                }
+            }
+            "/mcp" => {
+                let mgr = nocode_core::mcp_manager::global_mcp_manager();
+                let guard = mgr.lock().expect("mcp manager lock");
+                let servers = guard.list_servers();
+                if servers.is_empty() {
+                    self.push_system("no MCP servers configured");
+                } else {
+                    self.push_system(&format!("{} MCP servers:", servers.len()));
+                    for srv in &servers {
+                        let status = format!("{:?}", srv.status);
+                        let tools_count = srv.tools.len();
+                        let err = srv.error.as_deref().unwrap_or("");
+                        if err.is_empty() {
+                            self.push_system(&format!(
+                                "  {} · {} · {} tools",
+                                srv.name, status, tools_count
+                            ));
+                        } else {
+                            self.push_system(&format!(
+                                "  {} · {} · {} · {}",
+                                srv.name, status, tools_count, err
+                            ));
+                        }
+                        for tool in &srv.tools {
+                            self.push_system(&format!("    · {}: {}", tool.name, tool.description));
+                        }
+                    }
+                }
+            }
+            "/agents" => {
+                let registry = nocode_core::worker_boot::global_worker_registry();
+                let guard = registry.lock().expect("worker registry lock");
+                let workers = guard.list();
+                if workers.is_empty() {
+                    self.push_system("no agents running");
+                } else {
+                    self.push_system(&format!("{} agents:", workers.len()));
+                    for w in &workers {
+                        let status = format!("{:?}", w.status);
+                        let events = w.events.len();
+                        self.push_system(&format!("  {} · {} · {} events", w.id, status, events));
+                    }
+                }
+            }
             _ => {
                 self.push_system(&format!("unknown command: {command}. Try /help"));
             }
         }
         self.save_to_history(cmd);
+    }
+
+    /// Handle a key in vim Normal mode.
+    fn handle_vim_normal(&mut self, c: char) {
+        // Check for pending operator (e.g. 'd' waiting for motion)
+        if let Some(op) = self.vim_pending.take() {
+            match (op, c) {
+                ('d', 'd') => {
+                    // dd — delete entire line (clear input)
+                    self.input.clear();
+                    self.cursor_pos = 0;
+                    self.dirty = true;
+                }
+                _ => {
+                    // Unknown combo — ignore
+                }
+            }
+            return;
+        }
+
+        match c {
+            // -- Mode transitions --
+            'i' => {
+                self.input_mode = InputMode::Insert;
+                self.dirty = true;
+            }
+            'a' => {
+                // Append after cursor
+                if self.cursor_pos < self.input.len() {
+                    self.cursor_pos = next_char_boundary(&self.input, self.cursor_pos);
+                }
+                self.input_mode = InputMode::Insert;
+                self.dirty = true;
+            }
+            'I' => {
+                // Insert at line start
+                self.cursor_pos = 0;
+                self.input_mode = InputMode::Insert;
+                self.dirty = true;
+            }
+            'A' => {
+                // Append at line end
+                self.cursor_pos = self.input.len();
+                self.input_mode = InputMode::Insert;
+                self.dirty = true;
+            }
+            'o' => {
+                // Open line below (append newline + enter insert)
+                self.cursor_pos = self.input.len();
+                self.input.push('\n');
+                self.cursor_pos = self.input.len();
+                self.input_mode = InputMode::Insert;
+                self.dirty = true;
+            }
+            'O' => {
+                // Open line above (prepend newline + enter insert)
+                self.input.insert(0, '\n');
+                self.cursor_pos = 0;
+                self.input_mode = InputMode::Insert;
+                self.dirty = true;
+            }
+
+            // -- Motion --
+            'h' => {
+                if self.cursor_pos > 0 {
+                    self.cursor_pos = prev_char_boundary(&self.input, self.cursor_pos);
+                    self.dirty = true;
+                }
+            }
+            'l' => {
+                if self.cursor_pos < self.input.len() {
+                    let next = next_char_boundary(&self.input, self.cursor_pos);
+                    // In normal mode, don't go past last char
+                    if next < self.input.len() || self.input.is_empty() {
+                        self.cursor_pos = next;
+                    }
+                    self.dirty = true;
+                }
+            }
+            'j' => {
+                // Move to next line (find next \n, go to same column)
+                if let Some(nl) = self.input[self.cursor_pos..].find('\n') {
+                    let next_line_start = self.cursor_pos + nl + 1;
+                    let col = self.cursor_pos
+                        - self.input[..self.cursor_pos]
+                            .rfind('\n')
+                            .map_or(0, |p| p + 1);
+                    let next_line_end = self.input[next_line_start..]
+                        .find('\n')
+                        .map_or(self.input.len(), |p| next_line_start + p);
+                    self.cursor_pos = (next_line_start + col).min(next_line_end);
+                    // Ensure char boundary
+                    while self.cursor_pos < self.input.len()
+                        && !self.input.is_char_boundary(self.cursor_pos)
+                    {
+                        self.cursor_pos -= 1;
+                    }
+                    self.dirty = true;
+                }
+            }
+            'k' => {
+                // Move to previous line
+                let line_start = self.input[..self.cursor_pos]
+                    .rfind('\n')
+                    .map_or(0, |p| p + 1);
+                if line_start > 0 {
+                    let col = self.cursor_pos - line_start;
+                    let prev_line_start = self.input[..line_start - 1]
+                        .rfind('\n')
+                        .map_or(0, |p| p + 1);
+                    self.cursor_pos = (prev_line_start + col).min(line_start - 1);
+                    while self.cursor_pos > 0
+                        && !self.input.is_char_boundary(self.cursor_pos)
+                    {
+                        self.cursor_pos -= 1;
+                    }
+                    self.dirty = true;
+                }
+            }
+
+            // -- Word motion --
+            'w' => {
+                self.vim_word_forward();
+                self.dirty = true;
+            }
+            'b' => {
+                self.vim_word_backward();
+                self.dirty = true;
+            }
+            'e' => {
+                self.vim_word_end();
+                self.dirty = true;
+            }
+
+            // -- Line position --
+            '0' => {
+                // Go to line start
+                let line_start = self.input[..self.cursor_pos]
+                    .rfind('\n')
+                    .map_or(0, |p| p + 1);
+                self.cursor_pos = line_start;
+                self.dirty = true;
+            }
+            '$' => {
+                // Go to line end
+                let line_end = self.input[self.cursor_pos..]
+                    .find('\n')
+                    .map_or(self.input.len(), |p| self.cursor_pos + p);
+                self.cursor_pos = if line_end > 0 {
+                    prev_char_boundary(&self.input, line_end)
+                        .max(self.input[..self.cursor_pos]
+                            .rfind('\n')
+                            .map_or(0, |p| p + 1))
+                } else {
+                    0
+                };
+                self.dirty = true;
+            }
+
+            // -- Editing --
+            'x' => {
+                // Delete char under cursor
+                if self.cursor_pos < self.input.len() {
+                    let next = next_char_boundary(&self.input, self.cursor_pos);
+                    self.input.drain(self.cursor_pos..next);
+                    // Clamp cursor
+                    if self.cursor_pos >= self.input.len() && self.cursor_pos > 0 {
+                        self.cursor_pos = prev_char_boundary(&self.input, self.input.len());
+                    }
+                    self.dirty = true;
+                }
+            }
+            'd' => {
+                // Start pending operator
+                self.vim_pending = Some('d');
+            }
+            'C' => {
+                // Change to end of line — delete from cursor to EOL, enter insert
+                let line_end = self.input[self.cursor_pos..]
+                    .find('\n')
+                    .map_or(self.input.len(), |p| self.cursor_pos + p);
+                self.input.drain(self.cursor_pos..line_end);
+                self.input_mode = InputMode::Insert;
+                self.dirty = true;
+            }
+
+            // -- Undo-ish --
+            'u' => {
+                // Simple undo: clear all (no real undo buffer)
+                self.input.clear();
+                self.cursor_pos = 0;
+                self.dirty = true;
+            }
+
+            _ => {}
+        }
+    }
+
+    /// Vim `w` — move to start of next word.
+    fn vim_word_forward(&mut self) {
+        let bytes = self.input.as_bytes();
+        let len = self.input.len();
+        let mut pos = self.cursor_pos;
+        if pos >= len {
+            return;
+        }
+        // Skip current word chars
+        while pos < len && !bytes[pos].is_ascii_whitespace() {
+            pos = next_char_boundary(&self.input, pos);
+        }
+        // Skip whitespace
+        while pos < len && bytes[pos].is_ascii_whitespace() {
+            pos = next_char_boundary(&self.input, pos);
+        }
+        self.cursor_pos = pos.min(len);
+    }
+
+    /// Vim `b` — move to start of previous word.
+    fn vim_word_backward(&mut self) {
+        let bytes = self.input.as_bytes();
+        let mut pos = self.cursor_pos;
+        if pos == 0 {
+            return;
+        }
+        pos = prev_char_boundary(&self.input, pos);
+        // Skip whitespace backward
+        while pos > 0 && bytes[pos].is_ascii_whitespace() {
+            pos = prev_char_boundary(&self.input, pos);
+        }
+        // Skip word chars backward
+        while pos > 0 && !bytes[prev_char_boundary(&self.input, pos)].is_ascii_whitespace() {
+            pos = prev_char_boundary(&self.input, pos);
+        }
+        self.cursor_pos = pos;
+    }
+
+    /// Vim `e` — move to end of current/next word.
+    fn vim_word_end(&mut self) {
+        let bytes = self.input.as_bytes();
+        let len = self.input.len();
+        let mut pos = self.cursor_pos;
+        if pos >= len {
+            return;
+        }
+        pos = next_char_boundary(&self.input, pos);
+        // Skip whitespace
+        while pos < len && bytes[pos].is_ascii_whitespace() {
+            pos = next_char_boundary(&self.input, pos);
+        }
+        // Move to end of word
+        while pos < len
+            && pos + 1 < len
+            && !bytes[next_char_boundary(&self.input, pos)].is_ascii_whitespace()
+        {
+            pos = next_char_boundary(&self.input, pos);
+        }
+        self.cursor_pos = pos.min(len.saturating_sub(1));
+    }
+
+    /// Handle pasted text — insert at cursor, preserving newlines.
+    pub fn handle_paste(&mut self, text: &str) {
+        for c in text.chars() {
+            self.input.insert(self.cursor_pos, c);
+            self.cursor_pos += c.len_utf8();
+        }
+        self.dirty = true;
     }
 
     /// Save input to history (max 50 entries).
@@ -902,6 +1383,16 @@ pub(crate) fn run_app_loop(
             } else if line.starts_with("stream start:") {
                 // Internal event — don't display in chat, just dismiss banner
                 app.show_banner = false;
+            } else if line.starts_with("thinking delta:") {
+                let text = line.strip_prefix("thinking delta: ").unwrap_or(line);
+                // Remove spinner on first thinking delta
+                if app.streaming_thinking.is_empty() {
+                    app.chat_messages
+                        .retain(|m| m.kind != ChatMessageKind::Spinner);
+                    app.thinking_spinner = None;
+                }
+                app.streaming_thinking.push_str(text);
+                app.update_streaming_thinking(&app.streaming_thinking.clone());
             } else if line.starts_with("stream delta:") {
                 let text = line.strip_prefix("stream delta: ").unwrap_or(line);
                 // Remove spinner on first delta
@@ -925,10 +1416,12 @@ pub(crate) fn run_app_loop(
                     app.push_error(msg);
                 }
                 app.streaming_text.clear();
+                app.streaming_thinking.clear();
             } else if line.starts_with("stream complete:") {
                 // Finalize: if we have accumulated text, it's already rendered.
                 // Reset streaming state for next turn.
                 app.streaming_text.clear();
+                app.streaming_thinking.clear();
             } else {
                 // Filter out system prompt / bootstrap noise — only show short, meaningful lines
                 let dominated_by_noise = line.contains("] system:")
@@ -950,6 +1443,7 @@ pub(crate) fn run_app_loop(
                 app.update_streaming_assistant(&final_text);
                 app.streaming_text.clear();
             }
+            app.streaming_thinking.clear();
             // Remove spinner messages from chat history
             app.chat_messages
                 .retain(|m| m.kind != ChatMessageKind::Spinner);
@@ -989,6 +1483,7 @@ pub(crate) fn run_app_loop(
                                     .retain(|m| m.kind != ChatMessageKind::Spinner);
                                 app.thinking_spinner = None;
                                 app.streaming_text.clear();
+                                app.streaming_thinking.clear();
                                 app.push_system("cancelled");
                                 app.dirty = true;
                             }
@@ -1011,6 +1506,11 @@ pub(crate) fn run_app_loop(
                                 let _ = app.handle_overlay_key(key, session);
                             }
                         }
+                    }
+                }
+                Event::Paste(text) => {
+                    if engine_slot.is_some() {
+                        app.handle_paste(&text);
                     }
                 }
                 Event::Resize(_, _) => {

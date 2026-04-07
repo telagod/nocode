@@ -49,6 +49,8 @@ pub(crate) enum ChatMessageKind {
     Spinner,
     /// Inline permission prompt — waiting for user y/n/a.
     Permission,
+    /// Thinking/reasoning block — collapsible with Ctrl-O.
+    Thinking,
 }
 
 impl ChatMessageKind {
@@ -63,6 +65,7 @@ impl ChatMessageKind {
             Self::Tool => ("\u{25CF} ", theme.tool),          // ●
             Self::Spinner => ("\u{2234} ", theme.spinner),    // ∴
             Self::Permission => ("\u{26A0} ", theme.warning), // ⚠
+            Self::Thinking => ("\u{2234} ", theme.text_dim),  // ∴
         }
     }
 }
@@ -73,6 +76,8 @@ pub(crate) struct ChatMessage {
     pub lines: Vec<RenderedLine>,
     /// For Tool messages: structured tool call info.
     pub tool_info: Option<ToolCallInfo>,
+    /// For Thinking messages: whether content is collapsed.
+    pub thinking_collapsed: bool,
 }
 
 /// Structured tool call information for rendering.
@@ -108,6 +113,7 @@ impl ChatMessage {
             kind,
             lines,
             tool_info: None,
+            thinking_collapsed: true,
         }
     }
 
@@ -124,6 +130,7 @@ impl ChatMessage {
             kind,
             lines,
             tool_info: None,
+            thinking_collapsed: true,
         }
     }
 
@@ -134,6 +141,7 @@ impl ChatMessage {
             kind: ChatMessageKind::Tool,
             lines: result_lines,
             tool_info: Some(tool_info),
+            thinking_collapsed: true,
         }
     }
 
@@ -184,6 +192,53 @@ impl ChatMessage {
                     )];
                     spans.extend(rendered_line.segments.iter().map(|seg| {
                         Span::styled(seg.text.as_str(), Style::default().fg(convert_color(seg.color)))
+                    }));
+                    result.push(Line::from(spans));
+                }
+            }
+            return result;
+        }
+
+        // Thinking block: "∴ Thinking (N lines)" — collapsible with Ctrl-O
+        if matches!(self.kind, ChatMessageKind::Thinking) {
+            let line_count = self.lines.len();
+            if self.thinking_collapsed {
+                // Collapsed: show summary only
+                let summary = if line_count > 0 {
+                    // Show first ~60 chars of thinking as preview
+                    let first: String = self.lines.iter()
+                        .flat_map(|l| l.segments.iter().map(|s| s.text.as_str()))
+                        .collect::<String>();
+                    let preview = if first.chars().count() > 60 {
+                        let truncated: String = first.chars().take(59).collect();
+                        format!("{truncated}\u{2026}")
+                    } else {
+                        first
+                    };
+                    format!("Thinking ({line_count} lines): {preview}")
+                } else {
+                    String::from("Thinking...")
+                };
+                result.push(Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(prefix_color)),
+                    Span::styled(summary, Style::default().fg(theme.text_dim)),
+                ]));
+            } else {
+                // Expanded: show all thinking content
+                result.push(Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(prefix_color)),
+                    Span::styled(
+                        format!("Thinking ({line_count} lines)"),
+                        Style::default().fg(theme.text_dim),
+                    ),
+                ]));
+                for rendered_line in &self.lines {
+                    let mut spans: Vec<Span<'_>> = vec![Span::styled(
+                        "  \u{23BF} ",
+                        Style::default().fg(theme.border),
+                    )];
+                    spans.extend(rendered_line.segments.iter().map(|seg| {
+                        Span::styled(seg.text.as_str(), Style::default().fg(theme.text_dim))
                     }));
                     result.push(Line::from(spans));
                 }
@@ -267,11 +322,21 @@ pub(crate) struct InputBox<'a> {
     pub input: &'a str,
     #[allow(dead_code)]
     pub cursor_pos: usize,
+    pub mode_label: &'a str,
 }
 
 impl<'a> InputBox<'a> {
     pub fn new(input: &'a str, cursor_pos: usize) -> Self {
-        Self { input, cursor_pos }
+        Self {
+            input,
+            cursor_pos,
+            mode_label: "",
+        }
+    }
+
+    pub fn with_mode(mut self, label: &'a str) -> Self {
+        self.mode_label = label;
+        self
     }
 }
 
@@ -281,12 +346,37 @@ impl Widget for InputBox<'_> {
         // Multi-line: split by newlines, first line gets "> " prefix, rest get "  "
         let input_lines: Vec<&str> = self.input.split('\n').collect();
         let mut lines: Vec<Line<'_>> = Vec::with_capacity(input_lines.len());
+
+        // Mode label prefix for first line (e.g. "[NORMAL] > ")
+        let mode_prefix = if self.mode_label.is_empty() {
+            String::new()
+        } else {
+            format!("[{}] ", self.mode_label)
+        };
+
         for (i, line_text) in input_lines.iter().enumerate() {
-            let prefix = if i == 0 { "> " } else { "  " };
-            lines.push(Line::from(vec![
-                Span::styled(prefix, Style::default().fg(theme.text_dim)),
-                Span::styled(*line_text, Style::default().fg(theme.text)),
-            ]));
+            if i == 0 {
+                let mut spans = Vec::new();
+                if !mode_prefix.is_empty() {
+                    let mode_color = if self.mode_label == "NORMAL" {
+                        theme.claude
+                    } else {
+                        theme.success
+                    };
+                    spans.push(Span::styled(
+                        mode_prefix.clone(),
+                        Style::default().fg(mode_color).add_modifier(Modifier::BOLD),
+                    ));
+                }
+                spans.push(Span::styled("> ", Style::default().fg(theme.text_dim)));
+                spans.push(Span::styled(*line_text, Style::default().fg(theme.text)));
+                lines.push(Line::from(spans));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled("  ", Style::default().fg(theme.text_dim)),
+                    Span::styled(*line_text, Style::default().fg(theme.text)),
+                ]));
+            }
         }
         let paragraph = Paragraph::new(lines);
         paragraph.render(area, buf);
@@ -343,7 +433,7 @@ impl Widget for HintsBar {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = default_theme();
         let dim = Style::default().fg(theme.text_dim);
-        let hints = " enter send \u{00B7} /help commands \u{00B7} ctrl-c quit";
+        let hints = " enter send \u{00B7} /help commands \u{00B7} ctrl-t theme \u{00B7} ctrl-c quit";
         let paragraph = Paragraph::new(hints).style(dim);
         paragraph.render(area, buf);
     }

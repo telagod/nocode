@@ -11,6 +11,7 @@ use crate::query_engine::ThinkingMode;
 use crate::sandbox::{FilesystemIsolationMode, SandboxRequest, resolve_sandbox_status};
 use crate::task_runtime::{InProcessAgentHost, TaskAgentHost, TaskId};
 use crate::tool_registry::ToolRuntimeMode;
+use crate::worker_boot::{WorkerEventKind, global_worker_registry};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -809,40 +810,57 @@ impl<H: ToolHost> DefaultToolExecutor<H> {
             stream_model_responses: false,
         };
 
-        let mut host = InProcessAgentHost::new(agent_config);
-        let task_id = TaskId::new("a", 1);
+        // Register worker in global registry
+        let worker_id = format!("agent-{agent_id}");
+        {
+            let registry = global_worker_registry();
+            let mut guard = registry.lock().expect("worker registry lock");
+            guard.create(&worker_id);
+        }
 
-        match host.run_agent(&task_id, &agent_id, &prompt) {
-            Ok(step) => {
-                let summary = format!(
-                    "agent {agent_id} completed: {} tool uses, {} tokens",
-                    step.tool_use_delta, step.token_delta
-                );
-                ToolExecutionTrace {
-                    progress_updates: vec![progress],
-                    result: ToolPermissionDecision::allow(false).settle(
-                        call.clone(),
-                        ToolCallOutput {
-                            summary,
-                            generated_messages: vec![QueryMessage::assistant(format!(
-                                "agent {agent_id} result: retrieved={}",
-                                step.retrieved
-                            ))],
-                            context_label: Some(call.context_label.clone()),
-                            progress_updates: vec![ToolProgressUpdate::new(
-                                call.tool_use_id,
-                                "agent complete",
-                            )],
-                        },
-                    ),
-                    permission_denial: None,
+        // Spawn agent on background thread for parallel execution
+        let worker_id_clone = worker_id.clone();
+        std::thread::spawn(move || {
+            // Transition to Running
+            {
+                let registry = global_worker_registry();
+                let mut guard = registry.lock().expect("worker registry lock");
+                if let Some(w) = guard.get_mut(&worker_id_clone) {
+                    w.emit_event(WorkerEventKind::Running);
                 }
             }
-            Err(error) => ToolExecutionTrace {
-                progress_updates: vec![progress],
-                result: ToolCallResult::failed(call, error),
-                permission_denial: None,
-            },
+
+            let mut host = InProcessAgentHost::new(agent_config);
+            let task_id = TaskId::new("a", 1);
+            let _result = host.run_agent(&task_id, &worker_id_clone, &prompt);
+
+            // Mark worker as finished
+            let registry = global_worker_registry();
+            let mut guard = registry.lock().expect("worker registry lock");
+            if let Some(w) = guard.get_mut(&worker_id_clone) {
+                w.emit_event(WorkerEventKind::Finished);
+            }
+        });
+
+        // Return immediately with spawn confirmation
+        let summary = format!("agent {agent_id} spawned (worker: {worker_id})");
+        ToolExecutionTrace {
+            progress_updates: vec![progress],
+            result: ToolPermissionDecision::allow(false).settle(
+                call.clone(),
+                ToolCallOutput {
+                    summary,
+                    generated_messages: vec![QueryMessage::assistant(format!(
+                        "agent {agent_id} spawned in background"
+                    ))],
+                    context_label: Some(call.context_label.clone()),
+                    progress_updates: vec![ToolProgressUpdate::new(
+                        call.tool_use_id,
+                        format!("agent {agent_id} running"),
+                    )],
+                },
+            ),
+            permission_denial: None,
         }
     }
 

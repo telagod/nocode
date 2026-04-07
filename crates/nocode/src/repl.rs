@@ -1147,6 +1147,9 @@ impl ReplSession {
                 } => {
                     lines.push(format!("tool done: {tool_name} {arguments_summary}"));
                 }
+                ModelStreamEvent::ThinkingDelta { text } => {
+                    lines.push(format!("thinking delta: {text}"));
+                }
             }
         }
 
@@ -3192,6 +3195,9 @@ impl<W: Write> ModelStreamSink for ReplLiveStreamCapture<'_, W> {
                 ..
             } => {
                 format!("tool done: {tool_name} {arguments_summary}")
+            }
+            ModelStreamEvent::ThinkingDelta { text } => {
+                format!("thinking delta: {text}")
             }
         };
         self.push_line(line);

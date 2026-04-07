@@ -128,7 +128,7 @@ pub use session_compaction::{
 pub use session_control::{SessionCheckpoint, SessionControl, SessionMetadata, SessionStatus};
 pub use session_persistence::{
     ReadFileCacheState, SessionIdentity, SessionPersistenceConfig, SessionPersistencePlan,
-    SessionPersistenceState, SessionResumePlan,
+    SessionPersistenceState, SessionResumePlan, list_sessions, load_transcript, persist_transcript,
 };
 pub use sql_store::{CommandRow, SqlStore, TaskEventRow, TaskRow, global_sql_store};
 pub use stop_hook::{StopHookInfo, StopHookResult};

@@ -1,11 +1,19 @@
 use ratatui::style::Color;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
+
+/// Which theme variant is active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeVariant {
+    Dark,
+    Light,
+}
 
 /// Centralized theme for the nocode TUI.
 ///
 /// All semantic colors live here so every widget draws from one palette.
-/// Currently only `dark()` exists — theme switching can be added later.
+#[derive(Clone)]
 pub struct Theme {
+    pub variant: ThemeVariant,
     // Role colors
     pub claude: Color,
     pub user: Color,
@@ -59,6 +67,7 @@ impl Theme {
     /// The default dark theme with all semantic colors defined.
     pub fn dark() -> Self {
         Self {
+            variant: ThemeVariant::Dark,
             claude: Color::Rgb(255, 149, 0),
             user: Color::Green,
             assistant: Color::Cyan,
@@ -101,6 +110,52 @@ impl Theme {
         }
     }
 
+    /// Light theme — high contrast on white/light backgrounds.
+    pub fn light() -> Self {
+        Self {
+            variant: ThemeVariant::Light,
+            claude: Color::Rgb(200, 100, 0),
+            user: Color::Rgb(0, 120, 0),
+            assistant: Color::Rgb(0, 100, 140),
+            error: Color::Rgb(180, 0, 0),
+            warning: Color::Rgb(180, 140, 0),
+            tool: Color::Rgb(140, 100, 0),
+            system: Color::Gray,
+            success: Color::Rgb(0, 140, 0),
+
+            border: Color::Gray,
+            text: Color::Black,
+            text_dim: Color::DarkGray,
+            text_inactive: Color::Gray,
+            background: Color::Reset,
+
+            user_msg_bg: Color::Rgb(230, 245, 230),
+            assistant_msg_bg: Color::Reset,
+            error_msg_bg: Color::Rgb(255, 230, 230),
+
+            status_bar_bg: Color::Rgb(230, 230, 240),
+            status_bar_fg: Color::Black,
+
+            input_border: Color::Rgb(160, 160, 180),
+
+            spinner: Color::Rgb(200, 100, 0),
+
+            diff_added: Color::Rgb(0, 140, 0),
+            diff_removed: Color::Rgb(180, 0, 0),
+
+            badge_user_bg: Color::Rgb(0, 120, 0),
+            badge_user_fg: Color::White,
+            badge_assistant_bg: Color::Rgb(0, 100, 140),
+            badge_assistant_fg: Color::White,
+            badge_tool_bg: Color::Rgb(140, 100, 0),
+            badge_tool_fg: Color::White,
+            badge_error_bg: Color::Rgb(180, 0, 0),
+            badge_error_fg: Color::White,
+            badge_system_bg: Color::Gray,
+            badge_system_fg: Color::White,
+        }
+    }
+
     /// Returns `(background, foreground)` for a message-kind badge.
     pub fn badge_style(&self, kind: &str) -> (Color, Color) {
         match kind {
@@ -120,10 +175,39 @@ impl Default for Theme {
     }
 }
 
-/// Global singleton access to the default theme.
-pub fn default_theme() -> &'static Theme {
-    static THEME: OnceLock<Theme> = OnceLock::new();
-    THEME.get_or_init(Theme::dark)
+/// Global theme storage — `RwLock` allows runtime switching.
+static THEME: OnceLock<RwLock<Theme>> = OnceLock::new();
+
+fn theme_lock() -> &'static RwLock<Theme> {
+    THEME.get_or_init(|| RwLock::new(Theme::dark()))
+}
+
+/// Read-access to the current theme. Returns a snapshot copy to avoid holding the lock.
+pub fn default_theme() -> Theme {
+    theme_lock().read().expect("theme lock poisoned").clone()
+}
+
+/// Toggle between dark and light themes. Returns the new variant.
+pub fn toggle_theme() -> ThemeVariant {
+    let mut guard = theme_lock().write().expect("theme lock poisoned");
+    let new = match guard.variant {
+        ThemeVariant::Dark => Theme::light(),
+        ThemeVariant::Light => Theme::dark(),
+    };
+    let variant = new.variant;
+    *guard = new;
+    variant
+}
+
+/// Set a specific theme variant.
+pub fn set_theme(variant: ThemeVariant) {
+    let mut guard = theme_lock().write().expect("theme lock poisoned");
+    if guard.variant != variant {
+        *guard = match variant {
+            ThemeVariant::Dark => Theme::dark(),
+            ThemeVariant::Light => Theme::light(),
+        };
+    }
 }
 
 #[cfg(test)]
@@ -149,13 +233,39 @@ mod tests {
     }
 
     #[test]
-    fn default_theme_returns_consistent_singleton() {
+    fn default_theme_returns_consistent_values() {
         let a = default_theme();
         let b = default_theme();
-        // Same static reference.
-        assert!(std::ptr::eq(a, b));
-        // Spot-check a value.
+        // Same variant and colors.
+        assert_eq!(a.variant, b.variant);
         assert_eq!(a.claude, Color::Rgb(255, 149, 0));
+    }
+
+    #[test]
+    fn light_theme_has_all_colors_defined() {
+        let theme = Theme::light();
+        assert_eq!(theme.variant, ThemeVariant::Light);
+        assert_ne!(theme.claude, Color::Reset);
+        assert_ne!(theme.user, Color::Reset);
+        assert_ne!(theme.text, Color::Reset);
+        assert_eq!(theme.text, Color::Black);
+        assert_eq!(theme.background, Color::Reset);
+        assert_eq!(theme.assistant_msg_bg, Color::Reset);
+    }
+
+    #[test]
+    fn toggle_theme_switches_variant() {
+        // Reset to dark first
+        set_theme(ThemeVariant::Dark);
+        assert_eq!(default_theme().variant, ThemeVariant::Dark);
+
+        let v = toggle_theme();
+        assert_eq!(v, ThemeVariant::Light);
+        assert_eq!(default_theme().variant, ThemeVariant::Light);
+
+        let v = toggle_theme();
+        assert_eq!(v, ThemeVariant::Dark);
+        assert_eq!(default_theme().variant, ThemeVariant::Dark);
     }
 
     #[test]

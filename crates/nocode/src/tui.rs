@@ -2,6 +2,7 @@
 
 use crate::repl::ReplSession;
 use crossterm::cursor::{Hide, Show};
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -20,13 +21,32 @@ pub(crate) fn run_tui() -> io::Result<()> {
     // Terminal setup
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, Hide)?;
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste, Hide)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     // Session setup
     let config = crate::bootstrap_config();
     crate::wire_task_coordinator(&config.session_id);
+
+    // MCP server startup — register and connect servers from config
+    {
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let runtime_config = nocode_core::config_loader::load_runtime_config(&cwd);
+        if !runtime_config.mcp_servers.is_empty() {
+            let mgr = nocode_core::mcp_manager::global_mcp_manager();
+            let mut guard = mgr.lock().expect("mcp manager lock");
+            for (name, srv) in &runtime_config.mcp_servers {
+                guard.register_server(name, &srv.command, srv.args.clone());
+                if let Err(e) = guard.connect(name) {
+                    eprintln!("MCP server '{name}' failed to connect: {e}");
+                }
+            }
+        }
+    }
+
     let mut engine: Option<QueryEngine> = Some(QueryEngine::new(config));
     let mut session = ReplSession::new("nocode");
     session.set_tui_mode(true);
@@ -43,7 +63,7 @@ pub(crate) fn run_tui() -> io::Result<()> {
 
     // Cleanup
     disable_raw_mode()?;
-    execute!(io::stdout(), Show, LeaveAlternateScreen)?;
+    execute!(io::stdout(), Show, DisableBracketedPaste, LeaveAlternateScreen)?;
 
     result
 }

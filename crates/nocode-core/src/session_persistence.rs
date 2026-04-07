@@ -1,5 +1,6 @@
 use crate::file_history::FileHistoryPlan;
 use crate::history_store::HistoryStorePlan;
+use crate::transcript::TranscriptEntry;
 use std::fs;
 use std::path::Path;
 
@@ -249,6 +250,59 @@ pub fn load_persisted_tasks(identity: &SessionIdentity) -> Vec<PersistedTaskReco
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Transcript persistence
+// ---------------------------------------------------------------------------
+
+/// Append transcript entries to the session's transcript JSONL file.
+pub fn persist_transcript(identity: &SessionIdentity, entries: &[TranscriptEntry]) {
+    let path = identity.transcript_path();
+    let dir = Path::new(&path).parent();
+    if let Some(dir) = dir {
+        let _ = fs::create_dir_all(dir);
+    }
+    let Ok(mut f) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    else {
+        return;
+    };
+    use std::io::Write;
+    for entry in entries {
+        if let Ok(line) = serde_json::to_string(entry) {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+}
+
+/// Load all transcript entries from the session's transcript JSONL file.
+pub fn load_transcript(identity: &SessionIdentity) -> Vec<TranscriptEntry> {
+    let path = identity.transcript_path();
+    let Ok(content) = fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    content
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect()
+}
+
+/// List all session IDs that have transcript files in the project.
+pub fn list_sessions(project_root: &str) -> Vec<String> {
+    let dir = Path::new(project_root).join(SESSION_DIR);
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.strip_suffix(".jsonl").map(String::from)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -397,5 +451,85 @@ mod tests {
         assert_eq!(state.history_entries, 2);
         assert_eq!(state.transcript_messages, 9);
         assert_eq!(state.transcript_entries, 9);
+    }
+
+    #[test]
+    fn transcript_roundtrip_persist_and_load() {
+        use super::{load_transcript, persist_transcript};
+        use crate::transcript::{TranscriptEntry, TranscriptRole};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().to_string_lossy().into_owned();
+        let identity = SessionIdentity::new("test-session", &root);
+
+        let entries = vec![
+            TranscriptEntry::new(1, TranscriptRole::Conversation, "user: hello"),
+            TranscriptEntry::new(1, TranscriptRole::Conversation, "assistant: hi there"),
+            TranscriptEntry::new(2, TranscriptRole::ToolRequest, "Read file.rs"),
+            TranscriptEntry::new(2, TranscriptRole::ToolResult, "contents of file.rs"),
+        ];
+
+        persist_transcript(&identity, &entries);
+
+        let loaded = load_transcript(&identity);
+        assert_eq!(loaded.len(), 4);
+        assert_eq!(loaded[0].turn, 1);
+        assert_eq!(loaded[0].role, TranscriptRole::Conversation);
+        assert_eq!(loaded[0].content, "user: hello");
+        assert_eq!(loaded[2].role, TranscriptRole::ToolRequest);
+        assert_eq!(loaded[3].content, "contents of file.rs");
+    }
+
+    #[test]
+    fn transcript_append_adds_to_existing() {
+        use super::{load_transcript, persist_transcript};
+        use crate::transcript::{TranscriptEntry, TranscriptRole};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().to_string_lossy().into_owned();
+        let identity = SessionIdentity::new("append-session", &root);
+
+        let batch1 = vec![
+            TranscriptEntry::new(1, TranscriptRole::Conversation, "first"),
+        ];
+        persist_transcript(&identity, &batch1);
+
+        let batch2 = vec![
+            TranscriptEntry::new(2, TranscriptRole::Conversation, "second"),
+        ];
+        persist_transcript(&identity, &batch2);
+
+        let loaded = load_transcript(&identity);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].content, "first");
+        assert_eq!(loaded[1].content, "second");
+    }
+
+    #[test]
+    fn load_transcript_returns_empty_for_missing_file() {
+        use super::load_transcript;
+
+        let identity = SessionIdentity::new("nonexistent", "/tmp/nocode-test-missing");
+        let loaded = load_transcript(&identity);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn list_sessions_finds_transcript_files() {
+        use super::{list_sessions, persist_transcript};
+        use crate::transcript::{TranscriptEntry, TranscriptRole};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().to_string_lossy().into_owned();
+
+        // Create two sessions
+        let id1 = SessionIdentity::new("sess-aaa", &root);
+        let id2 = SessionIdentity::new("sess-bbb", &root);
+        persist_transcript(&id1, &[TranscriptEntry::new(1, TranscriptRole::Conversation, "a")]);
+        persist_transcript(&id2, &[TranscriptEntry::new(1, TranscriptRole::Conversation, "b")]);
+
+        let mut sessions = list_sessions(&root);
+        sessions.sort();
+        assert_eq!(sessions, vec!["sess-aaa", "sess-bbb"]);
     }
 }
