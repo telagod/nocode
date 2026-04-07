@@ -21,7 +21,7 @@ use crate::tool_execution::{
     ToolCallOutput, ToolCallResult, ToolExecutionRequest, ToolExecutionTrace, ToolExecutor,
 };
 pub(super) use crate::tool_registry::{ToolPermissionContext, ToolRuntimeMode};
-use crate::transcript::TranscriptRole;
+use crate::transcript::{TranscriptEntry, TranscriptRole};
 use serde_json::json;
 use std::io;
 
@@ -33,6 +33,7 @@ pub(super) struct RecordingPersistenceBackend {
     pub history_persisted: bool,
     pub file_history_persisted: bool,
     pub finalized: bool,
+    pub incremental_transcript_entries: Vec<TranscriptEntry>,
 }
 
 #[derive(Default)]
@@ -97,6 +98,11 @@ impl PersistenceBackend for RecordingPersistenceBackend {
 
     fn finalize(&mut self, _plan: &crate::session_persistence::SessionPersistencePlan) {
         self.finalized = true;
+    }
+
+    fn append_transcript_entries(&mut self, entries: &[TranscriptEntry]) -> usize {
+        self.incremental_transcript_entries.extend_from_slice(entries);
+        entries.len()
     }
 }
 

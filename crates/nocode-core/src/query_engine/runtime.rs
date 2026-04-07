@@ -152,6 +152,9 @@ pub(super) fn submit_message_with_runtime_and_stream(
     });
     record_step(&mut steps, "bind-tool-context", &initial_outcome);
 
+    // Incremental persistence: flush initial transcript entries (system prompt + user message)
+    flush_incremental_transcript(&mut runner, persistence_backend);
+
     let mut outcome = initial_outcome;
     for tool_call in engine.bootstrap_tool_calls(&tool_pool) {
         requested_tools.push(tool_call.clone());
@@ -174,6 +177,9 @@ pub(super) fn submit_message_with_runtime_and_stream(
             &mut outcome,
         );
         // Bootstrap tools don't stream results
+
+        // Incremental persistence: flush bootstrap tool entries
+        flush_incremental_transcript(&mut runner, persistence_backend);
 
         if matches!(outcome, QueryLoopOutcome::Terminal(_)) {
             break;
@@ -269,6 +275,9 @@ pub(super) fn submit_message_with_runtime_and_stream(
                     record_step(&mut steps, "call-model", &outcome);
                     model_invocation = Some(invocation);
 
+                    // Incremental persistence: flush assistant message entry
+                    flush_incremental_transcript(&mut runner, persistence_backend);
+
                     // If model requested tool calls, execute them.
                     if !model_tool_calls.is_empty()
                         && matches!(outcome, QueryLoopOutcome::Continue(_))
@@ -300,6 +309,9 @@ pub(super) fn submit_message_with_runtime_and_stream(
                                 push_tool_result_to_stream(&mut stream, last_result);
                             }
 
+                            // Incremental persistence: flush tool result entries
+                            flush_incremental_transcript(&mut runner, persistence_backend);
+
                             if matches!(outcome, QueryLoopOutcome::Terminal(_)) {
                                 break;
                             }
@@ -310,6 +322,9 @@ pub(super) fn submit_message_with_runtime_and_stream(
                         {
                             outcome = runner.apply(QueryLoopAction::FlushToolBatch);
                             record_step(&mut steps, "flush-model-tool-batch", &outcome);
+
+                            // Incremental persistence: flush turn boundary entries
+                            flush_incremental_transcript(&mut runner, persistence_backend);
                         }
                         // Loop back to call model again with tool results
                         continue;
@@ -425,6 +440,16 @@ pub(super) fn submit_message_with_runtime_and_stream(
         session_persistence,
         persistence_dispatch,
         loop_outcome: outcome,
+    }
+}
+
+fn flush_incremental_transcript(
+    runner: &mut QueryLoopRunner,
+    backend: &mut impl PersistenceBackend,
+) {
+    let pending = runner.drain_unflushed_transcript_entries();
+    if !pending.is_empty() {
+        backend.append_transcript_entries(pending);
     }
 }
 

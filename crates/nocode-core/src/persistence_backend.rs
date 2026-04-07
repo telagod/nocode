@@ -1,7 +1,7 @@
 use crate::file_history::FileHistoryPlan;
 use crate::history_store::{HistoryEntry, HistoryStorePlan};
 use crate::session_persistence::{SessionPersistencePlan, SessionResumePlan};
-use crate::transcript::TranscriptRole;
+use crate::transcript::{TranscriptEntry, TranscriptRole};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -177,6 +177,10 @@ pub trait PersistenceBackend: Send + Sync {
 
     /// Finalize persistence for this turn (optional additional metadata).
     fn finalize(&mut self, plan: &SessionPersistencePlan);
+
+    /// Append transcript entries incrementally (JSONL format) for crash safety.
+    /// Returns the number of entries appended.
+    fn append_transcript_entries(&mut self, entries: &[TranscriptEntry]) -> usize;
 }
 
 pub trait PersistenceReader: Send + Sync {
@@ -214,6 +218,10 @@ impl PersistenceBackend for NoopPersistenceBackend {
     }
 
     fn finalize(&mut self, _: &SessionPersistencePlan) {}
+
+    fn append_transcript_entries(&mut self, _entries: &[TranscriptEntry]) -> usize {
+        0
+    }
 }
 
 impl PersistenceReader for NoopPersistenceReader {
@@ -274,6 +282,26 @@ impl PersistenceBackend for LocalPersistenceBackend {
     }
 
     fn finalize(&mut self, _: &SessionPersistencePlan) {}
+
+    fn append_transcript_entries(&mut self, entries: &[TranscriptEntry]) -> usize {
+        if entries.is_empty() {
+            return 0;
+        }
+        let lines: Vec<String> = entries
+            .iter()
+            .filter_map(|entry| serde_json::to_string(entry).ok())
+            .collect();
+        ensure_parent_dir(self.transcript_path.as_path());
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.transcript_path.as_path())
+            .expect("transcript persistence target should be writable");
+        for line in &lines {
+            writeln!(file, "{line}").expect("transcript persistence should append line");
+        }
+        lines.len()
+    }
 }
 
 impl PersistenceReader for LocalPersistenceBackend {
@@ -284,7 +312,17 @@ impl PersistenceReader for LocalPersistenceBackend {
         read_lines(plan.transcript_path.as_deref()).map(|lines| {
             lines
                 .iter()
-                .filter_map(|line| parse_transcript_entry(line))
+                .filter_map(|line| {
+                    // Try JSONL first (new incremental format), fall back to TSV (legacy)
+                    serde_json::from_str::<TranscriptEntry>(line)
+                        .ok()
+                        .map(|entry| PersistedTranscriptEntry {
+                            turn: entry.turn,
+                            role: entry.role,
+                            content: entry.content,
+                        })
+                        .or_else(|| parse_transcript_entry(line))
+                })
                 .collect()
         })
     }

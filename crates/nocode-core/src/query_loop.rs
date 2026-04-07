@@ -3,7 +3,7 @@ use crate::message::QueryMessage;
 use crate::provider::ModelError;
 use crate::stop_hook::StopHookResult;
 use crate::tool_execution::{ToolCallInput, ToolCallResult, ToolProgressUpdate};
-use crate::transcript::{QueryTranscript, TranscriptRole};
+use crate::transcript::{QueryTranscript, TranscriptEntry, TranscriptRole};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +108,7 @@ pub struct QueryLoopState {
     pub token_budget_decision: Option<TokenBudgetDecision>,
     pub last_stop_hook_result: Option<StopHookResult>,
     pub transcript: QueryTranscript,
+    pub transcript_flushed_index: usize,
     pub turn_count: u32,
     pub transition: Option<QueryLoopContinueReason>,
 }
@@ -136,6 +137,7 @@ impl QueryLoopState {
             token_budget_decision: None,
             last_stop_hook_result: None,
             transcript: QueryTranscript::from_messages(&transcript_messages, 1),
+            transcript_flushed_index: 0,
             turn_count: 1,
             transition: None,
         }
@@ -213,6 +215,15 @@ impl QueryLoopRunner {
 
     pub fn into_state(self) -> QueryLoopState {
         self.state
+    }
+
+    /// Returns transcript entries that have not yet been flushed to disk,
+    /// and advances the flushed index so the same entries are not returned twice.
+    pub fn drain_unflushed_transcript_entries(&mut self) -> &[TranscriptEntry] {
+        let start = self.state.transcript_flushed_index;
+        let end = self.state.transcript.entries.len();
+        self.state.transcript_flushed_index = end;
+        &self.state.transcript.entries[start..end]
     }
 
     fn advance_to_next_turn(&mut self, next_messages: Vec<QueryMessage>) -> QueryLoopOutcome {
