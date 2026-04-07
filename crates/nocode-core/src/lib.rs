@@ -5,6 +5,7 @@ pub mod message;
 pub mod prompt;
 pub mod provider;
 pub mod query;
+pub mod recovery;
 pub mod session;
 pub mod storage;
 pub mod tool;

@@ -15,6 +15,7 @@ pub mod read;
 pub mod task_tools;
 pub mod team_tools;
 pub mod tool_validation;
+pub mod trust;
 pub mod web;
 pub mod write;
 
