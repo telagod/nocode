@@ -547,6 +547,14 @@ impl Widget for WelcomeBanner<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = default_theme();
 
+        // Clear the entire area to prevent render overlap with previous screen content
+        let bg_style = Style::default().bg(theme.background);
+        for y in area.y..area.y + area.height {
+            for x in area.x..area.x + area.width {
+                buf[(x, y)].set_style(bg_style).set_symbol(" ");
+            }
+        }
+
         let box_w = area.width.clamp(30, 60);
         let box_h: u16 = 12;
         let x = area.x + (area.width.saturating_sub(box_w)) / 2;
