@@ -323,6 +323,8 @@ impl TuiApp {
     pub fn draw(&mut self, frame: &mut Frame, session: &ReplSession) {
         let is_busy = self.thinking_spinner.is_some();
         let hints_height = if is_busy { 0 } else { 1 };
+        // Dynamic input height: 1 line base + newlines, max 5
+        let input_lines = (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).min(5);
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -330,7 +332,7 @@ impl TuiApp {
                 Constraint::Min(4),                    // chat area / banner (top, fills)
                 Constraint::Length(1),                  // status line
                 Constraint::Length(hints_height),       // keyboard hints (hidden when busy)
-                Constraint::Length(1),                  // input line
+                Constraint::Length(input_lines),        // input (dynamic height)
             ])
             .split(frame.area());
 
@@ -357,10 +359,14 @@ impl TuiApp {
         let input_widget = InputBox::new(&self.input, self.cursor_pos);
         frame.render_widget(input_widget, chunks[3]);
 
-        // Cursor position: "> " prefix = 2 chars, then display width of text before cursor
-        let display_width = display_width_of(&self.input[..self.cursor_pos]);
-        let cursor_x = chunks[3].x + 2 + display_width as u16;
-        let cursor_y = chunks[3].y;
+        // Cursor position: multi-line aware
+        let text_before_cursor = &self.input[..self.cursor_pos];
+        let cursor_line = text_before_cursor.chars().filter(|&c| c == '\n').count() as u16;
+        let last_newline = text_before_cursor.rfind('\n').map_or(0, |p| p + 1);
+        let line_text = &self.input[last_newline..self.cursor_pos];
+        let cursor_col = display_width_of(line_text) as u16 + 2; // +2 for "> " or "  "
+        let cursor_x = chunks[3].x + cursor_col;
+        let cursor_y = chunks[3].y + cursor_line;
         frame.set_cursor_position((cursor_x, cursor_y));
 
         // 5. Overlay (on top)
@@ -545,6 +551,14 @@ impl TuiApp {
         }
 
         match (key.code, key.modifiers) {
+            // Esc — clear input when idle
+            (KeyCode::Esc, _) => {
+                if !self.input.is_empty() {
+                    self.input.clear();
+                    self.cursor_pos = 0;
+                    self.dirty = true;
+                }
+            }
             // Scroll — up releases sticky, down at bottom re-engages
             (KeyCode::Up, KeyModifiers::NONE) => {
                 self.chat_scroll = self.chat_scroll.saturating_add(1);
@@ -607,7 +621,13 @@ impl TuiApp {
                     }
                 }
             }
-            // Submit
+            // Shift-Enter — insert newline for multi-line input
+            (KeyCode::Enter, KeyModifiers::SHIFT) => {
+                self.input.insert(self.cursor_pos, '\n');
+                self.cursor_pos += 1;
+                self.dirty = true;
+            }
+            // Enter — submit
             (KeyCode::Enter, _) => {
                 if !self.input.is_empty() {
                     self.show_banner = false;
@@ -957,9 +977,21 @@ pub(crate) fn run_app_loop(
                             break;
                         }
                     } else {
-                        // Engine busy — only scroll/overlay/quit
+                        // Engine busy — only scroll/overlay/quit/cancel
                         match (key.code, key.modifiers) {
                             (KeyCode::Char('c'), KeyModifiers::CONTROL) => break,
+                            (KeyCode::Esc, _) => {
+                                // Cancel current streaming
+                                if let Some(eng) = session.cancel_pending() {
+                                    *engine_slot = Some(eng);
+                                }
+                                app.chat_messages
+                                    .retain(|m| m.kind != ChatMessageKind::Spinner);
+                                app.thinking_spinner = None;
+                                app.streaming_text.clear();
+                                app.push_system("cancelled");
+                                app.dirty = true;
+                            }
                             (KeyCode::Up, _) => {
                                 app.chat_scroll = app.chat_scroll.saturating_add(1);
                                 app.sticky_scroll = false;

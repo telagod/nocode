@@ -1273,6 +1273,26 @@ impl ReplSession {
         self.pending_submission = Some(pending);
     }
 
+    /// Cancel the current pending submission. Tries to recover the engine.
+    pub fn cancel_pending(&mut self) -> Option<QueryEngine> {
+        let mut recovered = None;
+        if let Some(pending) = self.pending_submission.take() {
+            // Try to grab the engine if the background thread already finished
+            if let Ok((_plan, engine)) = pending.result_rx.try_recv() {
+                recovered = Some(engine);
+            }
+        }
+        self.status_hud.end_turn();
+        recovered
+    }
+
+    /// Try to recover the engine after cancellation (alias for clarity).
+    #[allow(dead_code)]
+    pub fn take_cancelled_engine(&mut self) -> Option<QueryEngine> {
+        // Already handled in cancel_pending
+        None
+    }
+
     pub fn focus_label(&self) -> &'static str {
         self.task_panel.focus.as_str()
     }

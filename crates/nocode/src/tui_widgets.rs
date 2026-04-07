@@ -278,10 +278,17 @@ impl<'a> InputBox<'a> {
 impl Widget for InputBox<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = default_theme();
-        // Simple "> input_text" on a single line, no borders
-        let prompt_span = Span::styled("> ", Style::default().fg(theme.text_dim));
-        let input_span = Span::styled(self.input, Style::default().fg(theme.text));
-        let paragraph = Paragraph::new(Line::from(vec![prompt_span, input_span]));
+        // Multi-line: split by newlines, first line gets "> " prefix, rest get "  "
+        let input_lines: Vec<&str> = self.input.split('\n').collect();
+        let mut lines: Vec<Line<'_>> = Vec::with_capacity(input_lines.len());
+        for (i, line_text) in input_lines.iter().enumerate() {
+            let prefix = if i == 0 { "> " } else { "  " };
+            lines.push(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(theme.text_dim)),
+                Span::styled(*line_text, Style::default().fg(theme.text)),
+            ]));
+        }
+        let paragraph = Paragraph::new(lines);
         paragraph.render(area, buf);
     }
 }
