@@ -1,6 +1,6 @@
 {
   "name": "@telagod/nocode-darwin-arm64",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "description": "nocode platform binary for macOS ARM64",
   "os": ["darwin"],
   "cpu": ["arm64"],

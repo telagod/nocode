@@ -48,6 +48,13 @@ function getBinaryPath() {
     process.exit(1);
   }
 
+  // Ensure the binary is executable (upload-artifact strips permissions)
+  try {
+    fs.accessSync(bin, fs.constants.X_OK);
+  } catch {
+    fs.chmodSync(bin, 0o755);
+  }
+
   return bin;
 }
 
