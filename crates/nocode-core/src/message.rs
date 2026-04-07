@@ -1,121 +1,238 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QueryMessageRole {
-    System,
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// Message role — only User and Assistant per Claude API spec.
+/// System messages are sent separately in the `system` field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
     User,
     Assistant,
-    Tool,
 }
 
-impl QueryMessageRole {
+impl Role {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::System => "system",
             Self::User => "user",
             Self::Assistant => "assistant",
-            Self::Tool => "tool",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "system" => Some(Self::System),
-            "user" => Some(Self::User),
-            "assistant" => Some(Self::Assistant),
-            "tool" => Some(Self::Tool),
-            _ => None,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QueryMessage {
-    pub role: QueryMessageRole,
-    pub content: String,
+/// A single content block within a message.
+/// Maps 1:1 to Claude API content block types.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ContentBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+    },
+
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        is_error: bool,
+    },
+
+    #[serde(rename = "thinking")]
+    Thinking { thinking: String },
 }
 
-impl QueryMessage {
-    pub fn new(role: QueryMessageRole, content: impl Into<String>) -> Self {
-        Self {
-            role,
+impl ContentBlock {
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text { text: text.into() }
+    }
+
+    pub fn tool_use(id: impl Into<String>, name: impl Into<String>, input: Value) -> Self {
+        Self::ToolUse {
+            id: id.into(),
+            name: name.into(),
+            input,
+        }
+    }
+
+    pub fn tool_result(tool_use_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self::ToolResult {
+            tool_use_id: tool_use_id.into(),
             content: content.into(),
+            is_error: false,
         }
     }
 
-    pub fn system(content: impl Into<String>) -> Self {
-        Self::new(QueryMessageRole::System, content)
+    pub fn tool_error(tool_use_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self::ToolResult {
+            tool_use_id: tool_use_id.into(),
+            content: content.into(),
+            is_error: true,
+        }
     }
 
-    pub fn user(content: impl Into<String>) -> Self {
-        Self::new(QueryMessageRole::User, content)
+    pub const fn is_tool_use(&self) -> bool {
+        matches!(self, Self::ToolUse { .. })
     }
 
-    pub fn assistant(content: impl Into<String>) -> Self {
-        Self::new(QueryMessageRole::Assistant, content)
+    pub const fn is_tool_result(&self) -> bool {
+        matches!(self, Self::ToolResult { .. })
+    }
+}
+
+/// A conversation message with structured content blocks.
+/// Maps 1:1 to Claude API message format.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Message {
+    pub role: Role,
+    pub content: Vec<ContentBlock>,
+}
+
+impl Message {
+    pub fn user(blocks: Vec<ContentBlock>) -> Self {
+        Self {
+            role: Role::User,
+            content: blocks,
+        }
     }
 
-    pub fn tool(content: impl Into<String>) -> Self {
-        Self::new(QueryMessageRole::Tool, content)
+    pub fn user_text(text: impl Into<String>) -> Self {
+        Self::user(vec![ContentBlock::text(text)])
     }
 
-    pub fn summary(&self) -> String {
-        format!("{}: {}", self.role.as_str(), self.content)
+    pub fn assistant(blocks: Vec<ContentBlock>) -> Self {
+        Self {
+            role: Role::Assistant,
+            content: blocks,
+        }
+    }
+
+    pub fn assistant_text(text: impl Into<String>) -> Self {
+        Self::assistant(vec![ContentBlock::text(text)])
+    }
+
+    /// Extract all tool_use blocks from this message.
+    pub fn tool_uses(&self) -> Vec<&ContentBlock> {
+        self.content.iter().filter(|b| b.is_tool_use()).collect()
+    }
+
+    /// Check if this message contains any tool_use blocks.
+    pub fn has_tool_use(&self) -> bool {
+        self.content.iter().any(ContentBlock::is_tool_use)
+    }
+
+    /// Get the plain text content, joining all text blocks.
+    pub fn text_content(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    }
+}
+
+/// System prompt block — sent in the `system` field, not in messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SystemBlock {
+    #[serde(rename = "type")]
+    pub block_type: String,
+    pub text: String,
+}
+
+impl SystemBlock {
+    pub fn text(content: impl Into<String>) -> Self {
+        Self {
+            block_type: String::from("text"),
+            text: content.into(),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{QueryMessage, QueryMessageRole};
+    use super::*;
+    use serde_json::json;
 
     #[test]
-    fn query_message_helpers_preserve_roles() {
-        let user = QueryMessage::user("continue rewrite");
-        let tool = QueryMessage::tool("tool-result");
-        assert_eq!(user.role, QueryMessageRole::User);
-        assert_eq!(tool.role, QueryMessageRole::Tool);
-        assert_eq!(user.summary(), "user: continue rewrite");
+    fn text_block_roundtrip() {
+        let block = ContentBlock::text("hello");
+        let json = serde_json::to_value(&block).unwrap();
+        assert_eq!(json, json!({"type": "text", "text": "hello"}));
+        let parsed: ContentBlock = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed, block);
     }
 
     #[test]
-    fn all_role_constructors_and_as_str() {
-        let system = QueryMessage::system("sys");
-        let user = QueryMessage::user("usr");
-        let assistant = QueryMessage::assistant("ast");
-        let tool = QueryMessage::tool("tl");
-
-        assert_eq!(system.role.as_str(), "system");
-        assert_eq!(user.role.as_str(), "user");
-        assert_eq!(assistant.role.as_str(), "assistant");
-        assert_eq!(tool.role.as_str(), "tool");
+    fn tool_use_block_roundtrip() {
+        let block = ContentBlock::tool_use("id-1", "Bash", json!({"command": "ls"}));
+        let json = serde_json::to_value(&block).unwrap();
+        assert_eq!(json["type"], "tool_use");
+        assert_eq!(json["id"], "id-1");
+        assert_eq!(json["name"], "Bash");
+        assert_eq!(json["input"]["command"], "ls");
+        let parsed: ContentBlock = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed, block);
     }
 
     #[test]
-    fn parse_role_is_case_insensitive_and_trims() {
-        assert_eq!(
-            QueryMessageRole::parse("  System  "),
-            Some(QueryMessageRole::System)
-        );
-        assert_eq!(
-            QueryMessageRole::parse("USER"),
-            Some(QueryMessageRole::User)
-        );
-        assert_eq!(
-            QueryMessageRole::parse("Assistant"),
-            Some(QueryMessageRole::Assistant)
-        );
-        assert_eq!(
-            QueryMessageRole::parse("TOOL"),
-            Some(QueryMessageRole::Tool)
-        );
-        assert_eq!(QueryMessageRole::parse("unknown"), None);
-        assert_eq!(QueryMessageRole::parse(""), None);
+    fn tool_result_block_roundtrip() {
+        let block = ContentBlock::tool_result("id-1", "file contents");
+        let json = serde_json::to_value(&block).unwrap();
+        assert_eq!(json["type"], "tool_result");
+        assert_eq!(json["tool_use_id"], "id-1");
+        assert!(!json.get("is_error").is_some_and(|v| v.as_bool() == Some(true)));
+        let parsed: ContentBlock = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed, block);
     }
 
     #[test]
-    fn summary_format_is_role_colon_content() {
-        let msg = QueryMessage::new(QueryMessageRole::Assistant, "hello world");
-        assert_eq!(msg.summary(), "assistant: hello world");
+    fn tool_error_block_has_is_error() {
+        let block = ContentBlock::tool_error("id-1", "not found");
+        let json = serde_json::to_value(&block).unwrap();
+        assert_eq!(json["is_error"], true);
+    }
 
-        let empty = QueryMessage::system("");
-        assert_eq!(empty.summary(), "system: ");
+    #[test]
+    fn message_user_text() {
+        let msg = Message::user_text("hello");
+        assert_eq!(msg.role, Role::User);
+        assert_eq!(msg.text_content(), "hello");
+        assert!(!msg.has_tool_use());
+    }
+
+    #[test]
+    fn message_with_tool_use() {
+        let msg = Message::assistant(vec![
+            ContentBlock::text("I'll run a command"),
+            ContentBlock::tool_use("id-1", "Bash", json!({"command": "ls"})),
+        ]);
+        assert!(msg.has_tool_use());
+        assert_eq!(msg.tool_uses().len(), 1);
+        assert_eq!(msg.text_content(), "I'll run a command");
+    }
+
+    #[test]
+    fn message_roundtrip() {
+        let msg = Message::user(vec![
+            ContentBlock::tool_result("id-1", "output"),
+        ]);
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, msg);
+    }
+
+    #[test]
+    fn system_block_serialization() {
+        let block = SystemBlock::text("You are a coding assistant.");
+        let json = serde_json::to_value(&block).unwrap();
+        assert_eq!(json["type"], "text");
+        assert_eq!(json["text"], "You are a coding assistant.");
     }
 }
