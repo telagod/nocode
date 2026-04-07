@@ -894,7 +894,17 @@ pub(crate) fn run_app_loop(
                 app.update_streaming_assistant(&app.streaming_text.clone());
             } else if line.starts_with("stream error:") {
                 let msg = line.strip_prefix("stream error: ").unwrap_or(line);
-                app.push_error(msg);
+                // Clean up spinner on error
+                app.chat_messages
+                    .retain(|m| m.kind != ChatMessageKind::Spinner);
+                app.thinking_spinner = None;
+                // Parse retryable flag for better UX
+                if msg.contains("retryable=true") {
+                    app.push_error(&format!("{msg} (will retry)"));
+                } else {
+                    app.push_error(msg);
+                }
+                app.streaming_text.clear();
             } else if line.starts_with("stream complete:") {
                 // Finalize: if we have accumulated text, it's already rendered.
                 // Reset streaming state for next turn.
