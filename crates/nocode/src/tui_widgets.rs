@@ -368,3 +368,131 @@ impl Widget for OverlayBlock<'_> {
         paragraph.render(inner, buf);
     }
 }
+
+// ---------------------------------------------------------------------------
+// WelcomeBanner — startup splash with ASCII logo + system info
+// ---------------------------------------------------------------------------
+
+/// System info passed to the welcome banner for display.
+pub(crate) struct WelcomeBannerInfo {
+    pub model: String,
+    pub mode: String,
+    pub cwd: String,
+    pub version: String,
+    pub username: String,
+}
+
+impl Default for WelcomeBannerInfo {
+    fn default() -> Self {
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "unknown".into());
+        let username = std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_default();
+        Self {
+            model: String::from("pending"),
+            mode: String::from("default"),
+            cwd,
+            version: String::from(env!("CARGO_PKG_VERSION")),
+            username,
+        }
+    }
+}
+
+pub(crate) struct WelcomeBanner<'a> {
+    pub info: &'a WelcomeBannerInfo,
+}
+
+impl<'a> WelcomeBanner<'a> {
+    pub fn new(info: &'a WelcomeBannerInfo) -> Self {
+        Self { info }
+    }
+}
+
+const LOGO: [&str; 5] = [
+    r"  ╔╗╔╔═╗╔═╗╔═╗╔╦╗╔═╗ ",
+    r"  ║║║║ ║║  ║ ║ ║║║╣   ",
+    r"  ╝╚╝╚═╝╚═╝╚═╝═╩╝╚═╝ ",
+    r"                       ",
+    r"  terminal ai assistant",
+];
+
+impl Widget for WelcomeBanner<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let theme = default_theme();
+
+        let box_w = area.width.clamp(30, 60);
+        let box_h: u16 = 12;
+        let x = area.x + (area.width.saturating_sub(box_w)) / 2;
+        let y = area.y + (area.height.saturating_sub(box_h)) / 3;
+        let banner_area = Rect::new(x, y, box_w, box_h.min(area.height));
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
+            .border_style(Style::default().fg(theme.border));
+        let inner = block.inner(banner_area);
+        block.render(banner_area, buf);
+
+        if inner.height == 0 || inner.width == 0 {
+            return;
+        }
+
+        let mut lines: Vec<Line<'_>> = Vec::with_capacity(12);
+
+        for logo_line in &LOGO {
+            lines.push(Line::from(Span::styled(
+                *logo_line,
+                Style::default().fg(theme.claude),
+            )));
+        }
+
+        let greeting = if self.info.username.is_empty() {
+            String::from("  Welcome back!")
+        } else {
+            format!("  Welcome back, {}!", self.info.username)
+        };
+        lines.push(Line::from(Span::styled(
+            greeting,
+            Style::default()
+                .fg(theme.text)
+                .add_modifier(Modifier::BOLD),
+        )));
+
+        lines.push(Line::from(""));
+
+        let model_line = format!(
+            "  {} \u{00B7} {}",
+            self.info.model, self.info.mode
+        );
+        lines.push(Line::from(Span::styled(
+            model_line,
+            Style::default().fg(theme.text_dim),
+        )));
+
+        let max_path = (inner.width as usize).saturating_sub(4);
+        let cwd_display = if self.info.cwd.len() > max_path && max_path > 10 {
+            let half = (max_path - 3) / 2;
+            format!(
+                "  {}...{}",
+                &self.info.cwd[..half],
+                &self.info.cwd[self.info.cwd.len() - half..]
+            )
+        } else {
+            format!("  {}", self.info.cwd)
+        };
+        lines.push(Line::from(Span::styled(
+            cwd_display,
+            Style::default().fg(theme.text_dim),
+        )));
+
+        lines.push(Line::from(Span::styled(
+            format!("  v{}", self.info.version),
+            Style::default().fg(theme.text_inactive),
+        )));
+
+        let paragraph = Paragraph::new(lines);
+        paragraph.render(inner, buf);
+    }
+}

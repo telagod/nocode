@@ -4,7 +4,10 @@ use crate::markdown_render::render_markdown_to_lines;
 use crate::markdown_stream::MarkdownStreamState;
 use crate::repl::ReplSession;
 use crate::spinner::Spinner;
-use crate::tui_widgets::{ChatMessage, ChatMessageKind, HintsBar, InputBox, OverlayBlock, StatusBar};
+use crate::tui_widgets::{
+    ChatMessage, ChatMessageKind, HintsBar, InputBox, OverlayBlock, StatusBar, WelcomeBanner,
+    WelcomeBannerInfo,
+};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use nocode_core::QueryEngine;
@@ -51,11 +54,15 @@ pub(crate) struct TuiApp {
     sticky_scroll: bool,
     /// Number of messages added while the user is scrolled away from the bottom.
     unseen_count: usize,
+    /// Show welcome banner until first user input.
+    show_banner: bool,
+    /// Info displayed in the welcome banner.
+    banner_info: WelcomeBannerInfo,
 }
 
 impl TuiApp {
     pub fn new() -> Self {
-        let mut app = Self {
+        Self {
             chat_messages: Vec::new(),
             input: String::new(),
             cursor_pos: 0,
@@ -68,9 +75,9 @@ impl TuiApp {
             height_cache_width: 0,
             sticky_scroll: true,
             unseen_count: 0,
-        };
-        app.push_system("nocode v0.1.6 ready. Type a message or /help. F1=help Ctrl-C=quit");
-        app
+            show_banner: true,
+            banner_info: WelcomeBannerInfo::default(),
+        }
     }
 
     // -- content push methods --
@@ -200,15 +207,20 @@ impl TuiApp {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(4),                    // chat area (top, fills)
+                Constraint::Min(4),                    // chat area / banner (top, fills)
                 Constraint::Length(1),                  // status line
                 Constraint::Length(hints_height),       // keyboard hints (hidden when busy)
                 Constraint::Length(1),                  // input line
             ])
             .split(frame.area());
 
-        // 1. Chat area (top)
-        self.draw_chat_area(frame, chunks[0]);
+        // 1. Main area — banner or chat
+        if self.show_banner && self.chat_messages.is_empty() {
+            let banner = WelcomeBanner::new(&self.banner_info);
+            frame.render_widget(banner, chunks[0]);
+        } else {
+            self.draw_chat_area(frame, chunks[0]);
+        }
 
         // 2. Status line (above input)
         let snapshot = session.render_tui_snapshot();
@@ -432,6 +444,7 @@ impl TuiApp {
             // Submit
             (KeyCode::Enter, _) => {
                 if !self.input.is_empty() {
+                    self.show_banner = false;
                     let text = std::mem::take(&mut self.input);
                     self.cursor_pos = 0;
                     self.push_user_message(&text);
