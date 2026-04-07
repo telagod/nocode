@@ -116,7 +116,7 @@ pub(super) fn submit_message_with_runtime_and_stream(
     options: SubmitMessageOptions,
     executor: &impl ToolExecutor,
     persistence_backend: &mut impl PersistenceBackend,
-    stream: Option<&mut dyn ModelStreamSink>,
+    mut stream: Option<&mut dyn ModelStreamSink>,
 ) -> QuerySubmissionPlan {
     engine.state.mutable_messages = engine
         .deps
@@ -228,14 +228,22 @@ pub(super) fn submit_message_with_runtime_and_stream(
         );
     }
 
-    if matches!(outcome, QueryLoopOutcome::Continue(_)) && !runner.state().stop_hook_active {
+    // Agentic loop: call model → execute tools → flush → repeat until done.
+    let max_loop_turns = engine.config.max_turns.unwrap_or(10) as usize;
+    let mut loop_turn = 0;
+
+    while matches!(outcome, QueryLoopOutcome::Continue(_))
+        && !runner.state().stop_hook_active
+        && loop_turn < max_loop_turns
+    {
+        loop_turn += 1;
         let model_request = build_model_request(&query_config, runner.state());
-        let mut stream = FanoutModelStream::new(stream);
+        let mut fanout = FanoutModelStream::new(stream);
         match model_request.to_transport_http_request() {
             Ok(http_request) => match engine
                 .deps
                 .call_model
-                .call_model(&model_request, &mut stream)
+                .call_model(&model_request, &mut fanout)
             {
                 Ok(output) => {
                     let transport_request =
@@ -245,12 +253,14 @@ pub(super) fn submit_message_with_runtime_and_stream(
                     // Extract tool calls from model response.
                     let model_tool_calls = output.tool_calls.clone();
 
+                    let (recording, returned_stream) = fanout.finish();
+                    stream = returned_stream;
                     let invocation = ModelInvocation::from_call(
                         &model_request,
                         http_request,
                         transport_request,
                         output,
-                        stream.finish().events,
+                        recording.events,
                     );
                     outcome = runner.apply(QueryLoopAction::PushAssistantMessage {
                         message: invocation.output_message.clone(),
@@ -296,27 +306,35 @@ pub(super) fn submit_message_with_runtime_and_stream(
                             outcome = runner.apply(QueryLoopAction::FlushToolBatch);
                             record_step(&mut steps, "flush-model-tool-batch", &outcome);
                         }
+                        // Loop back to call model again with tool results
+                        continue;
                     }
 
+                    // No tool calls — model is done, complete.
                     if matches!(outcome, QueryLoopOutcome::Continue(_)) {
                         outcome = runner.apply(QueryLoopAction::Complete);
                         record_step(&mut steps, "complete", &outcome);
                     }
+                    break;
                 }
                 Err(error) => {
+                    let (_recording, _returned_stream) = fanout.finish();
                     model_error = Some(error.clone());
                     outcome = runner.apply(QueryLoopAction::Fail(QueryLoopTerminal::ModelError {
                         error,
                     }));
                     record_step(&mut steps, "call-model:error", &outcome);
+                    break;
                 }
             },
             Err(error) => {
+                let (_recording, _returned_stream) = fanout.finish();
                 model_error = Some(error.clone());
                 outcome = runner.apply(QueryLoopAction::Fail(QueryLoopTerminal::ModelError {
                     error,
                 }));
                 record_step(&mut steps, "call-model:error", &outcome);
+                break;
             }
         }
     }
@@ -418,8 +436,9 @@ impl<'a> FanoutModelStream<'a> {
         }
     }
 
-    fn finish(self) -> RecordingModelStream {
-        self.recording
+    /// Finish recording and return both the recording and the borrowed stream.
+    fn finish(self) -> (RecordingModelStream, Option<&'a mut dyn ModelStreamSink>) {
+        (self.recording, self.external)
     }
 }
 
