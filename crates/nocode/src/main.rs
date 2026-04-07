@@ -43,10 +43,8 @@ use std::path::Path;
 use std::sync::mpsc;
 
 fn workspace_root() -> String {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .canonicalize()
-        .expect("workspace root should resolve")
+    env::current_dir()
+        .expect("current directory should be accessible")
         .to_string_lossy()
         .into_owned()
 }
@@ -158,7 +156,7 @@ fn build_system_prompt() -> String {
 
 fn build_claude_md_prompt() -> Option<String> {
     let root = workspace_root();
-    let cwd = std::path::Path::new(&root);
+    let cwd = Path::new(&root);
     let files = claudemd::discover_claude_md_files(cwd);
     claudemd::format_claude_md_for_prompt(&files)
 }
