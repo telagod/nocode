@@ -173,6 +173,7 @@ pub(super) fn submit_message_with_runtime_and_stream(
             execution,
             &mut outcome,
         );
+        // Bootstrap tools don't stream results
 
         if matches!(outcome, QueryLoopOutcome::Terminal(_)) {
             break;
@@ -294,6 +295,10 @@ pub(super) fn submit_message_with_runtime_and_stream(
                                 execution,
                                 &mut outcome,
                             );
+                            // Push tool result to stream for real-time TUI display
+                            if let Some(last_result) = tool_results.last() {
+                                push_tool_result_to_stream(&mut stream, last_result);
+                            }
 
                             if matches!(outcome, QueryLoopOutcome::Terminal(_)) {
                                 break;
@@ -519,6 +524,30 @@ fn handle_tool_execution(
         format!("resolve-tool:{}", tool_result.status_label()),
         outcome,
     );
+}
+
+/// Push a tool result event to the stream sink for real-time TUI display.
+fn push_tool_result_to_stream(
+    stream: &mut Option<&mut dyn ModelStreamSink>,
+    tool_result: &ToolCallResult,
+) {
+    let Some(sink) = stream.as_mut() else { return };
+    let (tool_name, content, is_error) = match tool_result {
+        ToolCallResult::Completed { call, output, .. } => {
+            (call.tool_name.clone(), output.summary.clone(), false)
+        }
+        ToolCallResult::Failed { call, error, .. } => {
+            (call.tool_name.clone(), error.clone(), true)
+        }
+        ToolCallResult::Denied { call, reason, .. } => {
+            (call.tool_name.clone(), reason.clone(), true)
+        }
+    };
+    sink.push(ModelStreamEvent::ToolResult {
+        tool_name,
+        content,
+        is_error,
+    });
 }
 
 fn build_model_request(

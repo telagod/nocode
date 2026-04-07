@@ -559,6 +559,12 @@ pub enum ModelStreamEvent {
     ThinkingDelta {
         text: String,
     },
+    /// A tool has been executed and produced a result.
+    ToolResult {
+        tool_name: String,
+        content: String,
+        is_error: bool,
+    },
 }
 
 impl ModelStreamEvent {
@@ -571,6 +577,7 @@ impl ModelStreamEvent {
             Self::ToolUseStart { .. } => "tool_use_start",
             Self::ToolUseDone { .. } => "tool_use_done",
             Self::ThinkingDelta { .. } => "thinking_delta",
+            Self::ToolResult { .. } => "tool_result",
         }
     }
 }
@@ -659,7 +666,8 @@ impl From<&ModelStreamEvent> for ModelStreamEventWire {
             },
             ModelStreamEvent::ToolUseStart { .. }
             | ModelStreamEvent::ToolUseDone { .. }
-            | ModelStreamEvent::ThinkingDelta { .. } => {
+            | ModelStreamEvent::ThinkingDelta { .. }
+            | ModelStreamEvent::ToolResult { .. } => {
                 // Tool/thinking events don't have a wire representation — map to Delta placeholder
                 Self::Delta {
                     text: String::new(),
@@ -874,7 +882,8 @@ impl ModelInvocation {
                 ModelStreamEvent::Complete { .. } => stats.completed = true,
                 ModelStreamEvent::ToolUseStart { .. }
                 | ModelStreamEvent::ToolUseDone { .. }
-                | ModelStreamEvent::ThinkingDelta { .. } => {}
+                | ModelStreamEvent::ThinkingDelta { .. }
+                | ModelStreamEvent::ToolResult { .. } => {}
             }
         }
         stats

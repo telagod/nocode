@@ -1150,6 +1150,13 @@ impl ReplSession {
                 ModelStreamEvent::ThinkingDelta { text } => {
                     lines.push(format!("thinking delta: {text}"));
                 }
+                ModelStreamEvent::ToolResult { tool_name, content, is_error } => {
+                    if *is_error {
+                        lines.push(format!("tool result: [error] {tool_name}: {content}"));
+                    } else {
+                        lines.push(format!("tool result: {content}"));
+                    }
+                }
             }
         }
 
@@ -1190,6 +1197,19 @@ impl ReplSession {
             self.last_plan_response_result_pretty = plan.response_result_pretty();
             // T7: finalize HUD with real usage from the plan.
             self.finalize_hud_from_plan(&plan);
+
+            // Auto-persist transcript to JSONL
+            if !plan.transcript.entries.is_empty() {
+                let cwd = std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                let identity = nocode_core::SessionIdentity::new(
+                    &plan.session_persistence.session_id,
+                    &cwd,
+                );
+                nocode_core::persist_transcript(&identity, &plan.transcript.entries);
+            }
+
             self.pending_submission = None;
             returned_engine = Some(engine);
         }
@@ -3198,6 +3218,13 @@ impl<W: Write> ModelStreamSink for ReplLiveStreamCapture<'_, W> {
             }
             ModelStreamEvent::ThinkingDelta { text } => {
                 format!("thinking delta: {text}")
+            }
+            ModelStreamEvent::ToolResult { tool_name, content, is_error } => {
+                if is_error {
+                    format!("tool result: [error] {tool_name}: {content}")
+                } else {
+                    format!("tool result: {content}")
+                }
             }
         };
         self.push_line(line);
