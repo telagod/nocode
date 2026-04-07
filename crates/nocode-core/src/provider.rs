@@ -1549,6 +1549,21 @@ fn extract_text_fragment(item: &Value) -> Option<String> {
         })
 }
 
+/// Parse a JSON string of tool input arguments into a flat HashMap<String, String>.
+fn parse_tool_arguments(json_str: &str) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    if let Ok(Value::Object(obj)) = serde_json::from_str(json_str) {
+        for (key, val) in obj {
+            let s = match &val {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            map.insert(key, s);
+        }
+    }
+    map
+}
+
 pub(crate) struct StreamingModelParser<'a> {
     request: &'a ModelRequest,
     model: String,
@@ -1556,6 +1571,10 @@ pub(crate) struct StreamingModelParser<'a> {
     fallback_payload: Option<Value>,
     delta_sequence: u32,
     cancelled: bool,
+    /// Tool use blocks accumulated during streaming.
+    tool_calls: Vec<ToolCallRequest>,
+    /// Currently building tool_use block (id, name, partial JSON input).
+    pending_tool: Option<(String, String, String)>,
 }
 
 impl<'a> StreamingModelParser<'a> {
@@ -1571,6 +1590,8 @@ impl<'a> StreamingModelParser<'a> {
             fallback_payload: None,
             delta_sequence: 0,
             cancelled: false,
+            tool_calls: Vec::new(),
+            pending_tool: None,
         }
     }
 
@@ -1642,14 +1663,19 @@ impl<'a> StreamingModelParser<'a> {
             }
         }
 
-        if text.is_empty() {
+        if text.is_empty() && self.tool_calls.is_empty() {
             return Err(ModelError::invalid_provider_response(
                 self.request.selection.provider,
-                "stream produced no assistant text",
+                "stream produced no assistant text and no tool calls",
             ));
         }
 
-        finalize_model_output(self.request, self.model, text, Vec::new())
+        // If text is empty but we have tool calls, use a placeholder
+        if text.is_empty() {
+            text = String::from("[tool_use]");
+        }
+
+        finalize_model_output(self.request, self.model, text, self.tool_calls)
     }
 
     fn parse_claude_stream_frame(
@@ -1669,6 +1695,7 @@ impl<'a> StreamingModelParser<'a> {
             return Err(error);
         }
 
+        // Text delta
         if let Some(delta) = payload
             .get("delta")
             .and_then(|delta| delta.get("text"))
@@ -1679,6 +1706,7 @@ impl<'a> StreamingModelParser<'a> {
             return Ok(());
         }
 
+        // Content block text
         if let Some(block_text) = payload
             .get("content_block")
             .and_then(|block| block.get("text"))
@@ -1686,6 +1714,38 @@ impl<'a> StreamingModelParser<'a> {
             .filter(|delta| !delta.is_empty())
         {
             self.push_stream_delta(block_text, stream);
+        }
+
+        // Tool use: content_block_start with type=tool_use
+        if let Some(block) = payload.get("content_block")
+            && block.get("type").and_then(Value::as_str) == Some("tool_use")
+        {
+            let id = block.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+            let name = block.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+            self.pending_tool = Some((id, name, String::new()));
+        }
+
+        // Tool use: input JSON delta
+        if let Some(partial) = payload
+            .get("delta")
+            .and_then(|d| d.get("partial_json"))
+            .and_then(Value::as_str)
+            && let Some((_, _, ref mut input_json)) = self.pending_tool
+        {
+            input_json.push_str(partial);
+        }
+
+        // Tool use: content_block_stop finalizes the pending tool
+        let event_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
+        if event_type == "content_block_stop"
+            && let Some((id, name, input_json)) = self.pending_tool.take()
+        {
+            let arguments = parse_tool_arguments(&input_json);
+            self.tool_calls.push(ToolCallRequest {
+                id,
+                name,
+                arguments,
+            });
         }
 
         Ok(())
