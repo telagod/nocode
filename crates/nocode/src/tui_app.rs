@@ -146,7 +146,49 @@ impl TuiApp {
     fn trim_log(&mut self) {
         while self.chat_messages.len() > LOG_LIMIT {
             self.chat_messages.remove(0);
+            if !self.height_cache.is_empty() {
+                self.height_cache.remove(0);
+            }
         }
+    }
+
+    fn invalidate_height_cache(&mut self) {
+        self.height_cache.clear();
+        self.height_cache_width = 0;
+    }
+
+    /// Compute height for a single message at the given width.
+    /// Each message = badge line (1) + content lines + 1 spacing line.
+    fn message_height(msg: &ChatMessage, _width: u16) -> u16 {
+        let badge = if matches!(msg.kind, ChatMessageKind::Spinner) {
+            0
+        } else {
+            1
+        };
+        let content = msg.lines.len() as u16;
+        badge + content + 1 // +1 for spacing between messages
+    }
+
+    /// Ensure height cache is populated for all messages at the given width.
+    fn ensure_height_cache(&mut self, width: u16) {
+        if self.height_cache_width == width && self.height_cache.len() == self.chat_messages.len() {
+            return;
+        }
+        if self.height_cache_width != width {
+            self.height_cache.clear();
+        }
+        self.height_cache_width = width;
+        // Fill missing entries (append-only fast path).
+        while self.height_cache.len() < self.chat_messages.len() {
+            let idx = self.height_cache.len();
+            let h = Self::message_height(&self.chat_messages[idx], width);
+            self.height_cache.push(h);
+        }
+    }
+
+    /// Total height of all messages in terminal rows.
+    fn total_content_height(&self) -> u16 {
+        self.height_cache.iter().copied().sum()
     }
 
     // -- drawing --
@@ -188,39 +230,97 @@ impl TuiApp {
         self.dirty = false;
     }
 
-    fn draw_chat_area(&self, frame: &mut Frame, area: Rect) {
+    fn draw_chat_area(&mut self, frame: &mut Frame, area: Rect) {
         let block = Block::default().borders(Borders::NONE);
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        // Collect all lines from all messages
-        let mut all_lines: Vec<ratatui::text::Line<'_>> = Vec::new();
-        for msg in &self.chat_messages {
-            all_lines.extend(msg.to_ratatui_lines());
-            all_lines.push(ratatui::text::Line::from("")); // spacing
+        if inner.width == 0 || inner.height == 0 {
+            return;
         }
 
-        let total_lines = all_lines.len() as u16;
+        self.ensure_height_cache(inner.width);
+
+        let total_h = self.total_content_height();
         let visible = inner.height;
-        let max_scroll = total_lines.saturating_sub(visible);
+        let max_scroll = total_h.saturating_sub(visible);
         let scroll = self.chat_scroll.min(max_scroll);
 
-        let paragraph = Paragraph::new(all_lines)
-            .wrap(Wrap { trim: false })
-            .scroll((max_scroll.saturating_sub(scroll), 0)); // bottom-anchored
+        // Bottom-anchored: effective scroll from top = max_scroll - scroll
+        let scroll_from_top = max_scroll.saturating_sub(scroll);
 
+        // Viewport culling: find which messages are visible.
+        let mut accumulated: u16 = 0;
+        let mut first_visible_idx: Option<usize> = None;
+        let mut first_visible_skip: u16 = 0;
+        let mut visible_lines: Vec<ratatui::text::Line<'_>> = Vec::new();
+        let mut rows_collected: u16 = 0;
+
+        for (i, msg) in self.chat_messages.iter().enumerate() {
+            let h = self.height_cache.get(i).copied().unwrap_or(1);
+            let msg_end = accumulated + h;
+
+            if msg_end <= scroll_from_top {
+                accumulated = msg_end;
+                continue;
+            }
+
+            if first_visible_idx.is_none() {
+                first_visible_idx = Some(i);
+                first_visible_skip = scroll_from_top.saturating_sub(accumulated);
+            }
+
+            // Collect lines from this message
+            let msg_lines = msg.to_ratatui_lines();
+            let mut all_msg_lines: Vec<ratatui::text::Line<'_>> = msg_lines;
+            all_msg_lines.push(ratatui::text::Line::from("")); // spacing
+
+            for line in all_msg_lines {
+                if rows_collected >= visible {
+                    break;
+                }
+                visible_lines.push(line);
+                rows_collected += 1;
+            }
+
+            accumulated = msg_end;
+
+            if rows_collected >= visible {
+                break;
+            }
+        }
+
+        // Skip partial top lines
+        let skip = first_visible_skip as usize;
+        if skip > 0 && skip < visible_lines.len() {
+            visible_lines = visible_lines[skip..].to_vec();
+        }
+
+        let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });
         frame.render_widget(paragraph, inner);
 
         // Scrollbar
-        if total_lines > visible {
+        if total_h > visible {
             let mut scrollbar_state = ScrollbarState::new(max_scroll as usize)
-                .position((max_scroll.saturating_sub(scroll)) as usize);
+                .position(scroll_from_top as usize);
             frame.render_stateful_widget(
                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
                     .style(Style::default().fg(Color::DarkGray)),
                 inner,
                 &mut scrollbar_state,
             );
+        }
+
+        // Unseen message indicator
+        if self.unseen_count > 0 && !self.sticky_scroll {
+            let indicator = format!(" {} unseen ", self.unseen_count);
+            let indicator_width = indicator.len() as u16;
+            let x = inner.right().saturating_sub(indicator_width + 1);
+            let y = inner.bottom().saturating_sub(1);
+            let indicator_area = Rect::new(x, y, indicator_width, 1);
+            let badge = Paragraph::new(indicator)
+                .style(Style::default().fg(Color::Black).bg(Color::Yellow));
+            frame.render_widget(badge, indicator_area);
         }
     }
 
