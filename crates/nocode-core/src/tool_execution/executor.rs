@@ -416,6 +416,8 @@ impl<H: ToolHost> DefaultToolExecutor<H> {
                 permission_denial: None,
             };
         }
+        // Build a simple unified diff preview for TUI display
+        let diff_preview = build_edit_diff_preview(&old_string, &new_string, 3);
         ToolExecutionTrace {
             progress_updates: vec![progress],
             result: ToolPermissionDecision::allow(false).settle(
@@ -423,7 +425,7 @@ impl<H: ToolHost> DefaultToolExecutor<H> {
                 ToolCallOutput {
                     summary: format!("edited {file_path} with 1 replacement"),
                     generated_messages: vec![QueryMessage::assistant(format!(
-                        "tool-message: edited {file_path}"
+                        "tool-message: edited {file_path}\n{diff_preview}"
                     ))],
                     context_label: Some(call.context_label.clone()),
                     progress_updates: vec![ToolProgressUpdate::new(
@@ -1082,6 +1084,34 @@ fn is_safe_system_path(path: &str) -> bool {
         || path.starts_with("/usr/local/bin")
         || path.starts_with("/bin")
         || path.starts_with("/proc")
+}
+
+/// Build a simple +/- diff preview from old and new strings.
+/// Shows up to `max_context` lines of context around changes.
+fn build_edit_diff_preview(old: &str, new: &str, max_lines: usize) -> String {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    let mut diff = Vec::new();
+
+    // Show removed lines (prefixed with -)
+    for (i, line) in old_lines.iter().enumerate() {
+        if i >= max_lines {
+            let remaining = old_lines.len() - max_lines;
+            diff.push(format!("- ... {remaining} more removed"));
+            break;
+        }
+        diff.push(format!("- {line}"));
+    }
+    // Show added lines (prefixed with +)
+    for (i, line) in new_lines.iter().enumerate() {
+        if i >= max_lines {
+            let remaining = new_lines.len() - max_lines;
+            diff.push(format!("+ ... {remaining} more added"));
+            break;
+        }
+        diff.push(format!("+ {line}"));
+    }
+    diff.join("\n")
 }
 
 #[cfg(test)]

@@ -196,19 +196,17 @@ impl TuiApp {
 
     /// Attach output content to the last tool message (for bash output, file content, etc).
     pub fn attach_tool_output(&mut self, content: &str) {
-        // Find the last tool message and add output lines
         for msg in self.chat_messages.iter_mut().rev() {
             if msg.tool_info.is_some() {
-                // Truncate to last 5 lines for compact display
                 let output_lines: Vec<&str> = content.lines().collect();
                 let total = output_lines.len();
-                let display_lines = if total > 5 {
-                    &output_lines[total - 5..]
+                let display_lines = if total > 8 {
+                    &output_lines[total - 8..]
                 } else {
                     &output_lines[..]
                 };
                 let mut rendered = Vec::new();
-                if total > 5 {
+                if total > 8 {
                     let mut rl = crate::markdown_render::RenderedLine::new();
                     rl.push(crate::markdown_render::LineSegment::new(
                         format!("... {total} lines total"),
@@ -218,10 +216,15 @@ impl TuiApp {
                 }
                 for &line in display_lines {
                     let mut rl = crate::markdown_render::RenderedLine::new();
-                    rl.push(crate::markdown_render::LineSegment::new(
-                        line,
-                        crossterm::style::Color::White,
-                    ));
+                    // Diff coloring: + green, - red
+                    let color = if line.starts_with("+ ") {
+                        crossterm::style::Color::Green
+                    } else if line.starts_with("- ") {
+                        crossterm::style::Color::Red
+                    } else {
+                        crossterm::style::Color::White
+                    };
+                    rl.push(crate::markdown_render::LineSegment::new(line, color));
                     rendered.push(rl);
                 }
                 msg.lines = rendered;
