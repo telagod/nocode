@@ -261,11 +261,7 @@ pub fn persist_transcript(identity: &SessionIdentity, entries: &[TranscriptEntry
     if let Some(dir) = dir {
         let _ = fs::create_dir_all(dir);
     }
-    let Ok(mut f) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    else {
+    let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) else {
         return;
     };
     use std::io::Write;
@@ -489,14 +485,18 @@ mod tests {
         let root = dir.path().to_string_lossy().into_owned();
         let identity = SessionIdentity::new("append-session", &root);
 
-        let batch1 = vec![
-            TranscriptEntry::new(1, TranscriptRole::Conversation, "first"),
-        ];
+        let batch1 = vec![TranscriptEntry::new(
+            1,
+            TranscriptRole::Conversation,
+            "first",
+        )];
         persist_transcript(&identity, &batch1);
 
-        let batch2 = vec![
-            TranscriptEntry::new(2, TranscriptRole::Conversation, "second"),
-        ];
+        let batch2 = vec![TranscriptEntry::new(
+            2,
+            TranscriptRole::Conversation,
+            "second",
+        )];
         persist_transcript(&identity, &batch2);
 
         let loaded = load_transcript(&identity);
@@ -525,8 +525,14 @@ mod tests {
         // Create two sessions
         let id1 = SessionIdentity::new("sess-aaa", &root);
         let id2 = SessionIdentity::new("sess-bbb", &root);
-        persist_transcript(&id1, &[TranscriptEntry::new(1, TranscriptRole::Conversation, "a")]);
-        persist_transcript(&id2, &[TranscriptEntry::new(1, TranscriptRole::Conversation, "b")]);
+        persist_transcript(
+            &id1,
+            &[TranscriptEntry::new(1, TranscriptRole::Conversation, "a")],
+        );
+        persist_transcript(
+            &id2,
+            &[TranscriptEntry::new(1, TranscriptRole::Conversation, "b")],
+        );
 
         let mut sessions = list_sessions(&root);
         sessions.sort();

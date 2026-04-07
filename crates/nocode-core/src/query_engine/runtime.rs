@@ -536,9 +536,7 @@ fn push_tool_result_to_stream(
         ToolCallResult::Completed { call, output, .. } => {
             (call.tool_name.clone(), output.summary.clone(), false)
         }
-        ToolCallResult::Failed { call, error, .. } => {
-            (call.tool_name.clone(), error.clone(), true)
-        }
+        ToolCallResult::Failed { call, error, .. } => (call.tool_name.clone(), error.clone(), true),
         ToolCallResult::Denied { call, reason, .. } => {
             (call.tool_name.clone(), reason.clone(), true)
         }

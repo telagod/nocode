@@ -1786,8 +1786,16 @@ impl<'a> StreamingModelParser<'a> {
         if let Some(block) = payload.get("content_block")
             && block.get("type").and_then(Value::as_str) == Some("tool_use")
         {
-            let id = block.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-            let name = block.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+            let id = block
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let name = block
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             stream.push(ModelStreamEvent::ToolUseStart {
                 tool_id: id.clone(),
                 tool_name: name.clone(),

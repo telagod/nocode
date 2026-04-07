@@ -58,14 +58,14 @@ impl ChatMessageKind {
     fn prefix(&self) -> (&str, Color) {
         let theme = default_theme();
         match self {
-            Self::User => ("\u{276F} ", theme.user),          // ❯
+            Self::User => ("\u{276F} ", theme.user),           // ❯
             Self::Assistant => ("\u{23BF} ", theme.assistant), // ⎿
-            Self::System => ("\u{2022} ", theme.system),      // •
-            Self::Error => ("\u{2716} ", theme.error),        // ✖
-            Self::Tool => ("\u{25CF} ", theme.tool),          // ●
-            Self::Spinner => ("\u{2234} ", theme.spinner),    // ∴
-            Self::Permission => ("\u{26A0} ", theme.warning), // ⚠
-            Self::Thinking => ("\u{2234} ", theme.text_dim),  // ∴
+            Self::System => ("\u{2022} ", theme.system),       // •
+            Self::Error => ("\u{2716} ", theme.error),         // ✖
+            Self::Tool => ("\u{25CF} ", theme.tool),           // ●
+            Self::Spinner => ("\u{2234} ", theme.spinner),     // ∴
+            Self::Permission => ("\u{26A0} ", theme.warning),  // ⚠
+            Self::Thinking => ("\u{2234} ", theme.text_dim),   // ∴
         }
     }
 }
@@ -180,7 +180,10 @@ impl ChatMessage {
                     Style::default().fg(theme.text_dim),
                 ));
             }
-            spans.push(Span::styled(status_suffix, Style::default().fg(indicator_color)));
+            spans.push(Span::styled(
+                status_suffix,
+                Style::default().fg(indicator_color),
+            ));
             result.push(Line::from(spans));
 
             // Tool output lines with ⎿ prefix
@@ -191,7 +194,10 @@ impl ChatMessage {
                         Style::default().fg(theme.border),
                     )];
                     spans.extend(rendered_line.segments.iter().map(|seg| {
-                        Span::styled(seg.text.as_str(), Style::default().fg(convert_color(seg.color)))
+                        Span::styled(
+                            seg.text.as_str(),
+                            Style::default().fg(convert_color(seg.color)),
+                        )
                     }));
                     result.push(Line::from(spans));
                 }
@@ -206,7 +212,9 @@ impl ChatMessage {
                 // Collapsed: show summary only
                 let summary = if line_count > 0 {
                     // Show first ~60 chars of thinking as preview
-                    let first: String = self.lines.iter()
+                    let first: String = self
+                        .lines
+                        .iter()
                         .flat_map(|l| l.segments.iter().map(|s| s.text.as_str()))
                         .collect::<String>();
                     let preview = if first.chars().count() > 60 {
@@ -249,7 +257,11 @@ impl ChatMessage {
         // Spinner: "∴ Thinking..."
         if matches!(self.kind, ChatMessageKind::Spinner) {
             for rendered_line in &self.lines {
-                let text: String = rendered_line.segments.iter().map(|s| s.text.as_str()).collect();
+                let text: String = rendered_line
+                    .segments
+                    .iter()
+                    .map(|s| s.text.as_str())
+                    .collect();
                 result.push(Line::from(vec![
                     Span::styled(prefix, Style::default().fg(prefix_color)),
                     Span::styled(text, Style::default().fg(theme.text_dim)),
@@ -262,10 +274,8 @@ impl ChatMessage {
         if matches!(self.kind, ChatMessageKind::User) {
             for (i, rendered_line) in self.lines.iter().enumerate() {
                 let line_prefix = if i == 0 { prefix } else { "  " };
-                let mut spans: Vec<Span<'_>> = vec![Span::styled(
-                    line_prefix,
-                    Style::default().fg(prefix_color),
-                )];
+                let mut spans: Vec<Span<'_>> =
+                    vec![Span::styled(line_prefix, Style::default().fg(prefix_color))];
                 spans.extend(rendered_line.segments.iter().map(|seg| {
                     let mut style = Style::default().fg(convert_color(seg.color));
                     if seg.bold {
@@ -282,10 +292,8 @@ impl ChatMessage {
         for (i, rendered_line) in self.lines.iter().enumerate() {
             let line_prefix = if i == 0 { prefix } else { "  " };
             let prefix_col = if i == 0 { prefix_color } else { theme.border };
-            let mut spans: Vec<Span<'_>> = vec![Span::styled(
-                line_prefix,
-                Style::default().fg(prefix_col),
-            )];
+            let mut spans: Vec<Span<'_>> =
+                vec![Span::styled(line_prefix, Style::default().fg(prefix_col))];
             spans.extend(rendered_line.segments.iter().map(|seg| {
                 let mut style = Style::default().fg(convert_color(seg.color));
                 if seg.bold {
@@ -433,7 +441,8 @@ impl Widget for HintsBar {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = default_theme();
         let dim = Style::default().fg(theme.text_dim);
-        let hints = " enter send \u{00B7} /help commands \u{00B7} ctrl-t theme \u{00B7} ctrl-c quit";
+        let hints =
+            " enter send \u{00B7} /help commands \u{00B7} ctrl-t theme \u{00B7} ctrl-c quit";
         let paragraph = Paragraph::new(hints).style(dim);
         paragraph.render(area, buf);
     }
@@ -571,17 +580,12 @@ impl Widget for WelcomeBanner<'_> {
         };
         lines.push(Line::from(Span::styled(
             greeting,
-            Style::default()
-                .fg(theme.text)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
         )));
 
         lines.push(Line::from(""));
 
-        let model_line = format!(
-            "  {} \u{00B7} {}",
-            self.info.model, self.info.mode
-        );
+        let model_line = format!("  {} \u{00B7} {}", self.info.model, self.info.mode);
         lines.push(Line::from(Span::styled(
             model_line,
             Style::default().fg(theme.text_dim),
@@ -648,9 +652,7 @@ fn tool_user_facing_name(tool_name: &str, args: &str) -> String {
 /// Extract the most relevant argument for display in parentheses.
 fn tool_args_display(tool_name: &str, args: &str) -> String {
     match tool_name {
-        "Read" | "Edit" | "Write" => {
-            extract_kv(args, "file_path").unwrap_or_default()
-        }
+        "Read" | "Edit" | "Write" => extract_kv(args, "file_path").unwrap_or_default(),
         "Glob" => extract_kv(args, "pattern").unwrap_or_default(),
         "Grep" => extract_kv(args, "pattern").unwrap_or_default(),
         "WebFetch" => extract_kv(args, "url").unwrap_or_default(),
@@ -664,7 +666,11 @@ fn tool_args_display(tool_name: &str, args: &str) -> String {
         "TaskUpdate" => {
             let id = extract_kv(args, "task_id").unwrap_or_default();
             let status = extract_kv(args, "status").unwrap_or_default();
-            if id.is_empty() { String::new() } else { format!("{id} → {status}") }
+            if id.is_empty() {
+                String::new()
+            } else {
+                format!("{id} → {status}")
+            }
         }
         "Bash" => String::new(), // command already in display name
         _ => {
@@ -681,7 +687,11 @@ fn extract_kv(args: &str, key: &str) -> Option<String> {
     let after = &args[start + prefix.len()..];
     let end = after.find(' ').unwrap_or(after.len());
     let val = &after[..end];
-    if val.is_empty() { None } else { Some(val.to_string()) }
+    if val.is_empty() {
+        None
+    } else {
+        Some(val.to_string())
+    }
 }
 
 /// Truncate a string to max chars, adding … if truncated.

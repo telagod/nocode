@@ -1150,7 +1150,11 @@ impl ReplSession {
                 ModelStreamEvent::ThinkingDelta { text } => {
                     lines.push(format!("thinking delta: {text}"));
                 }
-                ModelStreamEvent::ToolResult { tool_name, content, is_error } => {
+                ModelStreamEvent::ToolResult {
+                    tool_name,
+                    content,
+                    is_error,
+                } => {
                     if *is_error {
                         lines.push(format!("tool result: [error] {tool_name}: {content}"));
                     } else {
@@ -1176,12 +1180,18 @@ impl ReplSession {
             for entry in &plan.transcript.entries {
                 match entry.role {
                     nocode_core::TranscriptRole::ToolResult => {
-                        lines.push(format!("tool result: {}", normalize_session_content(&entry.content)));
+                        lines.push(format!(
+                            "tool result: {}",
+                            normalize_session_content(&entry.content)
+                        ));
                     }
                     nocode_core::TranscriptRole::ToolProgress => {
                         // Only show meaningful progress (skip sandbox/internal)
                         if !entry.content.contains("sandbox:") {
-                            lines.push(format!("tool progress: {}", normalize_session_content(&entry.content)));
+                            lines.push(format!(
+                                "tool progress: {}",
+                                normalize_session_content(&entry.content)
+                            ));
                         }
                     }
                     _ => {}
@@ -1203,10 +1213,8 @@ impl ReplSession {
                 let cwd = std::env::current_dir()
                     .map(|p| p.display().to_string())
                     .unwrap_or_default();
-                let identity = nocode_core::SessionIdentity::new(
-                    &plan.session_persistence.session_id,
-                    &cwd,
-                );
+                let identity =
+                    nocode_core::SessionIdentity::new(&plan.session_persistence.session_id, &cwd);
                 nocode_core::persist_transcript(&identity, &plan.transcript.entries);
             }
 
@@ -2775,7 +2783,11 @@ impl ReplSession {
         self.status_hud.cumulative_input_tokens = snap.total_usage.input_tokens;
         self.status_hud.cumulative_output_tokens = snap.total_usage.output_tokens;
         // Context window: estimate % from total tokens vs budget
-        let budget = plan.budget_state.task_budget.as_ref().map_or(200_000u64, |b| u64::from(b.total));
+        let budget = plan
+            .budget_state
+            .task_budget
+            .as_ref()
+            .map_or(200_000u64, |b| u64::from(b.total));
         let total_used = snap.total_usage.input_tokens + snap.total_usage.output_tokens;
         if budget > 0 {
             let pct = (total_used as f64 / budget as f64 * 100.0) as f32;
@@ -3219,7 +3231,11 @@ impl<W: Write> ModelStreamSink for ReplLiveStreamCapture<'_, W> {
             ModelStreamEvent::ThinkingDelta { text } => {
                 format!("thinking delta: {text}")
             }
-            ModelStreamEvent::ToolResult { tool_name, content, is_error } => {
+            ModelStreamEvent::ToolResult {
+                tool_name,
+                content,
+                is_error,
+            } => {
                 if is_error {
                     format!("tool result: [error] {tool_name}: {content}")
                 } else {

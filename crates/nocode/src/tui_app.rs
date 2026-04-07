@@ -400,10 +400,10 @@ impl TuiApp {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(4),                    // chat area / banner (top, fills)
-                Constraint::Length(1),                  // status line
-                Constraint::Length(hints_height),       // keyboard hints (hidden when busy)
-                Constraint::Length(input_lines),        // input (dynamic height)
+                Constraint::Min(4),               // chat area / banner (top, fills)
+                Constraint::Length(1),            // status line
+                Constraint::Length(hints_height), // keyboard hints (hidden when busy)
+                Constraint::Length(input_lines),  // input (dynamic height)
             ])
             .split(frame.area());
 
@@ -853,8 +853,12 @@ impl TuiApp {
         let (command, _args) = cmd.split_once(' ').unwrap_or((cmd, ""));
         match command {
             "/help" | "/h" => {
-                self.push_system("Commands: /help /clear /status /model /sessions /resume /mcp /agents /quit");
-                self.push_system("Keys: Ctrl-C quit · Tab expand tool · Ctrl-L clear · Ctrl-P/N history");
+                self.push_system(
+                    "Commands: /help /clear /status /model /sessions /resume /mcp /agents /quit",
+                );
+                self.push_system(
+                    "Keys: Ctrl-C quit · Tab expand tool · Ctrl-L clear · Ctrl-P/N history",
+                );
             }
             "/clear" | "/c" => {
                 self.chat_messages.clear();
@@ -1102,9 +1106,7 @@ impl TuiApp {
                         .rfind('\n')
                         .map_or(0, |p| p + 1);
                     self.cursor_pos = (prev_line_start + col).min(line_start - 1);
-                    while self.cursor_pos > 0
-                        && !self.input.is_char_boundary(self.cursor_pos)
-                    {
+                    while self.cursor_pos > 0 && !self.input.is_char_boundary(self.cursor_pos) {
                         self.cursor_pos -= 1;
                     }
                     self.dirty = true;
@@ -1140,10 +1142,11 @@ impl TuiApp {
                     .find('\n')
                     .map_or(self.input.len(), |p| self.cursor_pos + p);
                 self.cursor_pos = if line_end > 0 {
-                    prev_char_boundary(&self.input, line_end)
-                        .max(self.input[..self.cursor_pos]
+                    prev_char_boundary(&self.input, line_end).max(
+                        self.input[..self.cursor_pos]
                             .rfind('\n')
-                            .map_or(0, |p| p + 1))
+                            .map_or(0, |p| p + 1),
+                    )
                 } else {
                     0
                 };
@@ -1261,9 +1264,7 @@ impl TuiApp {
 
     /// Save input to history (max 50 entries).
     fn save_to_history(&mut self, text: &str) {
-        if !text.is_empty()
-            && self.input_history.last().is_none_or(|last| last != text)
-        {
+        if !text.is_empty() && self.input_history.last().is_none_or(|last| last != text) {
             self.input_history.push(text.to_owned());
             if self.input_history.len() > 50 {
                 self.input_history.remove(0);

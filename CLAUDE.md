@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is nocode
 
-A terminal-native AI coding assistant built in Rust. Connects to Claude, OpenAI, Gemini, or any compatible endpoint. Two interfaces: line-mode REPL and 4-pane TUI with Markdown rendering, syntect syntax highlighting, and RGB color support.
+A terminal-native AI coding assistant built in Rust. Connects to Claude, OpenAI, Gemini, or any compatible endpoint. Two interfaces: line-mode REPL and 4-pane TUI with Markdown rendering, syntect syntax highlighting, RGB color support, vim mode, dark/light themes, and thinking block display.
 
 ## Build & Test Commands
 
 ```bash
 cargo build                                     # debug build
 cargo build --release                           # release build
-cargo test                                      # all tests (~863)
+cargo test                                      # all tests (~909)
 cargo test -p nocode-core                       # core library only
 cargo test -p nocode                            # CLI binary only
 cargo test <test_name>                          # single test by name
@@ -44,7 +44,7 @@ User Input → main.rs (mode dispatch) → QueryEngine (9-state loop)
   → hook runner → sandbox → execute → result back to QueryEngine loop
 ```
 
-The query engine (`query_engine.rs`) drives a 9-state conversation loop. Each iteration: send messages to the model via `provider_transport.rs` (SSE streaming), parse the response, execute any tool calls through `DefaultToolExecutor`, and loop until the model stops or budget is exhausted.
+The query engine (`query_engine.rs`) drives an agentic conversation loop. Each iteration: send messages to the model via `provider_transport.rs` (SSE streaming), parse the response, execute any tool calls through `DefaultToolExecutor`, feed tool results back to the model, and loop until the model stops requesting tools or budget is exhausted.
 
 ### Dependency Injection
 
@@ -96,7 +96,7 @@ Several subsystems use `OnceLock<Arc<Mutex<T>>>` singletons: `TaskCoordinator`, 
 
 - Primary: `sql_store.rs` — rusqlite with date-based volume partitioning (`~/.nocode/data/nocode_YYYY-MM-DD.db`). Tables: sessions, messages, memories, command_history, telemetry_events.
 - Memory: `memory_store.rs` — file-system CRUD with Markdown+YAML frontmatter, MEMORY.md index.
-- Legacy: `session_persistence.rs` — JSONL session/transcript/history.
+- Session: `session_persistence.rs` — JSONL transcript/history/task persistence with auto-persist on submission complete. `persist_transcript()` / `load_transcript()` / `list_sessions()` for session resume.
 
 ### Session Management
 
@@ -116,6 +116,49 @@ Several subsystems use `OnceLock<Arc<Mutex<T>>>` singletons: `TaskCoordinator`, 
 - Integration tests: `crates/nocode-core/tests/` — 4 files covering mock service parity, tool execution roundtrips, trust/permission/MCP health, roadmap
 - `MockAnthropicService` provides 12 deterministic scenarios with `CapturedRequest` recording
 - Query engine has dedicated test suite in `query_engine/tests/` (state resume, submission, support)
+
+### TUI Features
+
+The TUI (`tui_app.rs`, `tui_widgets.rs`) provides a rich terminal interface:
+
+- **Vim mode**: Normal/Insert mode with `h/j/k/l/w/b/e/x/dd/C` motions, Esc toggle, `[NORMAL]` indicator
+- **Theme switching**: Dark/light themes via `Ctrl-T`, `RwLock`-based runtime switching (`tui_theme.rs`)
+- **Thinking blocks**: Collapsible `∴` blocks showing model reasoning, `Ctrl-O` expand/collapse
+- **Paste support**: Bracketed paste mode for multi-line paste with newline preservation
+- **Streaming**: Real-time incremental text rendering, tool start/done/result events
+- **Tool display**: Claude Code visual language (`❯/⎿/●/∴/•/✖/⚠`), collapsible tool output with `Tab`
+- **Inline permissions**: `⚠ y/n/a` prompt for tool approval
+- **Input**: Multi-line with `Shift-Enter`, input history `Ctrl-P/N`, `Ctrl-U` clear
+- **Slash commands**: `/help /clear /status /model /sessions /resume /mcp /agents /quit`
+- **Session resume**: `/sessions` lists saved sessions, `/resume <id>` restores transcript
+- **MCP status**: `/mcp` shows connected MCP servers and discovered tools
+- **Agent status**: `/agents` shows background agent workers and their state
+
+### Model Stream Events
+
+`ModelStreamEvent` enum drives real-time TUI updates during model calls:
+
+- `Start` / `Delta` / `Complete` — standard streaming text
+- `ToolUseStart` / `ToolUseDone` — tool call lifecycle (name, args summary)
+- `ToolResult` — tool execution result pushed in real-time during agentic loop
+- `ThinkingDelta` — reasoning/thinking content from extended thinking models
+- `StreamError` — retryable/non-retryable error surface
+
+### Agentic Tool Loop
+
+The query engine (`runtime.rs`) implements a multi-turn agentic loop:
+
+```
+model call → tool requests? → execute tools → push ToolResult to stream
+  → flush results into conversation → loop back to model call
+  → repeat until model stops requesting tools or max_turns reached
+```
+
+Agent tool calls spawn on background threads via `WorkerRegistry` for parallel execution.
+
+### MCP Integration
+
+MCP servers configured in `settings.json` under `mcp_servers` are auto-connected at TUI startup. `McpManager` handles lifecycle (11 phases), health checks, reconnection. `McpClient` communicates via JSON-RPC over stdio. Tools discovered via `tools/list` are routable through `mcp_bridge.rs`.
 
 ## Key Conventions
 

@@ -63,7 +63,12 @@ pub(crate) fn run_tui() -> io::Result<()> {
 
     // Cleanup
     disable_raw_mode()?;
-    execute!(io::stdout(), Show, DisableBracketedPaste, LeaveAlternateScreen)?;
+    execute!(
+        io::stdout(),
+        Show,
+        DisableBracketedPaste,
+        LeaveAlternateScreen
+    )?;
 
     result
 }

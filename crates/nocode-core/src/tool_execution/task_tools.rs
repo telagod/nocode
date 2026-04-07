@@ -81,16 +81,9 @@ pub fn execute_task_create(call: ToolCallInput) -> ToolExecutionTrace {
     let coordinator = global_task_coordinator();
     let mut guard = coordinator.lock().unwrap();
     let tid = match task_type.as_str() {
-        "agent" => guard.spawn_local_agent(
-            subject.clone(),
-            description_str.clone(),
-        ),
+        "agent" => guard.spawn_local_agent(subject.clone(), description_str.clone()),
         "dream" => guard.spawn_dream(0, Some(description_str.clone())),
-        _ => guard.spawn_local_shell(
-            description_str.clone(),
-            Some(subject.clone()),
-            None,
-        ),
+        _ => guard.spawn_local_shell(description_str.clone(), Some(subject.clone()), None),
     };
     drop(guard);
 
