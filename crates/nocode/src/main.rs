@@ -17,7 +17,11 @@ mod tool_render;
 mod tool_truncate;
 mod tui;
 mod tui_app;
+#[allow(dead_code)]
+mod tui_input;
 mod tui_permission;
+#[allow(dead_code)]
+mod tui_theme;
 mod tui_widgets;
 
 use nocode_core::{
