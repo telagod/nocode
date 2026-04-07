@@ -754,6 +754,10 @@ pub(crate) fn run_app_loop(
                 // Attach result output to the last tool message
                 let content = line.strip_prefix("tool result: ").unwrap_or("");
                 app.attach_tool_output(content);
+                // After tool results, model will be called again — show thinking
+                if app.thinking_spinner.is_none() {
+                    app.thinking_spinner = Some(Spinner::new("Thinking..."));
+                }
             } else if line.starts_with("tool progress: ") {
                 // Show progress under the last tool message
                 let content = line.strip_prefix("tool progress: ").unwrap_or("");
