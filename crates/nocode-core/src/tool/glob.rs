@@ -16,9 +16,8 @@ impl Tool for GlobTool {
         json!({
             "type": "object",
             "properties": {
-                "pattern": { "type": "string", "description": "Glob pattern (e.g. **/*.rs)" },
-                "path": { "type": "string", "description": "Directory to search in (defaults to cwd)" },
-                "head_limit": { "type": "integer", "description": "Limit output to first N files (default 250)" }
+                "pattern": { "type": "string", "description": "The glob pattern to match files against" },
+                "path": { "type": "string", "description": "The directory to search in. If not specified, the current working directory will be used." }
             },
             "required": ["pattern"]
         })
