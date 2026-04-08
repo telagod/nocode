@@ -51,15 +51,33 @@ impl Tool for WebSearchTool {
     }
     fn input_schema(&self) -> Value {
         json!({"type":"object","properties":{
-            "query":{"type":"string","description":"Search query"},
-            "max_results":{"type":"integer","description":"Max number of results (default 5)"}
+            "query":{"type":"string","description":"The search query to use"},
+            "allowed_domains":{"type":"array","items":{"type":"string"},"description":"Only include search results from these domains"},
+            "blocked_domains":{"type":"array","items":{"type":"string"},"description":"Never include search results from these domains"}
         },"required":["query"]})
     }
     fn execute(&self, input: &Value) -> ToolOutput {
         let Some(query) = input["query"].as_str() else {
             return ToolOutput::error("Missing required parameter: query");
         };
-        let max_results = input["max_results"].as_u64().unwrap_or(5) as usize;
+        let max_results = 10usize; // fetch more, filter down
+
+        let allowed_domains: Vec<String> = input["allowed_domains"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let blocked_domains: Vec<String> = input["blocked_domains"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         // Use DuckDuckGo HTML lite — no API key required
         let encoded = urlencoding::encode(query);
@@ -88,11 +106,28 @@ impl Tool for WebSearchTool {
         // Parse results from DuckDuckGo HTML lite
         let results = parse_ddg_results(&body, max_results);
 
-        if results.is_empty() {
+        // Apply domain filtering
+        let filtered: Vec<&SearchResult> = results
+            .iter()
+            .filter(|r| {
+                if !allowed_domains.is_empty()
+                    && !allowed_domains.iter().any(|d| r.url.contains(d.as_str()))
+                {
+                    return false;
+                }
+                if blocked_domains.iter().any(|d| r.url.contains(d.as_str())) {
+                    return false;
+                }
+                true
+            })
+            .take(5)
+            .collect();
+
+        if filtered.is_empty() {
             return ToolOutput::success(format!("No results found for: {query}"));
         }
 
-        let formatted: Vec<String> = results
+        let formatted: Vec<String> = filtered
             .iter()
             .enumerate()
             .map(|(i, r)| format!("{}. {}\n   {}\n   {}", i + 1, r.title, r.url, r.snippet))

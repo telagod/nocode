@@ -26,8 +26,10 @@ impl Tool for BashTool {
         json!({
             "type": "object",
             "properties": {
-                "command": { "type": "string", "description": "The shell command to execute" },
-                "timeout": { "type": "integer", "description": "Timeout in milliseconds (max 600000)" }
+                "command": { "type": "string", "description": "The command to execute" },
+                "timeout": { "type": "integer", "description": "Optional timeout in milliseconds (max 600000)" },
+                "description": { "type": "string", "description": "Clear, concise description of what this command does in active voice." },
+                "run_in_background": { "type": "boolean", "description": "Set to true to run this command in the background. Use Read to read the output later." }
             },
             "required": ["command"]
         })
@@ -39,6 +41,31 @@ impl Tool for BashTool {
         };
 
         let timeout_ms = input["timeout"].as_u64().unwrap_or(120_000).min(600_000);
+        let run_in_background = input["run_in_background"].as_bool().unwrap_or(false);
+
+        if run_in_background {
+            // Background execution: spawn and return immediately with PID
+            let child = match Command::new("sh")
+                .arg("-c")
+                .arg(command)
+                .current_dir(&self.cwd)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(e) => return ToolOutput::error(format!("Failed to execute command: {e}")),
+            };
+            return ToolOutput::success(
+                json!({
+                    "pid": child.id(),
+                    "background": true,
+                    "command": command
+                })
+                .to_string(),
+            );
+        }
+
         let timeout = Duration::from_millis(timeout_ms);
 
         let mut child = match Command::new("sh")
