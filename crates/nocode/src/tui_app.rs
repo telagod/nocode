@@ -555,6 +555,10 @@ impl TuiApp {
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
                 self.toggle_thinking_blocks();
             }
+            // Copy last assistant message to clipboard
+            (KeyCode::Char('y'), KeyModifiers::CONTROL) => {
+                self.copy_last_assistant_to_clipboard();
+            }
             // History prev
             (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
                 self.history_prev();
@@ -714,6 +718,37 @@ impl TuiApp {
         }
         self.invalidate_height_cache();
         self.dirty = true;
+    }
+
+    fn copy_last_assistant_to_clipboard(&mut self) {
+        // Find last assistant message
+        let text = self
+            .chat_messages
+            .iter()
+            .rev()
+            .find(|m| m.kind == ChatMessageKind::Assistant)
+            .map(|m| {
+                m.lines
+                    .iter()
+                    .map(|l| {
+                        l.segments
+                            .iter()
+                            .map(|s| s.text.as_str())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            });
+
+        let Some(text) = text else {
+            self.push_system("No assistant message to copy.");
+            return;
+        };
+
+        match copy_to_clipboard(&text) {
+            Ok(()) => self.push_system("Copied to clipboard."),
+            Err(e) => self.push_error(&format!("Clipboard: {e}")),
+        }
     }
 
     fn history_prev(&mut self) {
@@ -1097,4 +1132,45 @@ fn prev_word_boundary(s: &str, pos: usize) -> usize {
         p -= 1;
     }
     p
+}
+
+/// Copy text to system clipboard. Cross-platform: xclip/xsel (Linux), pbcopy (macOS), clip.exe (WSL/Windows).
+fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let candidates: &[&[&str]] = if cfg!(target_os = "macos") {
+        &[&["pbcopy"]]
+    } else {
+        // Linux: try xclip, xsel, wl-copy (Wayland), clip.exe (WSL)
+        &[
+            &["xclip", "-selection", "clipboard"],
+            &["xsel", "--clipboard", "--input"],
+            &["wl-copy"],
+            &["clip.exe"],
+        ]
+    };
+
+    for args in candidates {
+        let program = args[0];
+        let extra_args = &args[1..];
+        if let Ok(mut child) = Command::new(program)
+            .args(extra_args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            if let Some(stdin) = child.stdin.as_mut() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            if let Ok(status) = child.wait()
+                && status.success()
+            {
+                return Ok(());
+            }
+        }
+    }
+
+    Err("No clipboard tool found (tried xclip, xsel, wl-copy, pbcopy, clip.exe)".to_string())
 }

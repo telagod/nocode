@@ -7,6 +7,8 @@ pub enum PermissionMode {
     Ask,
     /// Deny all tool calls.
     Deny,
+    /// Read-only: allow read commands, block all writes.
+    ReadOnly,
 }
 
 impl Default for PermissionMode {

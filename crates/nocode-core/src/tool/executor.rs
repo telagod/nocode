@@ -217,6 +217,20 @@ impl<'a> ToolExecutor<'a> {
                 }
             }
             PermissionMode::Deny => false,
+            PermissionMode::ReadOnly => {
+                // Only allow read-only tools
+                match name {
+                    "FileRead" | "Glob" | "Grep" | "TaskGet" | "TaskList" | "TaskOutput"
+                    | "MemoryList" | "MemorySearch" | "CronList" | "ToolSearch"
+                    | "ListMcpResources" | "ReadMcpResource" | "AskUserQuestion" => true,
+                    "Bash" => {
+                        let cmd = input["command"].as_str().unwrap_or("");
+                        !bash_validation::is_write_command(cmd)
+                            && bash_validation::is_read_only_command(cmd)
+                    }
+                    _ => false,
+                }
+            }
         }
     }
 

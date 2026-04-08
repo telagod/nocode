@@ -139,11 +139,74 @@ pub fn is_destructive_command(command: &str) -> bool {
 // 3. mode — permission-mode-aware validation
 // =========================================================================
 
+/// Commands that perform write/modify operations (blocked in ReadOnly mode).
+const WRITE_COMMANDS: &[&str] = &[
+    "rm", "rmdir", "mv", "cp", "mkdir", "touch", "chmod", "chown", "chgrp",
+    "ln", "install", "mktemp", "truncate", "shred", "dd", "tee",
+    "sed", "patch", "nano", "vi", "vim", "emacs",
+    "git", "cargo", "npm", "yarn", "pnpm", "pip", "pip3",
+    "make", "cmake", "gcc", "g++", "rustc", "go", "javac",
+    "docker", "podman", "kubectl",
+    "systemctl", "service", "mount", "umount",
+    "useradd", "userdel", "usermod", "groupadd", "groupdel",
+    "iptables", "ufw", "firewall-cmd",
+    "kill", "killall", "pkill",
+    "shutdown", "reboot", "halt", "poweroff", "init",
+    "mkfs", "fdisk", "parted", "wipefs",
+    "curl", "wget",  // can write with -o
+];
+
+/// Check if a command performs write operations (not safe for ReadOnly mode).
+pub fn is_write_command(command: &str) -> bool {
+    let cmd = command.trim();
+    let first_word = first_command_word(cmd);
+
+    // Explicit write commands
+    if WRITE_COMMANDS.contains(&first_word) {
+        return true;
+    }
+
+    // Output redirection (> or >>)
+    if cmd.contains(" > ") || cmd.contains(" >> ") {
+        return true;
+    }
+
+    // sed in-place
+    if is_sed_inplace(cmd) {
+        return true;
+    }
+
+    // awk writing
+    if is_awk_write(cmd) {
+        return true;
+    }
+
+    // Pipe to write commands
+    for wc in WRITE_COMMANDS {
+        if cmd.contains(&format!("| {wc} ")) || cmd.contains(&format!("| {wc}")) {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Validate a command against the current permission mode.
 pub fn validate_for_mode(command: &str, mode: PermissionMode) -> Result<(), String> {
     let cmd = command.trim();
     match mode {
         PermissionMode::Deny => Err("All commands blocked in Deny mode".to_string()),
+        PermissionMode::ReadOnly => {
+            validate_bash_command(cmd)?;
+            if is_write_command(cmd) {
+                Err(format!(
+                    "Command blocked in ReadOnly mode (write operation): {}",
+                    first_command_word(cmd)
+                ))
+            } else {
+                Ok(())
+            }
+        }
         PermissionMode::Ask => {
             // In Ask mode, read-only commands pass; others need approval
             // (approval handled upstream by PermissionPrompter)
@@ -389,6 +452,62 @@ mod tests {
     #[test]
     fn auto_mode_allows_safe() {
         assert!(validate_for_mode("echo hi", PermissionMode::Auto).is_ok());
+    }
+
+    // --- read_only mode ---
+    #[test]
+    fn readonly_allows_read_commands() {
+        assert!(validate_for_mode("ls -la", PermissionMode::ReadOnly).is_ok());
+        assert!(validate_for_mode("cat file.txt", PermissionMode::ReadOnly).is_ok());
+        assert!(validate_for_mode("grep foo bar.txt", PermissionMode::ReadOnly).is_ok());
+        assert!(validate_for_mode("find . -name '*.rs'", PermissionMode::ReadOnly).is_ok());
+        assert!(validate_for_mode("head -20 file.txt", PermissionMode::ReadOnly).is_ok());
+        assert!(validate_for_mode("wc -l file.txt", PermissionMode::ReadOnly).is_ok());
+        assert!(validate_for_mode("echo hello", PermissionMode::ReadOnly).is_ok());
+    }
+
+    #[test]
+    fn readonly_blocks_write_commands() {
+        assert!(validate_for_mode("rm file.txt", PermissionMode::ReadOnly).is_err());
+        assert!(validate_for_mode("mv a b", PermissionMode::ReadOnly).is_err());
+        assert!(validate_for_mode("cp a b", PermissionMode::ReadOnly).is_err());
+        assert!(validate_for_mode("mkdir /tmp/test", PermissionMode::ReadOnly).is_err());
+        assert!(validate_for_mode("touch file.txt", PermissionMode::ReadOnly).is_err());
+        assert!(validate_for_mode("chmod 755 file", PermissionMode::ReadOnly).is_err());
+        assert!(validate_for_mode("chown root file", PermissionMode::ReadOnly).is_err());
+    }
+
+    #[test]
+    fn readonly_blocks_redirect() {
+        assert!(validate_for_mode("echo x > file.txt", PermissionMode::ReadOnly).is_err());
+        assert!(validate_for_mode("echo x >> file.txt", PermissionMode::ReadOnly).is_err());
+    }
+
+    #[test]
+    fn readonly_blocks_sed_inplace() {
+        assert!(validate_for_mode("sed -i 's/a/b/' f.txt", PermissionMode::ReadOnly).is_err());
+    }
+
+    #[test]
+    fn readonly_blocks_pipe_to_write() {
+        assert!(validate_for_mode("cat f | tee out.txt", PermissionMode::ReadOnly).is_err());
+    }
+
+    // --- write command detection ---
+    #[test]
+    fn write_command_detection() {
+        assert!(is_write_command("rm file.txt"));
+        assert!(is_write_command("mv a b"));
+        assert!(is_write_command("cp a b"));
+        assert!(is_write_command("mkdir /tmp/test"));
+        assert!(is_write_command("touch file.txt"));
+        assert!(is_write_command("chmod 755 file"));
+        assert!(is_write_command("echo x > file.txt"));
+        assert!(is_write_command("sed -i 's/a/b/' f"));
+        assert!(!is_write_command("ls -la"));
+        assert!(!is_write_command("cat file.txt"));
+        assert!(!is_write_command("grep foo bar"));
+        assert!(!is_write_command("echo hello"));
     }
 
     // --- sed ---
