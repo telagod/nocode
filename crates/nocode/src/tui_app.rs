@@ -192,13 +192,13 @@ impl TuiApp {
     pub fn push_tool_start(&mut self, name: &str) {
         self.chat_messages.push(ChatMessage::plain(
             ChatMessageKind::Tool,
-            &format!("● {name}"),
+            &format!("❯ {name}"),
         ));
         self.on_message_added();
     }
 
     pub fn push_tool_done(&mut self, name: &str, content: &str, is_error: bool) {
-        let prefix = if is_error { "✗" } else { "✓" };
+        let prefix = if is_error { "✖" } else { "⎿" };
         let display = if content.len() > 200 {
             format!("{}...", &content[..200])
         } else {

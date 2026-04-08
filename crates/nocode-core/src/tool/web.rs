@@ -22,7 +22,8 @@ impl Tool for WebFetchTool {
         let Some(url) = input["url"].as_str() else {
             return ToolOutput::error("Missing required parameter: url");
         };
-        let max_len = input["max_length"].as_u64().unwrap_or(50_000) as usize;
+        let _prompt = input["prompt"].as_str().unwrap_or("");
+        let max_len: usize = 50_000;
         match reqwest::blocking::get(url) {
             Ok(resp) => match resp.text() {
                 Ok(body) => {

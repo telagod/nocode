@@ -335,8 +335,7 @@ impl LoopObserver for ReplObserver {
                     self.needs_newline = !text.ends_with('\n');
                 }
                 StreamDelta::ThinkingDelta { thinking } => {
-                    // Show thinking in dim
-                    print!("\x1b[2m{thinking}\x1b[0m");
+                    print!("\x1b[2m∴ {thinking}\x1b[0m");
                     let _ = io::stdout().flush();
                 }
                 _ => {}
@@ -349,7 +348,7 @@ impl LoopObserver for ReplObserver {
             println!();
             self.needs_newline = false;
         }
-        println!("\x1b[36m● {name}\x1b[0m");
+        println!("\x1b[36m❯ {name}\x1b[0m");
     }
 
     fn on_tool_done(&mut self, name: &str, _id: &str, result: &ContentBlock) {
@@ -358,9 +357,9 @@ impl LoopObserver for ReplObserver {
         } = result
         {
             let prefix = if *is_error {
-                "\x1b[31m✗"
+                "\x1b[31m✖"
             } else {
-                "\x1b[32m✓"
+                "\x1b[32m⎿"
             };
             // Show truncated result
             let display = if content.len() > 200 {
