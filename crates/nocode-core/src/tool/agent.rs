@@ -1,4 +1,4 @@
-//! Agent tool — spawn subagent workers.
+//! Agent tool — spawn subagent workers on background threads.
 
 use crate::agent::worker::{WorkerState, global_worker_registry};
 use crate::tool::{Tool, ToolOutput};
@@ -17,7 +17,8 @@ impl Tool for AgentTool {
         json!({"type":"object","properties":{
             "prompt":{"type":"string","description":"The task for the agent to perform"},
             "name":{"type":"string","description":"Name for the spawned agent"},
-            "subagent_type":{"type":"string","description":"Type of agent (general-purpose, Explore, Plan)"}
+            "subagent_type":{"type":"string","description":"Type of agent (general-purpose, Explore, Plan)"},
+            "run_in_background":{"type":"boolean","description":"Run agent in background (default true)"}
         },"required":["prompt"]})
     }
     fn execute(&self, input: &Value) -> ToolOutput {
@@ -25,11 +26,183 @@ impl Tool for AgentTool {
             return ToolOutput::error("Missing required parameter: prompt");
         };
         let name = input["name"].as_str().unwrap_or("agent");
+        let prompt_owned = prompt.to_string();
+        let name_owned = name.to_string();
+
+        // Register worker
         let registry = global_worker_registry();
+        let id = {
+            let mut guard = registry.lock().unwrap();
+            let id = guard.register(&name_owned, &prompt_owned);
+            guard.set_state(&id, WorkerState::ReadyForPrompt);
+            id
+        };
+
+        let worker_id = id.clone();
+
+        // Spawn background thread — worker builds its own provider/executor/loop
+        std::thread::spawn(move || {
+            run_worker_thread(&worker_id, &prompt_owned);
+        });
+
+        ToolOutput::success(
+            json!({"worker_id": id, "name": name_owned, "status": "spawned"}).to_string(),
+        )
+    }
+}
+
+/// Execute a worker's prompt on a background thread.
+/// Builds provider, tool registry, and agentic loop from global config.
+fn run_worker_thread(worker_id: &str, prompt: &str) {
+    use crate::config::settings::Settings;
+    use crate::message::Message;
+    use crate::prompt::assembly::{self, TruncationBudget};
+    use crate::query::r#loop::{self, LoopConfig, NoopObserver};
+    use crate::tool::ToolRegistry;
+    use crate::tool::executor::ToolExecutor;
+
+    let registry = global_worker_registry();
+
+    // Mark running
+    {
         let mut guard = registry.lock().unwrap();
-        let id = guard.register(name, prompt);
-        guard.set_state(&id, WorkerState::Running);
-        // TODO: actually spawn background thread with agentic loop
-        ToolOutput::success(json!({"worker_id": id, "name": name, "status": "spawned"}).to_string())
+        guard.set_state(worker_id, WorkerState::Running);
+    }
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| String::from("."));
+
+        let settings = Settings::load_merged(&cwd);
+        let model = std::env::var("NOCODE_MODEL").unwrap_or_else(|_| {
+            settings
+                .model
+                .clone()
+                .unwrap_or_else(|| String::from("claude-sonnet-4-20250514"))
+        });
+        let max_tokens = settings.max_tokens.unwrap_or(16384);
+        let max_turns = settings.max_turns.unwrap_or(10);
+
+        let provider_type = resolve_worker_provider(&settings);
+        let provider = build_worker_provider(&provider_type, &settings);
+
+        let tool_registry = ToolRegistry::with_defaults(&cwd);
+        let system_blocks =
+            assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
+        let executor = ToolExecutor::new(&tool_registry);
+
+        let messages = vec![Message::user_text(prompt)];
+        let config = LoopConfig {
+            model,
+            max_tokens,
+            max_turns,
+            system: system_blocks,
+            tools: tool_registry.definitions(),
+            parallel_tool_execution: true,
+        };
+        let mut observer = NoopObserver;
+
+        let loop_result = r#loop::run_agentic_loop(
+            provider.as_ref(),
+            &executor,
+            &config,
+            messages,
+            &mut observer,
+        )?;
+
+        // Extract assistant text from result
+        let text: String = loop_result
+            .messages
+            .iter()
+            .filter(|m| m.role == crate::message::Role::Assistant)
+            .map(|m| m.text_content())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        Ok::<String, Box<dyn std::error::Error + Send + Sync>>(text)
+    }));
+
+    // Write result back to registry
+    let mut guard = registry.lock().unwrap();
+    match result {
+        Ok(Ok(text)) => {
+            guard.set_result(worker_id, text);
+        }
+        Ok(Err(e)) => {
+            guard.set_error(worker_id, format!("{e}"));
+        }
+        Err(_panic) => {
+            guard.set_error(worker_id, "Worker panicked".to_string());
+        }
+    }
+}
+
+fn resolve_worker_provider(
+    _settings: &crate::config::settings::Settings,
+) -> crate::provider::types::ModelProvider {
+    use crate::provider::types::ModelProvider;
+    if let Ok(p) = std::env::var("NOCODE_MODEL_PROVIDER")
+        && let Some(provider) = ModelProvider::parse(&p)
+    {
+        return provider;
+    }
+    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+        return ModelProvider::Claude;
+    }
+    if std::env::var("OPENAI_API_KEY").is_ok() {
+        return ModelProvider::OpenAi;
+    }
+    if std::env::var("GEMINI_API_KEY").is_ok() {
+        return ModelProvider::Gemini;
+    }
+    ModelProvider::Claude
+}
+
+fn build_worker_provider(
+    provider: &crate::provider::types::ModelProvider,
+    settings: &crate::config::settings::Settings,
+) -> Box<dyn crate::provider::Provider> {
+    use crate::provider::claude::ClaudeProvider;
+    use crate::provider::gemini::GeminiProvider;
+    use crate::provider::openai::OpenAiProvider;
+    use crate::provider::types::ModelProvider;
+
+    match provider {
+        ModelProvider::Claude => {
+            let key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+            let base = std::env::var("ANTHROPIC_BASE_URL")
+                .unwrap_or_else(|_| String::from("https://api.anthropic.com"));
+            Box::new(ClaudeProvider::with_base_url(base, key))
+        }
+        ModelProvider::OpenAi => {
+            let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+            let base = std::env::var("OPENAI_BASE_URL")
+                .unwrap_or_else(|_| String::from("https://api.openai.com"));
+            Box::new(OpenAiProvider::with_base_url(base, key))
+        }
+        ModelProvider::Gemini => {
+            let key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
+            Box::new(GeminiProvider::new(key))
+        }
+        ModelProvider::Custom => {
+            let key = std::env::var("ANTHROPIC_API_KEY")
+                .or_else(|_| std::env::var("OPENAI_API_KEY"))
+                .unwrap_or_default();
+            let base = settings
+                .custom_base_url
+                .clone()
+                .or_else(|| std::env::var("NOCODE_CUSTOM_BASE_URL").ok())
+                .unwrap_or_else(|| String::from("http://localhost:8080"));
+            let format = settings
+                .custom_api_format
+                .clone()
+                .or_else(|| std::env::var("NOCODE_CUSTOM_API_FORMAT").ok())
+                .unwrap_or_else(|| String::from("openai"));
+            match format.as_str() {
+                "anthropic" | "claude" => Box::new(ClaudeProvider::with_base_url(base, key)),
+                _ => Box::new(OpenAiProvider::with_base_url(base, key)),
+            }
+        }
     }
 }

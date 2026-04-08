@@ -65,7 +65,7 @@ pub struct RuntimeConfig {
 
 impl RuntimeConfig {
     /// Build RuntimeConfig from Settings + environment variable overrides.
-    pub fn from_settings(settings: &Settings, cwd: &str) -> Self {
+    pub fn from_settings(settings: &Settings, _cwd: &str) -> Self {
         let mut config = Self {
             model: settings
                 .model
@@ -77,13 +77,13 @@ impl RuntimeConfig {
                 .unwrap_or_else(|| String::from("ask")),
             max_turns: settings.max_turns.unwrap_or(10),
             max_tokens: settings.max_tokens.unwrap_or(16384),
-            system_prompt: None,
+            system_prompt: settings.system_prompt.clone(),
             custom_base_url: settings.custom_base_url.clone(),
             custom_api_format: settings.custom_api_format.clone(),
-            reasoning_effort: None,
-            mcp_servers: HashMap::new(),
-            hooks: HookConfig::default(),
-            sandbox: SandboxConfig::default(),
+            reasoning_effort: settings.reasoning_effort.clone(),
+            mcp_servers: settings.mcp_servers.clone(),
+            hooks: settings.hooks.clone().unwrap_or_default(),
+            sandbox: settings.sandbox.clone().unwrap_or_default(),
         };
 
         // Environment variable overrides
@@ -103,54 +103,7 @@ impl RuntimeConfig {
             config.reasoning_effort = Some(r);
         }
 
-        // Load extended config (mcp_servers, hooks, sandbox) from settings files
-        config.load_extended_config(cwd);
-
         config
-    }
-
-    fn load_extended_config(&mut self, cwd: &str) {
-        // Try loading from project .nocode/settings.json for extended fields
-        let paths = [
-            format!("{cwd}/.nocode/settings.json"),
-            format!(
-                "{}/.nocode/settings.json",
-                env::var("HOME").unwrap_or_default()
-            ),
-        ];
-
-        for path in &paths {
-            if let Ok(raw) = std::fs::read_to_string(path)
-                && let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw)
-            {
-                self.merge_extended_json(&json);
-            }
-        }
-    }
-
-    fn merge_extended_json(&mut self, json: &serde_json::Value) {
-        // MCP servers — merge key-by-key
-        if let Some(servers) = json.get("mcp_servers").and_then(|v| v.as_object()) {
-            for (name, config) in servers {
-                if let Ok(srv) = serde_json::from_value::<McpServerConfig>(config.clone()) {
-                    self.mcp_servers.insert(name.clone(), srv);
-                }
-            }
-        }
-
-        // Hooks — replace wholesale if present
-        if let Some(hooks) = json.get("hooks")
-            && let Ok(h) = serde_json::from_value::<HookConfig>(hooks.clone())
-        {
-            self.hooks = h;
-        }
-
-        // Sandbox — replace wholesale if present
-        if let Some(sandbox) = json.get("sandbox")
-            && let Ok(s) = serde_json::from_value::<SandboxConfig>(sandbox.clone())
-        {
-            self.sandbox = s;
-        }
     }
 }
 
@@ -209,15 +162,25 @@ mod tests {
     }
 
     #[test]
-    fn merge_extended_json_adds_mcp_servers() {
-        let mut config = RuntimeConfig::default();
-        let json = serde_json::json!({
-            "mcp_servers": {
-                "github": {"command": "npx", "args": ["-y", "mcp-github"]},
-                "slack": {"command": "npx", "args": ["-y", "mcp-slack"]}
-            }
-        });
-        config.merge_extended_json(&json);
+    fn settings_mcp_servers_flow_to_runtime() {
+        let mut settings = Settings::default();
+        settings.mcp_servers.insert(
+            "github".to_string(),
+            McpServerConfig {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "mcp-github".to_string()],
+                ..Default::default()
+            },
+        );
+        settings.mcp_servers.insert(
+            "slack".to_string(),
+            McpServerConfig {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "mcp-slack".to_string()],
+                ..Default::default()
+            },
+        );
+        let config = RuntimeConfig::from_settings(&settings, "/tmp");
         assert_eq!(config.mcp_servers.len(), 2);
         assert!(config.mcp_servers.contains_key("github"));
         assert!(config.mcp_servers.contains_key("slack"));
