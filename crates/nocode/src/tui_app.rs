@@ -107,6 +107,11 @@ pub(crate) struct TuiApp {
     /// Channel to send permission decisions back to the executor thread.
     pub(crate) permission_tx:
         Option<std::sync::mpsc::Sender<nocode_core::tool::permission::PermissionDecision>>,
+    /// Search state
+    pub(crate) search_query: String,
+    pub(crate) search_active: bool,
+    pub(crate) search_matches: Vec<usize>,
+    pub(crate) search_index: usize,
 }
 
 impl TuiApp {
@@ -135,6 +140,10 @@ impl TuiApp {
             hud: StatusHud::new(model, ""),
             error_log: Vec::new(),
             permission_tx: None,
+            search_query: String::new(),
+            search_active: false,
+            search_matches: Vec::new(),
+            search_index: 0,
         }
     }
 
@@ -307,9 +316,11 @@ impl TuiApp {
             self.draw_chat_area(frame, chunks[0]);
         }
 
-        // 2. Status line
-        let hud_line = self.hud.render_line();
-        let status = StatusBar::new(&hud_line);
+        // 2. Status line (search overrides when active)
+        let status_text = self
+            .search_status()
+            .unwrap_or_else(|| self.hud.render_line());
+        let status = StatusBar::new(&status_text);
         frame.render_widget(status, chunks[1]);
 
         // 3. Hints
@@ -485,6 +496,37 @@ impl TuiApp {
             return HandleKeyResult::Continue;
         }
 
+        // Search mode — intercept keys for search input
+        if self.search_active {
+            match key.code {
+                KeyCode::Esc => {
+                    self.search_active = false;
+                    self.search_query.clear();
+                    self.search_matches.clear();
+                    self.dirty = true;
+                }
+                KeyCode::Enter => {
+                    // Jump to next match
+                    if !self.search_matches.is_empty() {
+                        self.search_index = (self.search_index + 1) % self.search_matches.len();
+                        self.dirty = true;
+                    }
+                }
+                KeyCode::Backspace => {
+                    self.search_query.pop();
+                    self.update_search_matches();
+                    self.dirty = true;
+                }
+                KeyCode::Char(c) => {
+                    self.search_query.push(c);
+                    self.update_search_matches();
+                    self.dirty = true;
+                }
+                _ => {}
+            }
+            return HandleKeyResult::Continue;
+        }
+
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) => {
                 if self.input_mode == InputMode::Insert {
@@ -558,6 +600,20 @@ impl TuiApp {
             // Copy last assistant message to clipboard
             (KeyCode::Char('y'), KeyModifiers::CONTROL) => {
                 self.copy_last_assistant_to_clipboard();
+            }
+            // Search toggle
+            (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
+                if self.search_active {
+                    self.search_active = false;
+                    self.search_query.clear();
+                    self.search_matches.clear();
+                } else {
+                    self.search_active = true;
+                    self.search_query.clear();
+                    self.search_matches.clear();
+                    self.search_index = 0;
+                }
+                self.dirty = true;
             }
             // History prev
             (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
@@ -749,6 +805,35 @@ impl TuiApp {
             Ok(()) => self.push_system("Copied to clipboard."),
             Err(e) => self.push_error(&format!("Clipboard: {e}")),
         }
+    }
+
+    fn update_search_matches(&mut self) {
+        self.search_matches.clear();
+        if self.search_query.is_empty() {
+            return;
+        }
+        let query = self.search_query.to_lowercase();
+        for (i, msg) in self.chat_messages.iter().enumerate() {
+            let text: String = msg
+                .lines
+                .iter()
+                .flat_map(|l| l.segments.iter().map(|s| s.text.as_str()))
+                .collect();
+            if text.to_lowercase().contains(&query) {
+                self.search_matches.push(i);
+            }
+        }
+        self.search_index = 0;
+    }
+
+    /// Get the search status line for display.
+    pub(crate) fn search_status(&self) -> Option<String> {
+        if !self.search_active {
+            return None;
+        }
+        let count = self.search_matches.len();
+        let idx = if count > 0 { self.search_index + 1 } else { 0 };
+        Some(format!("Search: {} ({}/{})", self.search_query, idx, count))
     }
 
     fn history_prev(&mut self) {

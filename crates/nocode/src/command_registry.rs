@@ -36,6 +36,11 @@ pub enum CommandAction {
     Skills,
     Env,
     Keybindings,
+    BugHunter,
+    SecurityReview,
+    McpAdd,
+    McpRemove,
+    McpRestart,
 }
 
 /// A registered slash command.
@@ -253,6 +258,41 @@ impl CommandRegistry {
                 summary: "Show keyboard shortcuts",
                 argument_hint: None,
                 action: CommandAction::Keybindings,
+            },
+            CommandEntry {
+                name: "bughunter",
+                aliases: &[],
+                summary: "Scan project for common bugs and issues",
+                argument_hint: Some("[path]"),
+                action: CommandAction::BugHunter,
+            },
+            CommandEntry {
+                name: "security-review",
+                aliases: &["secreview"],
+                summary: "Security review of project code",
+                argument_hint: Some("[path]"),
+                action: CommandAction::SecurityReview,
+            },
+            CommandEntry {
+                name: "mcp-add",
+                aliases: &[],
+                summary: "Add and connect an MCP server",
+                argument_hint: Some("<name> <command> [args...]"),
+                action: CommandAction::McpAdd,
+            },
+            CommandEntry {
+                name: "mcp-remove",
+                aliases: &["mcp-rm"],
+                summary: "Disconnect and remove an MCP server",
+                argument_hint: Some("<name>"),
+                action: CommandAction::McpRemove,
+            },
+            CommandEntry {
+                name: "mcp-restart",
+                aliases: &[],
+                summary: "Restart an MCP server connection",
+                argument_hint: Some("<name>"),
+                action: CommandAction::McpRestart,
             },
         ];
 

@@ -1,7 +1,7 @@
 # nocode vs Claude Code 功能对齐清单
 
-> 更新时间：2026-04-09（v0.2.11 — Phase 3-5 完成，Thinking/StructuredOutput/APIVerify/SessionMemory/ReadOnly/Cron/Clipboard）
-> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (92 .rs files, 528 tests)
+> 更新时间：2026-04-09（v0.2.12-dev — Phase 6 完成，ContextCollapse/MemoryExtraction/SecureCredentials/Onboarding）
+> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (93 .rs files, 546 tests)
 
 ## 图例
 
@@ -132,7 +132,7 @@
 | 草稿/队列 | ✅ | ✅ | 完成 |
 | Spinner / 进度条 | ✅ | ✅ Spinner + stall detection | 完成 |
 | 剪贴板集成 | ✅ | ✅ Ctrl-Y 跨平台 (xclip/pbcopy/clip.exe) | 完成 |
-| Onboarding 引导 | ✅ | ❌ | — |
+| Onboarding 引导 | ✅ | ✅ 首次启动检测 + 交互式配置 | 完成 |
 | 自动更新 | ✅ | ❌ | — |
 
 ---
@@ -183,7 +183,7 @@
 | File history | ✅ | ✅ | 完成 |
 | Resume snapshot | ✅ | ✅ | 完成 |
 | Task record persistence | ✅ | ✅ persist_task_record | 完成 |
-| Secure storage | ✅ | ❌ | — |
+| Secure storage | ✅ | ✅ CredentialStore XOR+base64 加密 | 完成 |
 | Settings sync | ✅ | ❌ | — |
 
 ---
@@ -276,9 +276,9 @@
 | Context compaction | ✅ 15 files | ✅ TailCompactor + RichCompactor (LLM-powered) | 完成 |
 | CLAUDE.md 读取 | ✅ | ✅ discover + format | 完成 |
 | Session memory | ✅ | ✅ SessionMemory (save/load/search/prompt) | 完成 |
-| Memory extraction | ✅ | ❌ | — |
+| Memory extraction | ✅ | ✅ MemoryExtractor 模式匹配 | 完成 |
 | Auto-dream consolidation | ✅ | ❌ | — |
-| Context collapse | ✅ | ❌ | — |
+| Context collapse | ✅ | ✅ ContextCollapser (auto-trigger + stats) | 完成 |
 | Team memory sync | ✅ | ❌ | — |
 
 ---
@@ -341,8 +341,8 @@
 | Providers | 1 (Claude) | 5 (Claude/OpenAI/Gemini/Custom/Mock) | 超集 |
 | Run modes | ~5 | 9 | 超集 |
 | Slash commands | ~20 | 28 | 超集 |
-| Tests | — | 528 | — |
-| Modules | — | 92 .rs | — |
+| Tests | — | 546 | — |
+| Modules | — | 93 .rs | — |
 
 ### 与 v0.1 对比的进展
 

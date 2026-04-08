@@ -163,6 +163,26 @@ pub(crate) fn handle_slash_command(
             cmd_keybindings(app);
             SlashResult::Handled
         }
+        CommandAction::BugHunter => {
+            cmd_bughunter(app, args.as_deref());
+            SlashResult::Handled
+        }
+        CommandAction::SecurityReview => {
+            cmd_security_review(app, args.as_deref());
+            SlashResult::Handled
+        }
+        CommandAction::McpAdd => {
+            cmd_mcp_add(app, args.as_deref());
+            SlashResult::Handled
+        }
+        CommandAction::McpRemove => {
+            cmd_mcp_remove(app, args.as_deref());
+            SlashResult::Handled
+        }
+        CommandAction::McpRestart => {
+            cmd_mcp_restart(app, args.as_deref());
+            SlashResult::Handled
+        }
     }
 }
 
@@ -483,4 +503,105 @@ fn cmd_keybindings(app: &mut TuiApp) {
          \x20 w/b/e           Word movement\n\
          \x20 x / dd / C      Delete char / line / to end",
     );
+}
+
+fn cmd_bughunter(app: &mut TuiApp, path: Option<&str>) {
+    let target = path.unwrap_or(".");
+    let prompt = format!(
+        "Scan the codebase at '{target}' for common bugs and issues. Look for:\n\
+         - Null/None dereferences without checks\n\
+         - Resource leaks (unclosed files, connections)\n\
+         - Race conditions and data races\n\
+         - Integer overflow/underflow\n\
+         - Buffer overflows or out-of-bounds access\n\
+         - Error handling gaps (unwrap on fallible ops)\n\
+         - Logic errors (off-by-one, wrong comparisons)\n\
+         - Dead code and unreachable branches\n\n\
+         Report each finding with: file:line, severity (critical/high/medium/low), description, and suggested fix."
+    );
+    app.push_system(&format!("Bug hunter scanning: {target}"));
+    app.input = prompt;
+    app.cursor_pos = app.input.len();
+    app.dirty = true;
+}
+
+fn cmd_security_review(app: &mut TuiApp, path: Option<&str>) {
+    let target = path.unwrap_or(".");
+    let prompt = format!(
+        "Perform a security review of the codebase at '{target}'. Check for:\n\
+         - Injection vulnerabilities (SQL, command, path traversal)\n\
+         - Authentication/authorization flaws\n\
+         - Sensitive data exposure (hardcoded secrets, API keys, tokens)\n\
+         - Insecure cryptography (weak algorithms, bad RNG)\n\
+         - SSRF, CSRF, XSS vectors\n\
+         - Insecure deserialization\n\
+         - Dependency vulnerabilities (known CVEs)\n\
+         - Privilege escalation paths\n\
+         - Missing input validation\n\
+         - Insecure file operations (symlink attacks, TOCTOU)\n\n\
+         Report each finding with: file:line, severity (critical/high/medium/low), CWE ID if applicable, description, and remediation."
+    );
+    app.push_system(&format!("Security review scanning: {target}"));
+    app.input = prompt;
+    app.cursor_pos = app.input.len();
+    app.dirty = true;
+}
+
+fn cmd_mcp_add(app: &mut TuiApp, args: Option<&str>) {
+    let Some(args) = args else {
+        app.push_system("Usage: /mcp-add <name> <command> [args...]");
+        return;
+    };
+    let parts: Vec<&str> = args.splitn(3, ' ').collect();
+    if parts.len() < 2 {
+        app.push_system("Usage: /mcp-add <name> <command> [args...]");
+        return;
+    }
+    let name = parts[0];
+    let command = parts[1];
+    let cmd_args: Vec<String> = if parts.len() > 2 {
+        parts[2].split_whitespace().map(String::from).collect()
+    } else {
+        Vec::new()
+    };
+
+    let mgr = nocode_core::mcp::manager::global_mcp_manager();
+    let mut guard = mgr.lock().unwrap();
+    guard.register_server(name, command, cmd_args);
+    match guard.connect(name) {
+        Ok(()) => {
+            let count = guard.all_tools().iter().filter(|(s, _)| *s == name).count();
+            app.push_system(&format!("MCP server '{name}' connected ({count} tools)"));
+        }
+        Err(e) => app.push_error(&format!("MCP connect failed: {e}")),
+    }
+}
+
+fn cmd_mcp_remove(app: &mut TuiApp, args: Option<&str>) {
+    let Some(name) = args else {
+        app.push_system("Usage: /mcp-remove <name>");
+        return;
+    };
+    let name = name.trim();
+    let mgr = nocode_core::mcp::manager::global_mcp_manager();
+    let mut guard = mgr.lock().unwrap();
+    match guard.disconnect(name) {
+        Ok(()) => app.push_system(&format!("MCP server '{name}' disconnected")),
+        Err(e) => app.push_error(&format!("MCP disconnect failed: {e}")),
+    }
+}
+
+fn cmd_mcp_restart(app: &mut TuiApp, args: Option<&str>) {
+    let Some(name) = args else {
+        app.push_system("Usage: /mcp-restart <name>");
+        return;
+    };
+    let name = name.trim();
+    let mgr = nocode_core::mcp::manager::global_mcp_manager();
+    let mut guard = mgr.lock().unwrap();
+    let _ = guard.disconnect(name);
+    match guard.connect(name) {
+        Ok(()) => app.push_system(&format!("MCP server '{name}' restarted")),
+        Err(e) => app.push_error(&format!("MCP restart failed: {e}")),
+    }
 }
