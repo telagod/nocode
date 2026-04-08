@@ -18,9 +18,10 @@ impl Tool for ReadTool {
         json!({
             "type": "object",
             "properties": {
-                "file_path": { "type": "string", "description": "Absolute path to the file" },
-                "offset": { "type": "integer", "description": "Line number to start from (0-based)" },
-                "limit": { "type": "integer", "description": "Max number of lines to read" }
+                "file_path": { "type": "string", "description": "The absolute path to the file to read" },
+                "offset": { "type": "number", "description": "The line number to start reading from. Only provide if the file is too large to read at once" },
+                "limit": { "type": "number", "description": "The number of lines to read. Only provide if the file is too large to read at once." },
+                "pages": { "type": "string", "description": "Page range for PDF files (e.g., \"1-5\", \"3\", \"10-20\"). Only applicable to PDF files. Maximum 20 pages per request." }
             },
             "required": ["file_path"]
         })
@@ -30,6 +31,14 @@ impl Tool for ReadTool {
         let Some(path) = input["file_path"].as_str() else {
             return ToolOutput::error("Missing required parameter: file_path");
         };
+
+        // PDF handling
+        if path.ends_with(".pdf") {
+            let _pages = input["pages"].as_str();
+            return ToolOutput::error(
+                "PDF reading requires a PDF extraction library. Use an external tool to convert PDF to text first.",
+            );
+        }
 
         // Size limit check (10 MB)
         if let Err(e) = file_safety::check_file_size(path) {
