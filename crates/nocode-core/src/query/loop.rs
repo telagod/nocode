@@ -37,6 +37,9 @@ pub trait LoopObserver: Send {
     fn on_tool_done(&mut self, _name: &str, _id: &str, _result: &ContentBlock) {}
     fn on_tool_result(&mut self, _name: &str, _block: &ContentBlock) {}
     fn on_turn_complete(&mut self, _turn: u32) {}
+    /// Called after messages are updated (assistant response + tool results pushed).
+    /// Use for incremental session persistence.
+    fn on_messages_updated(&mut self, _messages: &[Message]) {}
 }
 
 /// No-op observer for headless usage.
@@ -236,6 +239,7 @@ pub fn run_agentic_loop_with_budget(
                 if !response.content.is_empty() {
                     messages.push(Message::assistant(response.content));
                 }
+                observer.on_messages_updated(&messages);
                 break;
             }
             StopReason::ToolUse => {
@@ -274,6 +278,7 @@ pub fn run_agentic_loop_with_budget(
                 // 4. Push tool results as user message
                 messages.push(Message::user(results));
 
+                observer.on_messages_updated(&messages);
                 observer.on_turn_complete(turns);
                 observer.on_model_event(&ModelStreamEvent::TurnComplete { turn: turns });
             }
