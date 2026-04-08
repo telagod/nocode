@@ -64,6 +64,9 @@ fn core_modules_exist() {
         "tool/memory_tools.rs",
         "tool/cron_tools.rs",
         "tool/discovery_tools.rs",
+        "tool/mcp_tools.rs",
+        "tool/session_tools.rs",
+        "tool/interactive_tools.rs",
         "query/mod.rs",
         "query/loop.rs",
         "query/budget.rs",
@@ -135,8 +138,8 @@ fn tool_registry_has_25_tools() {
     let reg = nocode_core::tool::ToolRegistry::with_defaults("/tmp");
     let names = reg.names();
     assert!(
-        names.len() >= 25,
-        "Expected >= 25 tools, got {}",
+        names.len() >= 34,
+        "Expected >= 34 tools, got {}",
         names.len()
     );
 }
@@ -183,6 +186,18 @@ fn tool_categories_complete() {
     // Memory
     for name in &["MemorySave", "MemoryList", "MemorySearch", "MemoryDelete"] {
         assert!(reg.get(name).is_some(), "Missing memory tool: {name}");
+    }
+    // MCP tools
+    for name in &["ListMcpResources", "ReadMcpResource", "Mcp"] {
+        assert!(reg.get(name).is_some(), "Missing MCP tool: {name}");
+    }
+    // Session tools
+    for name in &["ExitPlanMode", "EnterWorktree", "ExitWorktree"] {
+        assert!(reg.get(name).is_some(), "Missing session tool: {name}");
+    }
+    // Interactive tools
+    for name in &["AskUserQuestion", "Config", "NotebookEdit"] {
+        assert!(reg.get(name).is_some(), "Missing interactive tool: {name}");
     }
 }
 

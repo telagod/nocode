@@ -11,11 +11,14 @@ pub mod glob;
 pub mod global_registry;
 pub mod grep;
 pub mod hook_runner;
+pub mod interactive_tools;
 pub mod lsp_registry;
+pub mod mcp_tools;
 pub mod memory_tools;
 pub mod permission;
 pub mod plugin_registry;
 pub mod read;
+pub mod session_tools;
 pub mod task_tools;
 pub mod team_tools;
 pub mod tool_validation;
@@ -137,6 +140,18 @@ impl ToolRegistry {
         registry.register(Box::new(memory_tools::MemoryListTool));
         registry.register(Box::new(memory_tools::MemorySearchTool));
         registry.register(Box::new(memory_tools::MemoryDeleteTool));
+        // MCP tools
+        registry.register(Box::new(mcp_tools::ListMcpResourcesTool));
+        registry.register(Box::new(mcp_tools::ReadMcpResourceTool));
+        registry.register(Box::new(mcp_tools::McpTool));
+        // Session tools
+        registry.register(Box::new(session_tools::ExitPlanModeTool));
+        registry.register(Box::new(session_tools::EnterWorktreeTool));
+        registry.register(Box::new(session_tools::ExitWorktreeTool));
+        // Interactive tools
+        registry.register(Box::new(interactive_tools::AskUserQuestionTool));
+        registry.register(Box::new(interactive_tools::ConfigTool));
+        registry.register(Box::new(interactive_tools::NotebookEditTool));
         registry
     }
 }
