@@ -147,6 +147,7 @@ fn worker_registry_lifecycle() {
     let id = reg.register("test-worker", "do stuff");
     assert!(!id.is_empty());
 
+    reg.set_state(&id, WorkerState::ReadyForPrompt);
     reg.set_state(&id, WorkerState::Running);
     assert_eq!(reg.get(&id).unwrap().state, WorkerState::Running);
 

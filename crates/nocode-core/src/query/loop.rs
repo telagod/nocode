@@ -134,13 +134,14 @@ pub fn run_agentic_loop(
     initial_messages: Vec<Message>,
     observer: &mut dyn LoopObserver,
 ) -> Result<LoopResult, ProviderError> {
-    run_agentic_loop_with_budget(
+    run_agentic_loop_with_cancel(
         provider,
         executor,
         config,
         initial_messages,
         observer,
         &mut TokenBudget::default(),
+        None,
     )
 }
 
@@ -153,6 +154,27 @@ pub fn run_agentic_loop_with_budget(
     observer: &mut dyn LoopObserver,
     budget: &mut TokenBudget,
 ) -> Result<LoopResult, ProviderError> {
+    run_agentic_loop_with_cancel(
+        provider,
+        executor,
+        config,
+        initial_messages,
+        observer,
+        budget,
+        None,
+    )
+}
+
+/// Run the agentic loop with optional cancel token for cooperative cancellation.
+pub fn run_agentic_loop_with_cancel(
+    provider: &dyn Provider,
+    executor: &ToolExecutor<'_>,
+    config: &LoopConfig,
+    initial_messages: Vec<Message>,
+    observer: &mut dyn LoopObserver,
+    budget: &mut TokenBudget,
+    cancel_token: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<LoopResult, ProviderError> {
     let mut messages = initial_messages;
     let mut total_input_tokens: u64 = 0;
     let mut total_output_tokens: u64 = 0;
@@ -162,6 +184,17 @@ pub fn run_agentic_loop_with_budget(
     const MAX_COMPACTIONS: u32 = 3;
 
     loop {
+        // Check cancel token at top of each turn
+        if let Some(token) = cancel_token
+            && token.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            observer.on_model_event(&ModelStreamEvent::StreamError {
+                message: "Cancelled by user".to_string(),
+                retryable: false,
+            });
+            break;
+        }
+
         if turns >= config.max_turns {
             break;
         }

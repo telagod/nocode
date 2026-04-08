@@ -1,6 +1,7 @@
 //! Worker registry — manages background agent workers.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// Worker lifecycle states.
@@ -14,8 +15,22 @@ pub enum WorkerState {
     Failed,
 }
 
+impl WorkerState {
+    /// Check if transitioning to `target` is valid.
+    pub fn can_transition_to(self, target: Self) -> bool {
+        matches!(
+            (self, target),
+            (
+                Self::Spawning,
+                Self::TrustRequired | Self::ReadyForPrompt | Self::Failed
+            ) | (Self::TrustRequired, Self::ReadyForPrompt | Self::Failed)
+                | (Self::ReadyForPrompt, Self::Running | Self::Failed)
+                | (Self::Running, Self::Finished | Self::Failed)
+        )
+    }
+}
+
 /// A background worker executing an agent task.
-#[derive(Debug)]
 pub struct Worker {
     pub id: String,
     pub name: String,
@@ -25,6 +40,12 @@ pub struct Worker {
     pub error: Option<String>,
     /// Inbox for inter-agent messages.
     pub inbox: Vec<AgentMessage>,
+    /// Cancel token — set to true to request cancellation.
+    pub cancel_token: Arc<AtomicBool>,
+    /// Timeout in seconds (0 = no timeout).
+    pub timeout_secs: u64,
+    /// When the worker started running.
+    pub started_at: Option<std::time::Instant>,
 }
 
 /// A message sent between agents.
@@ -45,7 +66,29 @@ impl Worker {
             result: None,
             error: None,
             inbox: Vec::new(),
+            cancel_token: Arc::new(AtomicBool::new(false)),
+            timeout_secs: 0,
+            started_at: None,
         }
+    }
+
+    /// Request cancellation of this worker.
+    pub fn cancel(&self) {
+        self.cancel_token.store(true, Ordering::Relaxed);
+    }
+
+    /// Check if cancellation has been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_token.load(Ordering::Relaxed)
+    }
+
+    /// Check if the worker has timed out.
+    pub fn is_timed_out(&self) -> bool {
+        if self.timeout_secs == 0 {
+            return false;
+        }
+        self.started_at
+            .is_some_and(|t| t.elapsed().as_secs() >= self.timeout_secs)
     }
 }
 
@@ -72,24 +115,30 @@ impl WorkerRegistry {
         id
     }
 
-    /// Update worker state.
+    /// Update worker state (validates transition).
     pub fn set_state(&mut self, id: &str, state: WorkerState) {
-        if let Some(w) = self.workers.get_mut(id) {
+        if let Some(w) = self.workers.get_mut(id)
+            && w.state.can_transition_to(state)
+        {
             w.state = state;
         }
     }
 
-    /// Set worker result on completion.
+    /// Set worker result on completion (only valid from Running state).
     pub fn set_result(&mut self, id: &str, result: String) {
-        if let Some(w) = self.workers.get_mut(id) {
+        if let Some(w) = self.workers.get_mut(id)
+            && w.state == WorkerState::Running
+        {
             w.result = Some(result);
             w.state = WorkerState::Finished;
         }
     }
 
-    /// Set worker error on failure.
+    /// Set worker error on failure (valid from any non-terminal state).
     pub fn set_error(&mut self, id: &str, error: String) {
-        if let Some(w) = self.workers.get_mut(id) {
+        if let Some(w) = self.workers.get_mut(id)
+            && !matches!(w.state, WorkerState::Finished | WorkerState::Failed)
+        {
             w.error = Some(error);
             w.state = WorkerState::Failed;
         }
@@ -149,6 +198,51 @@ impl WorkerRegistry {
             .map(|w| std::mem::take(&mut w.inbox))
             .unwrap_or_default()
     }
+
+    /// Get a clone of the worker's cancel token (for passing to background thread).
+    pub fn get_cancel_token(&self, id: &str) -> Option<Arc<AtomicBool>> {
+        self.workers.get(id).map(|w| Arc::clone(&w.cancel_token))
+    }
+
+    /// Request cancellation of a worker.
+    pub fn cancel_worker(&mut self, id: &str) {
+        if let Some(w) = self.workers.get(id) {
+            w.cancel();
+        }
+    }
+
+    /// Set timeout for a worker (in seconds).
+    pub fn set_timeout(&mut self, id: &str, timeout_secs: u64) {
+        if let Some(w) = self.workers.get_mut(id) {
+            w.timeout_secs = timeout_secs;
+        }
+    }
+
+    /// Mark a worker as started (records start time).
+    pub fn mark_started(&mut self, id: &str) {
+        if let Some(w) = self.workers.get_mut(id) {
+            w.started_at = Some(std::time::Instant::now());
+        }
+    }
+
+    /// Check all running workers for timeouts, cancel any that exceeded their limit.
+    pub fn check_timeouts(&mut self) -> Vec<String> {
+        let timed_out: Vec<String> = self
+            .workers
+            .values()
+            .filter(|w| w.state == WorkerState::Running && w.is_timed_out())
+            .map(|w| w.id.clone())
+            .collect();
+
+        for id in &timed_out {
+            if let Some(w) = self.workers.get(id) {
+                w.cancel();
+            }
+            self.set_error(id, "worker timed out".to_string());
+        }
+
+        timed_out
+    }
 }
 
 impl Default for WorkerRegistry {
@@ -181,6 +275,8 @@ mod tests {
     fn lifecycle_transitions() {
         let mut reg = WorkerRegistry::new();
         let id = reg.register("builder", "build project");
+        reg.set_state(&id, WorkerState::ReadyForPrompt);
+        assert_eq!(reg.get(&id).unwrap().state, WorkerState::ReadyForPrompt);
         reg.set_state(&id, WorkerState::Running);
         assert_eq!(reg.get(&id).unwrap().state, WorkerState::Running);
         reg.set_result(&id, "build succeeded".to_string());
