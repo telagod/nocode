@@ -30,9 +30,7 @@ impl CronSchedule {
             return Ok(Vec::new()); // empty = match all
         }
         if let Some(step) = field.strip_prefix("*/") {
-            let step: u32 = step
-                .parse()
-                .map_err(|_| format!("Invalid step: {field}"))?;
+            let step: u32 = step.parse().map_err(|_| format!("Invalid step: {field}"))?;
             if step == 0 || step > max {
                 return Err(format!("Invalid step value: {step}"));
             }
@@ -330,7 +328,10 @@ mod tests {
     #[test]
     fn parse_every_n_minutes() {
         let s = CronSchedule::parse("*/5 * * * *").unwrap();
-        assert_eq!(s.minutes, vec![0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]);
+        assert_eq!(
+            s.minutes,
+            vec![0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]
+        );
         assert!(s.matches_minute(0));
         assert!(s.matches_minute(15));
         assert!(!s.matches_minute(3));

@@ -193,6 +193,8 @@ impl Compactor for RichCompactor {
             ))],
             tools: vec![],
             stream: false,
+            thinking: None,
+            response_format: None,
         };
 
         let summary_text = match self.provider.create_message(&summary_request) {

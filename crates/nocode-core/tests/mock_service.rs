@@ -300,5 +300,7 @@ fn make_request(prompt: &str) -> CreateMessageRequest {
         messages: vec![Message::user_text(prompt)],
         tools: vec![],
         stream: false,
+        thinking: None,
+        response_format: None,
     }
 }

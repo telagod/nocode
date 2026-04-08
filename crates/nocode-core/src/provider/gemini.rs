@@ -297,6 +297,24 @@ impl Provider for GeminiProvider {
             usage,
         })
     }
+
+    fn verify_key(&self) -> Result<String, ProviderError> {
+        let path = format!("/v1beta/models?key={}", self.api_key);
+        match self.transport.get(&path) {
+            Ok(body) => {
+                let json: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+                let count = json["models"].as_array().map_or(0, Vec::len);
+                Ok(format!("Gemini API key valid ({count} models available)"))
+            }
+            Err(e) if e.kind == crate::provider::types::ErrorKind::Auth => {
+                Err(ProviderError::with_kind(
+                    "Invalid or expired Gemini API key",
+                    crate::provider::types::ErrorKind::Auth,
+                ))
+            }
+            Err(e) => Err(e),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -312,6 +330,8 @@ mod tests {
             messages: vec![Message::user_text("Hello")],
             tools: vec![],
             stream: false,
+            thinking: None,
+            response_format: None,
         }
     }
 

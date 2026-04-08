@@ -21,6 +21,11 @@ pub trait Provider: Send + Sync {
         request: &CreateMessageRequest,
         on_event: &mut dyn FnMut(StreamEvent),
     ) -> Result<CreateMessageResponse, ProviderError>;
+
+    /// Verify the API key is valid. Returns Ok(model_info) or Err on failure.
+    fn verify_key(&self) -> Result<String, ProviderError> {
+        Ok("key verification not implemented".to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------

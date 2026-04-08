@@ -41,6 +41,76 @@ pub struct ToolDefinition {
     pub cache_control: Option<CacheControl>,
 }
 
+/// Thinking mode configuration for extended thinking models.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThinkingConfig {
+    /// Type of thinking: "enabled" or "disabled".
+    #[serde(rename = "type")]
+    pub thinking_type: String,
+    /// Token budget for thinking (required when enabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_tokens: Option<u32>,
+}
+
+impl ThinkingConfig {
+    pub fn enabled(budget_tokens: u32) -> Self {
+        Self {
+            thinking_type: "enabled".to_string(),
+            budget_tokens: Some(budget_tokens),
+        }
+    }
+
+    pub fn disabled() -> Self {
+        Self {
+            thinking_type: "disabled".to_string(),
+            budget_tokens: None,
+        }
+    }
+}
+
+/// Response format constraint for structured output.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type")]
+pub enum ResponseFormat {
+    /// Plain text (default).
+    #[serde(rename = "text")]
+    Text,
+    /// JSON output constrained by a schema.
+    #[serde(rename = "json_schema")]
+    JsonSchema {
+        /// Schema name for identification.
+        name: String,
+        /// The JSON Schema to constrain the response.
+        schema: serde_json::Value,
+        /// Whether to strictly enforce the schema (default: true).
+        #[serde(default = "default_strict")]
+        strict: bool,
+    },
+    /// Raw JSON mode (no schema, just valid JSON).
+    #[serde(rename = "json_object")]
+    JsonObject,
+}
+
+fn default_strict() -> bool {
+    true
+}
+
+impl ResponseFormat {
+    /// Create a JSON schema response format.
+    pub fn json_schema(name: impl Into<String>, schema: serde_json::Value) -> Self {
+        Self::JsonSchema {
+            name: name.into(),
+            schema,
+            strict: true,
+        }
+    }
+
+    /// Create a raw JSON object response format.
+    pub fn json_object() -> Self {
+        Self::JsonObject
+    }
+}
+
 /// Request to create a message (model call).
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateMessageRequest {
@@ -51,6 +121,10 @@ pub struct CreateMessageRequest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
     pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<ThinkingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<ResponseFormat>,
 }
 
 /// Why the model stopped generating.
@@ -372,5 +446,109 @@ mod tests {
         let e = ProviderError::timeout("timed out");
         assert_eq!(e.kind, ErrorKind::Timeout);
         assert!(e.retryable);
+    }
+
+    #[test]
+    fn thinking_config_enabled_serialization() {
+        let tc = ThinkingConfig::enabled(10000);
+        let json = serde_json::to_value(&tc).unwrap();
+        assert_eq!(json["type"], "enabled");
+        assert_eq!(json["budget_tokens"], 10000);
+    }
+
+    #[test]
+    fn thinking_config_disabled_serialization() {
+        let tc = ThinkingConfig::disabled();
+        let json = serde_json::to_value(&tc).unwrap();
+        assert_eq!(json["type"], "disabled");
+        assert!(json.get("budget_tokens").is_none());
+    }
+
+    #[test]
+    fn request_without_thinking_omits_field() {
+        let req = CreateMessageRequest {
+            model: "test".to_string(),
+            max_tokens: 1024,
+            system: vec![],
+            messages: vec![],
+            tools: vec![],
+            stream: false,
+            thinking: None,
+            response_format: None,
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert!(json.get("thinking").is_none());
+    }
+
+    #[test]
+    fn request_with_thinking_includes_field() {
+        let req = CreateMessageRequest {
+            model: "test".to_string(),
+            max_tokens: 1024,
+            system: vec![],
+            messages: vec![],
+            tools: vec![],
+            stream: false,
+            thinking: Some(ThinkingConfig::enabled(8192)),
+            response_format: None,
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["thinking"]["type"], "enabled");
+        assert_eq!(json["thinking"]["budget_tokens"], 8192);
+    }
+
+    #[test]
+    fn response_format_json_schema_serialization() {
+        let rf = ResponseFormat::json_schema(
+            "my_schema",
+            serde_json::json!({"type": "object", "properties": {"name": {"type": "string"}}}),
+        );
+        let json = serde_json::to_value(&rf).unwrap();
+        assert_eq!(json["type"], "json_schema");
+        assert_eq!(json["name"], "my_schema");
+        assert_eq!(json["strict"], true);
+        assert!(json.get("schema").is_some());
+    }
+
+    #[test]
+    fn response_format_json_object_serialization() {
+        let rf = ResponseFormat::json_object();
+        let json = serde_json::to_value(&rf).unwrap();
+        assert_eq!(json["type"], "json_object");
+    }
+
+    #[test]
+    fn request_without_response_format_omits_field() {
+        let req = CreateMessageRequest {
+            model: "test".to_string(),
+            max_tokens: 1024,
+            system: vec![],
+            messages: vec![],
+            tools: vec![],
+            stream: false,
+            thinking: None,
+            response_format: None,
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert!(json.get("response_format").is_none());
+    }
+
+    #[test]
+    fn request_with_response_format_includes_field() {
+        let req = CreateMessageRequest {
+            model: "test".to_string(),
+            max_tokens: 1024,
+            system: vec![],
+            messages: vec![],
+            tools: vec![],
+            stream: false,
+            thinking: None,
+            response_format: Some(ResponseFormat::json_schema(
+                "test",
+                serde_json::json!({"type": "object"}),
+            )),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["response_format"]["type"], "json_schema");
     }
 }

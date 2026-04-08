@@ -269,6 +269,145 @@ impl MemoryStore {
     }
 }
 
+// ---------------------------------------------------------------------------
+// SessionMemory — cross-session memory extraction and loading
+// ---------------------------------------------------------------------------
+
+/// Manages cross-session memory: extracting key info from conversations
+/// and loading relevant memories into system prompts.
+pub struct SessionMemory {
+    store: MemoryStore,
+}
+
+impl SessionMemory {
+    pub fn new(base_dir: &str) -> Self {
+        Self {
+            store: MemoryStore::new(base_dir),
+        }
+    }
+
+    /// Load all memories and format them for inclusion in a system prompt.
+    pub fn load_for_prompt(&self) -> String {
+        let entries = match self.store.list() {
+            Ok(e) => e,
+            Err(_) => return String::new(),
+        };
+        if entries.is_empty() {
+            return String::new();
+        }
+
+        let mut sections: HashMap<MemoryType, Vec<&MemoryEntry>> = HashMap::new();
+        for entry in &entries {
+            sections.entry(entry.memory_type).or_default().push(entry);
+        }
+
+        let mut out = String::from("# Recalled Memories\n\n");
+        let type_order = [
+            MemoryType::User,
+            MemoryType::Feedback,
+            MemoryType::Project,
+            MemoryType::Reference,
+        ];
+        for ty in &type_order {
+            if let Some(entries) = sections.get(ty) {
+                out.push_str(&format!("## {}\n\n", ty.as_str()));
+                for entry in entries {
+                    out.push_str(&format!("### {}\n{}\n\n", entry.name, entry.content));
+                }
+            }
+        }
+        out
+    }
+
+    /// Load memories relevant to a query (by keyword search).
+    pub fn load_relevant(&self, query: &str) -> String {
+        let entries = match self.store.search(query) {
+            Ok(e) => e,
+            Err(_) => return String::new(),
+        };
+        if entries.is_empty() {
+            return String::new();
+        }
+
+        let mut out = String::from("# Relevant Memories\n\n");
+        for entry in &entries {
+            out.push_str(&format!(
+                "- **{}** ({}): {}\n",
+                entry.name,
+                entry.memory_type.as_str(),
+                entry.description
+            ));
+        }
+        out
+    }
+
+    /// Extract and save a memory from explicit user instruction.
+    pub fn save_memory(
+        &self,
+        name: &str,
+        description: &str,
+        memory_type: MemoryType,
+        content: &str,
+    ) -> Result<String, String> {
+        let file_name = format!(
+            "{}_{}.md",
+            memory_type.as_str(),
+            name.to_lowercase()
+                .replace(' ', "_")
+                .replace(|c: char| !c.is_alphanumeric() && c != '_', "")
+        );
+
+        // Check for existing memory with same name — update instead of duplicate
+        if let Ok(Some(existing)) = self.store.find_by_name(name) {
+            self.store.delete(&existing.file_name)?;
+            self.store.remove_from_index(&existing.file_name)?;
+        }
+
+        let entry = MemoryEntry {
+            name: name.to_string(),
+            description: description.to_string(),
+            memory_type,
+            content: content.to_string(),
+            file_name: file_name.clone(),
+        };
+
+        self.store.save(&entry)?;
+        self.store.add_to_index(&entry)?;
+        Ok(file_name)
+    }
+
+    /// Delete a memory by name.
+    pub fn delete_memory(&self, name: &str) -> Result<(), String> {
+        let entry = self
+            .store
+            .find_by_name(name)?
+            .ok_or_else(|| format!("Memory '{name}' not found"))?;
+        self.store.delete(&entry.file_name)?;
+        self.store.remove_from_index(&entry.file_name)?;
+        Ok(())
+    }
+
+    /// List all memories as a summary.
+    pub fn list_summary(&self) -> Result<Vec<(String, String, String)>, String> {
+        let entries = self.store.list()?;
+        Ok(entries
+            .iter()
+            .map(|e| {
+                (
+                    e.name.clone(),
+                    e.memory_type.as_str().to_string(),
+                    e.description.clone(),
+                )
+            })
+            .collect())
+    }
+
+    /// Get the underlying store for direct access.
+    pub fn store(&self) -> &MemoryStore {
+        &self.store
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,6 +543,83 @@ mod tests {
         assert_eq!(store.load_index().unwrap().entries.len(), 1);
         store.remove_from_index("user_role.md").unwrap();
         assert!(store.load_index().unwrap().entries.is_empty());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // --- SessionMemory ---
+    #[test]
+    fn session_memory_save_and_load() {
+        let tmp = std::env::temp_dir().join(format!("nocode_smem1_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let sm = SessionMemory::new(tmp.to_str().unwrap());
+        sm.save_memory(
+            "user_role",
+            "pentester",
+            MemoryType::User,
+            "Senior pentester.",
+        )
+        .unwrap();
+        let prompt = sm.load_for_prompt();
+        assert!(prompt.contains("user_role"));
+        assert!(prompt.contains("Senior pentester"));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn session_memory_deduplicates() {
+        let tmp = std::env::temp_dir().join(format!("nocode_smem2_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let sm = SessionMemory::new(tmp.to_str().unwrap());
+        sm.save_memory("pref", "v1", MemoryType::Feedback, "old content")
+            .unwrap();
+        sm.save_memory("pref", "v2", MemoryType::Feedback, "new content")
+            .unwrap();
+        let list = sm.list_summary().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].2, "v2");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn session_memory_delete() {
+        let tmp = std::env::temp_dir().join(format!("nocode_smem3_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let sm = SessionMemory::new(tmp.to_str().unwrap());
+        sm.save_memory("temp", "temporary", MemoryType::Project, "will delete")
+            .unwrap();
+        assert_eq!(sm.list_summary().unwrap().len(), 1);
+        sm.delete_memory("temp").unwrap();
+        assert!(sm.list_summary().unwrap().is_empty());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn session_memory_load_relevant() {
+        let tmp = std::env::temp_dir().join(format!("nocode_smem4_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let sm = SessionMemory::new(tmp.to_str().unwrap());
+        sm.save_memory(
+            "rust_pref",
+            "prefers rust",
+            MemoryType::User,
+            "Uses Rust daily.",
+        )
+        .unwrap();
+        sm.save_memory("py_pref", "uses python", MemoryType::User, "Python for ML.")
+            .unwrap();
+        let relevant = sm.load_relevant("rust");
+        assert!(relevant.contains("rust_pref"));
+        assert!(!relevant.contains("py_pref"));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn session_memory_empty_prompt() {
+        let tmp = std::env::temp_dir().join(format!("nocode_smem5_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let sm = SessionMemory::new(tmp.to_str().unwrap());
+        sm.store().ensure_dir().unwrap();
+        assert!(sm.load_for_prompt().is_empty());
         let _ = fs::remove_dir_all(&tmp);
     }
 }

@@ -302,6 +302,23 @@ impl Provider for OpenAiProvider {
             usage,
         })
     }
+
+    fn verify_key(&self) -> Result<String, ProviderError> {
+        match self.transport.get("/v1/models") {
+            Ok(body) => {
+                let json: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+                let count = json["data"].as_array().map_or(0, Vec::len);
+                Ok(format!("OpenAI API key valid ({count} models available)"))
+            }
+            Err(e) if e.kind == crate::provider::types::ErrorKind::Auth => {
+                Err(ProviderError::with_kind(
+                    "Invalid or expired OpenAI API key",
+                    crate::provider::types::ErrorKind::Auth,
+                ))
+            }
+            Err(e) => Err(e),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -317,6 +334,8 @@ mod tests {
             messages: vec![Message::user_text("Hello")],
             tools: vec![],
             stream: false,
+            thinking: None,
+            response_format: None,
         }
     }
 

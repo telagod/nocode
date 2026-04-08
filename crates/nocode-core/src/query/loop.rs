@@ -239,6 +239,8 @@ pub fn run_agentic_loop_with_cancel(
             messages: messages.clone(),
             tools: config.tools.clone(),
             stream: true,
+            thinking: None,
+            response_format: None,
         };
 
         // Stream the model response, forwarding events — with recovery

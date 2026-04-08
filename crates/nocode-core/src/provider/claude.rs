@@ -74,6 +74,33 @@ impl Provider for ClaudeProvider {
 
         parse_sse_stream(reader, on_event)
     }
+
+    fn verify_key(&self) -> Result<String, ProviderError> {
+        // Send a minimal request to verify the key
+        let body = serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+        });
+        match self.transport.post_json("/v1/messages", &body.to_string()) {
+            Ok(_) => Ok("Claude API key valid".to_string()),
+            Err(e) if e.kind == crate::provider::types::ErrorKind::Auth => {
+                Err(ProviderError::with_kind(
+                    "Invalid or expired Anthropic API key",
+                    crate::provider::types::ErrorKind::Auth,
+                ))
+            }
+            Err(e) => {
+                // Any non-auth error means the key is likely valid
+                // (could be rate limit, overloaded, etc.)
+                if e.kind == crate::provider::types::ErrorKind::InvalidRequest {
+                    Ok("Claude API key valid (model may differ)".to_string())
+                } else {
+                    Ok(format!("Claude API key accepted ({:?})", e.kind))
+                }
+            }
+        }
+    }
 }
 
 /// Parse an SSE stream from the Claude Messages API into events,

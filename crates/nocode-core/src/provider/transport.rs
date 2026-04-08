@@ -107,6 +107,42 @@ impl HttpTransport {
 
         Ok(resp)
     }
+
+    /// GET a URL and return the response body as string.
+    pub fn get(&self, path: &str) -> Result<String, ProviderError> {
+        let url = format!("{}{path}", self.base_url);
+        let mut req = self
+            .client
+            .get(&url)
+            .header("authorization", format!("Bearer {}", self.api_key));
+
+        for (k, v) in &self.extra_headers {
+            req = req.header(k.as_str(), v.as_str());
+        }
+
+        let resp = req.send().map_err(|e| {
+            if e.is_timeout() {
+                ProviderError::timeout(format!("HTTP timeout: {e}"))
+            } else {
+                ProviderError::network_error(format!("HTTP error: {e}"))
+            }
+        })?;
+
+        let status = resp.status();
+        let text = resp.text().map_err(|e| {
+            ProviderError::parse_error(format!("Failed to read response body: {e}"))
+        })?;
+
+        if status.is_success() {
+            Ok(text)
+        } else {
+            Err(ProviderError::with_status(
+                format!("API error ({status}): {text}"),
+                false,
+                status.as_u16(),
+            ))
+        }
+    }
 }
 
 /// Retry a fallible operation with exponential backoff.
