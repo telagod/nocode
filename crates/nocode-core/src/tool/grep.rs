@@ -41,7 +41,6 @@ impl Tool for GrepTool {
             return ToolOutput::error("Missing required parameter: pattern");
         };
 
-        // PLACEHOLDER_GREP_EXECUTE
         let path = input["path"].as_str().unwrap_or(".");
         let glob_filter = input["glob"].as_str();
         let output_mode = input["output_mode"]
