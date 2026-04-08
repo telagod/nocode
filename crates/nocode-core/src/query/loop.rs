@@ -5,6 +5,7 @@ use crate::provider::types::{
 };
 use crate::query::budget::TokenBudget;
 use crate::query::events::ModelStreamEvent;
+use crate::session::compaction::{Compactor, TailCompactor};
 use crate::tool::executor::ToolExecutor;
 use std::sync::mpsc;
 
@@ -153,12 +154,31 @@ pub fn run_agentic_loop_with_budget(
     let mut total_output_tokens: u64 = 0;
     let mut turns: u32 = 0;
     let mut final_stop_reason = StopReason::EndTurn;
+    let mut compaction_count: u32 = 0;
+    const MAX_COMPACTIONS: u32 = 3;
 
     loop {
         if turns >= config.max_turns {
             break;
         }
         if budget.is_exhausted() {
+            // Try compaction before giving up
+            if compaction_count < MAX_COMPACTIONS {
+                let compactor = TailCompactor::new(10);
+                let result = compactor.compact(&messages);
+                if result.compacted_count > 0 {
+                    messages = result.messages;
+                    compaction_count += 1;
+                    observer.on_model_event(&ModelStreamEvent::StreamError {
+                        message: format!(
+                            "Budget pressure — compacted {} messages, ~{} tokens saved",
+                            result.compacted_count, result.tokens_saved
+                        ),
+                        retryable: true,
+                    });
+                    continue;
+                }
+            }
             observer.on_model_event(&ModelStreamEvent::StreamError {
                 message: "Token budget exhausted".to_string(),
                 retryable: false,
@@ -260,6 +280,23 @@ pub fn run_agentic_loop_with_budget(
             StopReason::MaxTokens => {
                 if !response.content.is_empty() {
                     messages.push(Message::assistant(response.content));
+                }
+                // Try compaction to free context space and continue
+                if compaction_count < MAX_COMPACTIONS {
+                    let compactor = TailCompactor::new(10);
+                    let result = compactor.compact(&messages);
+                    if result.compacted_count > 0 {
+                        messages = result.messages;
+                        compaction_count += 1;
+                        observer.on_model_event(&ModelStreamEvent::StreamError {
+                            message: format!(
+                                "MaxTokens — compacted {} messages, ~{} tokens saved, continuing",
+                                result.compacted_count, result.tokens_saved
+                            ),
+                            retryable: true,
+                        });
+                        continue;
+                    }
                 }
                 break;
             }
