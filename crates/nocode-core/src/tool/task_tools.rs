@@ -1,8 +1,53 @@
-//! Task tools — TaskGet, TaskList, TaskUpdate, TaskStop, TaskOutput.
+//! Task tools — TaskCreate, TaskGet, TaskList, TaskUpdate, TaskStop, TaskOutput.
 
 use crate::agent::task::{TaskStatus, global_task_coordinator};
 use crate::tool::{Tool, ToolOutput};
 use serde_json::{Value, json};
+
+// ---------------------------------------------------------------------------
+// TaskCreate
+// ---------------------------------------------------------------------------
+
+pub struct TaskCreateTool;
+
+impl Tool for TaskCreateTool {
+    fn name(&self) -> &str {
+        "TaskCreate"
+    }
+    fn description(&self) -> &str {
+        "Create a new task to track work progress."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "subject": { "type": "string", "description": "Brief title for the task" },
+                "description": { "type": "string", "description": "What needs to be done" },
+                "activeForm": { "type": "string", "description": "Present continuous form shown in spinner when in_progress" }
+            },
+            "required": ["subject", "description"]
+        })
+    }
+    fn execute(&self, input: &Value) -> ToolOutput {
+        let Some(subject) = input["subject"].as_str() else {
+            return ToolOutput::error("Missing required parameter: subject");
+        };
+        let Some(description) = input["description"].as_str() else {
+            return ToolOutput::error("Missing required parameter: description");
+        };
+        let tc = global_task_coordinator();
+        let mut guard = tc.lock().unwrap();
+        let id = guard.create(subject, description);
+        ToolOutput::success(
+            json!({
+                "id": id,
+                "subject": subject,
+                "status": "pending",
+            })
+            .to_string(),
+        )
+    }
+}
 
 // ---------------------------------------------------------------------------
 // TaskGet

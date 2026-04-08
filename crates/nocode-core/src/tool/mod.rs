@@ -122,6 +122,7 @@ impl ToolRegistry {
         registry.register(Box::new(web::WebSearchTool));
         registry.register(Box::new(agent::AgentTool));
         // Task tools
+        registry.register(Box::new(task_tools::TaskCreateTool));
         registry.register(Box::new(task_tools::TaskGetTool));
         registry.register(Box::new(task_tools::TaskListTool));
         registry.register(Box::new(task_tools::TaskUpdateTool));

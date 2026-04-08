@@ -140,8 +140,8 @@ fn tool_registry_has_25_tools() {
     let reg = nocode_core::tool::ToolRegistry::with_defaults("/tmp");
     let names = reg.names();
     assert!(
-        names.len() >= 37,
-        "Expected >= 37 tools, got {}",
+        names.len() >= 38,
+        "Expected >= 38 tools, got {}",
         names.len()
     );
 }
@@ -165,6 +165,7 @@ fn tool_categories_complete() {
     }
     // Task
     for name in &[
+        "TaskCreate",
         "TaskGet",
         "TaskList",
         "TaskUpdate",
@@ -206,16 +207,9 @@ fn tool_categories_complete() {
     for name in &["AskUserQuestion", "Config", "NotebookEdit"] {
         assert!(reg.get(name).is_some(), "Missing interactive tool: {name}");
     }
-    // Communication tools
-    for name in &["SendMessage"] {
-        assert!(
-            reg.get(name).is_some(),
-            "Missing communication tool: {name}"
-        );
-    }
-    // Skill tools
-    for name in &["Skill"] {
-        assert!(reg.get(name).is_some(), "Missing skill tool: {name}");
+    // Communication + Skill tools
+    for name in &["SendMessage", "Skill"] {
+        assert!(reg.get(name).is_some(), "Missing tool: {name}");
     }
 }
 

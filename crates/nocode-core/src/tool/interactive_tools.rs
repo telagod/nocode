@@ -74,15 +74,67 @@ impl Tool for ConfigTool {
     fn input_schema(&self) -> Value {
         json!({
             "type": "object",
-            "additionalProperties": true
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["get", "set", "list"],
+                    "description": "Action to perform (default: list)"
+                },
+                "key": { "type": "string", "description": "Setting key (for get/set)" },
+                "value": { "description": "New value (for set)" }
+            }
         })
     }
     fn execute(&self, input: &Value) -> ToolOutput {
-        // Return current config state or apply changes
-        ToolOutput::success(format!(
-            "Config operation: {}",
-            serde_json::to_string(input).unwrap_or_default()
-        ))
+        let action = input["action"].as_str().unwrap_or("list");
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| String::from("."));
+
+        match action {
+            "list" => {
+                let settings = crate::config::settings::Settings::load_merged(&cwd);
+                let config = crate::config::runtime::RuntimeConfig::from_settings(&settings, &cwd);
+                ToolOutput::success(
+                    json!({
+                        "model": config.model,
+                        "permission_mode": config.permission_mode,
+                        "max_turns": config.max_turns,
+                        "max_tokens": config.max_tokens,
+                        "system_prompt": config.system_prompt.is_some(),
+                        "reasoning_effort": config.reasoning_effort,
+                        "mcp_servers": config.mcp_servers.keys().collect::<Vec<_>>(),
+                        "hooks_configured": !config.hooks.pre_tool_use.is_empty()
+                            || !config.hooks.post_tool_use.is_empty()
+                            || !config.hooks.on_submit.is_empty(),
+                        "sandbox_enabled": config.sandbox.enabled,
+                    })
+                    .to_string(),
+                )
+            }
+            "get" => {
+                let Some(key) = input["key"].as_str() else {
+                    return ToolOutput::error("Missing required parameter: key");
+                };
+                let settings = crate::config::settings::Settings::load_merged(&cwd);
+                let config = crate::config::runtime::RuntimeConfig::from_settings(&settings, &cwd);
+                let value = match key {
+                    "model" => json!(config.model),
+                    "permission_mode" => json!(config.permission_mode),
+                    "max_turns" => json!(config.max_turns),
+                    "max_tokens" => json!(config.max_tokens),
+                    "system_prompt" => json!(config.system_prompt),
+                    "reasoning_effort" => json!(config.reasoning_effort),
+                    "sandbox_enabled" => json!(config.sandbox.enabled),
+                    _ => return ToolOutput::error(format!("Unknown config key: {key}")),
+                };
+                ToolOutput::success(json!({"key": key, "value": value}).to_string())
+            }
+            "set" => ToolOutput::error(
+                "Config modification via tool is not supported. Edit settings.json directly.",
+            ),
+            _ => ToolOutput::error(format!("Unknown action: {action}. Use get, set, or list.")),
+        }
     }
 }
 
