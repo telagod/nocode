@@ -294,12 +294,57 @@ fn run_bridge_remote_once(prompt: &str) {
     let base_url = env::var("NOCODE_BRIDGE_BASE_URL")
         .unwrap_or_else(|_| String::from("http://localhost:3000"));
     let auth_token = env::var("NOCODE_BRIDGE_AUTH_TOKEN").ok();
-    eprintln!("Bridge remote: {base_url}");
-    eprintln!("Prompt: {prompt}");
-    if auth_token.is_some() {
-        eprintln!("Auth: token set");
+
+    if prompt.is_empty() {
+        eprintln!("Usage: nocode --bridge-remote-once \"<prompt>\"");
+        return;
     }
-    eprintln!("(bridge-remote-once: not yet wired — use --bridge-once for local)");
+
+    let url = format!("{base_url}/v1/query");
+    let mut request = serde_json::json!({
+        "prompt": prompt,
+    });
+
+    // Add model if specified
+    if let Ok(model) = env::var("NOCODE_MODEL") {
+        request["model"] = serde_json::Value::String(model);
+    }
+
+    let client = reqwest::blocking::Client::new();
+    let mut builder = client.post(&url).json(&request);
+
+    if let Some(token) = &auth_token {
+        builder = builder.header("Authorization", format!("Bearer {token}"));
+    }
+
+    match builder.send() {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                match resp.text() {
+                    Ok(body) => {
+                        // Try to parse as JSON and extract text
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                            if let Some(text) = json["text"].as_str() {
+                                println!("{text}");
+                            } else {
+                                println!("{body}");
+                            }
+                        } else {
+                            println!("{body}");
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to read response: {e}"),
+                }
+            } else {
+                eprintln!(
+                    "Bridge error: {} {}",
+                    resp.status(),
+                    resp.text().unwrap_or_default()
+                );
+            }
+        }
+        Err(e) => eprintln!("Failed to connect to bridge at {url}: {e}"),
+    }
 }
 
 fn run_ide_server() {

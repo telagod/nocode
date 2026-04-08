@@ -1174,7 +1174,22 @@ pub(crate) fn run_app_loop(
                                             continue;
                                         }
                                         CommandAction::Compact => {
-                                            app.push_system("(compaction not yet wired)");
+                                            use nocode_core::session::compaction::{
+                                                Compactor, TailCompactor,
+                                            };
+                                            let compactor = TailCompactor::new(10);
+                                            let result = compactor.compact(&messages);
+                                            if result.compacted_count > 0 {
+                                                messages = result.messages;
+                                                app.push_system(&format!(
+                                                    "Compacted {} messages, ~{} tokens saved",
+                                                    result.compacted_count, result.tokens_saved
+                                                ));
+                                            } else {
+                                                app.push_system(
+                                                    "Nothing to compact (conversation too short)",
+                                                );
+                                            }
                                             continue;
                                         }
                                         CommandAction::Permissions => {
