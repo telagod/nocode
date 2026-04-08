@@ -99,28 +99,78 @@ fn matches_filter(hook: &HookEntry, tool_name: &str) -> bool {
 fn execute_hook(hook: &HookEntry, tool_name: &str) -> HookResult {
     let timeout = Duration::from_millis(hook.timeout_ms.unwrap_or(10_000));
 
-    let output = Command::new("sh")
+    let child = Command::new("sh")
         .arg("-c")
         .arg(&hook.command)
         .env("NOCODE_TOOL_NAME", tool_name)
-        .output();
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn();
 
-    match output {
-        Ok(out) => {
-            let _ = timeout; // timeout enforcement would need spawn + wait_timeout
-            HookResult {
+    let mut child = match child {
+        Ok(c) => c,
+        Err(e) => {
+            return HookResult {
                 hook_command: hook.command.clone(),
-                exit_code: out.status.code().unwrap_or(-1),
-                stdout: String::from_utf8_lossy(&out.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: format!("Hook execution failed: {e}"),
+            };
+        }
+    };
+
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = child
+                    .stdout
+                    .take()
+                    .map(|mut s| {
+                        let mut buf = String::new();
+                        use std::io::Read;
+                        let _ = s.read_to_string(&mut buf);
+                        buf
+                    })
+                    .unwrap_or_default();
+                let stderr = child
+                    .stderr
+                    .take()
+                    .map(|mut s| {
+                        let mut buf = String::new();
+                        use std::io::Read;
+                        let _ = s.read_to_string(&mut buf);
+                        buf
+                    })
+                    .unwrap_or_default();
+                return HookResult {
+                    hook_command: hook.command.clone(),
+                    exit_code: status.code().unwrap_or(-1),
+                    stdout,
+                    stderr,
+                };
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    return HookResult {
+                        hook_command: hook.command.clone(),
+                        exit_code: -1,
+                        stdout: String::new(),
+                        stderr: format!("Hook timed out after {}ms", timeout.as_millis()),
+                    };
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => {
+                return HookResult {
+                    hook_command: hook.command.clone(),
+                    exit_code: -1,
+                    stdout: String::new(),
+                    stderr: format!("Hook wait failed: {e}"),
+                };
             }
         }
-        Err(e) => HookResult {
-            hook_command: hook.command.clone(),
-            exit_code: -1,
-            stdout: String::new(),
-            stderr: format!("Hook execution failed: {e}"),
-        },
     }
 }
 

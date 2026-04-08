@@ -8,7 +8,7 @@ use crate::provider::types::{
 use std::io::BufRead;
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
-const API_VERSION: &str = "2023-06-01";
+const API_VERSION: &str = "2024-06-01";
 
 /// Claude Messages API provider.
 pub struct ClaudeProvider {

@@ -438,8 +438,11 @@ mod tests {
             network_enabled: false,
         };
         let exec = ToolExecutor::new(&reg).with_sandbox(sandbox);
-        let result =
-            exec.execute_tool_use("id-9", "WebFetch", &json!({"url": "https://example.com", "prompt": "test"}));
+        let result = exec.execute_tool_use(
+            "id-9",
+            "WebFetch",
+            &json!({"url": "https://example.com", "prompt": "test"}),
+        );
         if let ContentBlock::ToolResult {
             content, is_error, ..
         } = &result
