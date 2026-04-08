@@ -27,9 +27,10 @@ impl Tool for BashTool {
             "type": "object",
             "properties": {
                 "command": { "type": "string", "description": "The command to execute" },
-                "timeout": { "type": "integer", "description": "Optional timeout in milliseconds (max 600000)" },
+                "timeout": { "type": "number", "description": "Optional timeout in milliseconds (max 600000)" },
                 "description": { "type": "string", "description": "Clear, concise description of what this command does in active voice." },
-                "run_in_background": { "type": "boolean", "description": "Set to true to run this command in the background. Use Read to read the output later." }
+                "run_in_background": { "type": "boolean", "description": "Set to true to run this command in the background. Use Read to read the output later." },
+                "dangerouslyDisableSandbox": { "type": "boolean", "description": "Set this to true to dangerously override sandbox mode and run commands without sandboxing." }
             },
             "required": ["command"]
         })

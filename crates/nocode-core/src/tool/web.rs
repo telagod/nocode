@@ -14,9 +14,9 @@ impl Tool for WebFetchTool {
     }
     fn input_schema(&self) -> Value {
         json!({"type":"object","properties":{
-            "url":{"type":"string","description":"The URL to fetch"},
-            "max_length":{"type":"integer","description":"Max response length in chars"}
-        },"required":["url"]})
+            "url":{"type":"string","description":"The URL to fetch content from"},
+            "prompt":{"type":"string","description":"The prompt to run on the fetched content"}
+        },"required":["url","prompt"]})
     }
     fn execute(&self, input: &Value) -> ToolOutput {
         let Some(url) = input["url"].as_str() else {

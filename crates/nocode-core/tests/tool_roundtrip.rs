@@ -220,7 +220,7 @@ fn sandbox_blocks_network_tools() {
         network_enabled: false,
     };
     let exec = ToolExecutor::new(&reg).with_sandbox(sandbox);
-    let result = exec.execute_tool_use("t12", "WebFetch", &json!({"url": "https://example.com"}));
+    let result = exec.execute_tool_use("t12", "WebFetch", &json!({"url": "https://example.com", "prompt": "test"}));
     assert_tool_error(&result, "network access disabled");
 }
 

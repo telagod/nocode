@@ -224,11 +224,18 @@ impl Tool for TaskStopTool {
         "Stop/cancel a running task."
     }
     fn input_schema(&self) -> Value {
-        json!({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]})
+        json!({"type":"object","properties":{
+            "task_id":{"type":"string","description":"The ID of the background task to stop"},
+            "shell_id":{"type":"string","description":"Deprecated: use task_id instead"}
+        }})
     }
     fn execute(&self, input: &Value) -> ToolOutput {
-        let Some(id) = input["id"].as_str() else {
-            return ToolOutput::error("Missing required parameter: id");
+        let id = input["task_id"]
+            .as_str()
+            .or_else(|| input["shell_id"].as_str())
+            .or_else(|| input["id"].as_str());
+        let Some(id) = id else {
+            return ToolOutput::error("Missing required parameter: task_id");
         };
         let tc = global_task_coordinator();
         let mut guard = tc.lock().unwrap();
@@ -253,11 +260,16 @@ impl Tool for TaskOutputTool {
         "Get the output/result of a completed task."
     }
     fn input_schema(&self) -> Value {
-        json!({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]})
+        json!({"type":"object","properties":{
+            "task_id":{"type":"string","description":"The task ID to get output from"},
+            "block":{"type":"boolean","description":"Whether to wait for completion"},
+            "timeout":{"type":"number","description":"Max wait time in ms"}
+        },"required":["task_id","block","timeout"]})
     }
     fn execute(&self, input: &Value) -> ToolOutput {
-        let Some(id) = input["id"].as_str() else {
-            return ToolOutput::error("Missing required parameter: id");
+        let id = input["task_id"].as_str().or_else(|| input["id"].as_str());
+        let Some(id) = id else {
+            return ToolOutput::error("Missing required parameter: task_id");
         };
         let tc = global_task_coordinator();
         let guard = tc.lock().unwrap();

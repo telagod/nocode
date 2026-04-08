@@ -15,11 +15,16 @@ impl Tool for AgentTool {
     }
     fn input_schema(&self) -> Value {
         json!({"type":"object","properties":{
+            "description":{"type":"string","description":"A short (3-5 word) description of the task"},
             "prompt":{"type":"string","description":"The task for the agent to perform"},
-            "name":{"type":"string","description":"Name for the spawned agent"},
-            "subagent_type":{"type":"string","description":"Type of agent (general-purpose, Explore, Plan)"},
-            "run_in_background":{"type":"boolean","description":"Run agent in background (default true)"}
-        },"required":["prompt"]})
+            "subagent_type":{"type":"string","description":"The type of specialized agent to use for this task"},
+            "model":{"type":"string","enum":["sonnet","opus","haiku"],"description":"Optional model override for this agent"},
+            "run_in_background":{"type":"boolean","description":"Set to true to run this agent in the background"},
+            "name":{"type":"string","description":"Name for the spawned agent. Makes it addressable via SendMessage({to: name}) while running."},
+            "team_name":{"type":"string","description":"Team name for spawning. Uses current team context if omitted."},
+            "mode":{"type":"string","enum":["acceptEdits","bypassPermissions","default","dontAsk","plan"],"description":"Permission mode for spawned teammate"},
+            "isolation":{"type":"string","enum":["worktree"],"description":"Isolation mode. 'worktree' creates a temporary git worktree."}
+        },"required":["description","prompt"]})
     }
     fn execute(&self, input: &Value) -> ToolOutput {
         let Some(prompt) = input["prompt"].as_str() else {
