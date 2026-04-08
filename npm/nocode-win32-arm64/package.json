@@ -1,6 +1,6 @@
 {
   "name": "@telagod/nocode-win32-arm64",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "nocode platform binary for Windows ARM64",
   "os": ["win32"],
   "cpu": ["arm64"],

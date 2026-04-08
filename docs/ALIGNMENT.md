@@ -1,7 +1,7 @@
 # nocode vs Claude Code 功能对齐清单
 
-> 更新时间：2026-04-09（v0.2.12-dev — Phase 6 完成，ContextCollapse/MemoryExtraction/SecureCredentials/Onboarding）
-> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (93 .rs files, 546 tests)
+> 更新时间：2026-04-09（v0.2.12 — Phase 3-8 完成，Plugin/Skill/Swarm/Insights/Search/Credentials/Onboarding）
+> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (94 .rs files, 558 tests)
 
 ## 图例
 
@@ -100,7 +100,7 @@
 | /voice | ✅ | ❌ | — |
 | /vim, /theme | ✅ | ✅ | 完成 |
 | /cost, /usage | ✅ | ✅ overlay | 完成 |
-| /insights | ✅ | ❌ | — |
+| /insights | ✅ | ✅ 会话统计分析 | 完成 |
 | /resume, /rewind | ✅ | ✅ /resume | 完成 |
 | /export, /copy | ✅ | ✅ /export | 完成 |
 | /env, /keybindings | ✅ | ✅ 环境变量 + 快捷键列表 | 完成 |
@@ -151,7 +151,7 @@
 | Task resume / 恢复 | ✅ | ✅ load_from_file | 完成 |
 | Task 审计链 | ✅ | ✅ TaskEvent lifecycle recording | 完成 |
 | Remote daemon | ✅ | ❌ | — |
-| Agent swarm (21 files) | ✅ | ❌ | — |
+| Agent swarm (21 files) | ✅ | ✅ SwarmCoordinator + FileOwnership | 完成 |
 | Inter-agent messaging | ✅ | ✅ WorkerRegistry inbox | 完成 |
 | Agent creation wizard | ✅ | ❌ | — |
 | Scheduled tasks / Cron | ✅ | ✅ CronSchedule + tick executor | 完成 |
@@ -227,8 +227,8 @@
 |------|---------|--------|------|
 | Plugin manifest discovery | ✅ | ✅ manifest.json 骨架 | 完成 |
 | Plugin 安装/管理 | ✅ 44 files | ❌ | — |
-| Plugin execution runtime | ✅ | ❌ | — |
-| Skill 系统 | ✅ | ❌ | — |
+| Plugin execution runtime | ✅ | ✅ PluginRuntime (discover/load/execute) | 完成 |
+| Skill 系统 | ✅ | ✅ SkillTool + list_skills discovery | 完成 |
 | Plugin CLI commands | ✅ | 🔶 /plugin list | 骨架 |
 
 ---
@@ -341,8 +341,8 @@
 | Providers | 1 (Claude) | 5 (Claude/OpenAI/Gemini/Custom/Mock) | 超集 |
 | Run modes | ~5 | 9 | 超集 |
 | Slash commands | ~20 | 28 | 超集 |
-| Tests | — | 546 | — |
-| Modules | — | 93 .rs | — |
+| Tests | — | 558 | — |
+| Modules | — | 94 .rs | — |
 
 ### 与 v0.1 对比的进展
 
