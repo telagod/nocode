@@ -130,9 +130,37 @@ impl Tool for ConfigTool {
                 };
                 ToolOutput::success(json!({"key": key, "value": value}).to_string())
             }
-            "set" => ToolOutput::error(
-                "Config modification via tool is not supported. Edit settings.json directly.",
-            ),
+            "set" => {
+                let Some(key) = input["key"].as_str() else {
+                    return ToolOutput::error("Missing required parameter: key");
+                };
+                let value = &input["value"];
+                if value.is_null() {
+                    return ToolOutput::error("Missing required parameter: value");
+                }
+
+                let settings_path = format!("{cwd}/.nocode/settings.json");
+                let mut settings: serde_json::Map<String, Value> =
+                    std::fs::read_to_string(&settings_path)
+                        .ok()
+                        .and_then(|s| serde_json::from_str(&s).ok())
+                        .unwrap_or_default();
+
+                settings.insert(key.to_string(), value.clone());
+
+                // Ensure directory exists
+                let _ = std::fs::create_dir_all(format!("{cwd}/.nocode"));
+                match std::fs::write(
+                    &settings_path,
+                    serde_json::to_string_pretty(&settings).unwrap_or_default(),
+                ) {
+                    Ok(()) => ToolOutput::success(
+                        json!({"key": key, "value": value, "written_to": settings_path})
+                            .to_string(),
+                    ),
+                    Err(e) => ToolOutput::error(format!("Failed to write settings: {e}")),
+                }
+            }
             _ => ToolOutput::error(format!("Unknown action: {action}. Use get, set, or list.")),
         }
     }
