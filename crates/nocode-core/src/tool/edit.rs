@@ -74,3 +74,68 @@ impl Tool for EditTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn edit_replaces_unique_string() {
+        let path = "/tmp/nocode_edit_unit_test.txt";
+        std::fs::write(path, "hello world\n").unwrap();
+        let tool = EditTool;
+        let result = tool.execute(&json!({
+            "file_path": path, "old_string": "hello", "new_string": "goodbye"
+        }));
+        assert!(!result.is_error, "{}", result.content);
+        assert!(std::fs::read_to_string(path).unwrap().contains("goodbye"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn edit_fails_on_nonunique() {
+        let path = "/tmp/nocode_edit_nonunique.txt";
+        std::fs::write(path, "aaa bbb aaa\n").unwrap();
+        let tool = EditTool;
+        let result = tool.execute(&json!({
+            "file_path": path, "old_string": "aaa", "new_string": "ccc"
+        }));
+        assert!(result.is_error);
+        assert!(result.content.contains("2 times"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn edit_replace_all() {
+        let path = "/tmp/nocode_edit_replall.txt";
+        std::fs::write(path, "aaa bbb aaa\n").unwrap();
+        let tool = EditTool;
+        let result = tool.execute(&json!({
+            "file_path": path, "old_string": "aaa", "new_string": "ccc", "replace_all": true
+        }));
+        assert!(!result.is_error);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "ccc bbb ccc\n");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn edit_not_found() {
+        let path = "/tmp/nocode_edit_notfound.txt";
+        std::fs::write(path, "hello\n").unwrap();
+        let tool = EditTool;
+        let result = tool.execute(&json!({
+            "file_path": path, "old_string": "xyz", "new_string": "abc"
+        }));
+        assert!(result.is_error);
+        assert!(result.content.contains("not found"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn edit_missing_params() {
+        let tool = EditTool;
+        assert!(tool.execute(&json!({})).is_error);
+        assert!(tool.execute(&json!({"file_path": "/tmp/x"})).is_error);
+    }
+}
