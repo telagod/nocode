@@ -31,6 +31,35 @@ pub struct MessageRow {
     pub token_count: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct MemoryRow {
+    pub id: i64,
+    pub name: String,
+    pub memory_type: String,
+    pub description: Option<String>,
+    pub content: String,
+    pub file_path: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TelemetryRow {
+    pub id: i64,
+    pub event_type: String,
+    pub data: Option<String>,
+    pub session_id: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommandRow {
+    pub id: i64,
+    pub command: String,
+    pub session_id: Option<String>,
+    pub created_at: String,
+}
+
 // ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------
@@ -59,6 +88,25 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS command_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     command TEXT NOT NULL,
+    session_id TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    memory_type TEXT NOT NULL,
+    description TEXT,
+    content TEXT NOT NULL,
+    file_path TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS telemetry_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    data TEXT,
     session_id TEXT,
     created_at TEXT NOT NULL
 );
@@ -244,6 +292,153 @@ impl SqlStore {
         .map_err(|e| e.to_string())?;
         Ok(conn.last_insert_rowid())
     }
+
+    pub fn list_commands(&self, limit: usize) -> Result<Vec<CommandRow>, String> {
+        let conn = self.connection()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, command, session_id, created_at \
+                 FROM command_history ORDER BY id DESC LIMIT ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(CommandRow {
+                    id: row.get(0)?,
+                    command: row.get(1)?,
+                    session_id: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    // -- Memories CRUD --
+
+    pub fn insert_memory(
+        &self,
+        name: &str,
+        memory_type: &str,
+        description: Option<&str>,
+        content: &str,
+        file_path: Option<&str>,
+    ) -> Result<i64, String> {
+        let conn = self.connection()?;
+        let now = Local::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO memories (name, memory_type, description, content, file_path, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![name, memory_type, description, content, file_path, now, now],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn list_memories(&self, limit: usize) -> Result<Vec<MemoryRow>, String> {
+        let conn = self.connection()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, memory_type, description, content, file_path, created_at, updated_at \
+                 FROM memories ORDER BY updated_at DESC LIMIT ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(MemoryRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    memory_type: row.get(2)?,
+                    description: row.get(3)?,
+                    content: row.get(4)?,
+                    file_path: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn search_memories(&self, query: &str) -> Result<Vec<MemoryRow>, String> {
+        let conn = self.connection()?;
+        let pattern = format!("%{query}%");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, memory_type, description, content, file_path, created_at, updated_at \
+                 FROM memories WHERE name LIKE ?1 OR content LIKE ?1 OR description LIKE ?1 \
+                 ORDER BY updated_at DESC LIMIT 50",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![pattern], |row| {
+                Ok(MemoryRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    memory_type: row.get(2)?,
+                    description: row.get(3)?,
+                    content: row.get(4)?,
+                    file_path: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn delete_memory(&self, id: i64) -> Result<bool, String> {
+        let conn = self.connection()?;
+        let affected = conn
+            .execute("DELETE FROM memories WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())?;
+        Ok(affected > 0)
+    }
+
+    // -- Telemetry --
+
+    pub fn insert_telemetry(
+        &self,
+        event_type: &str,
+        data: Option<&str>,
+        session_id: Option<&str>,
+    ) -> Result<i64, String> {
+        let conn = self.connection()?;
+        let now = Local::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO telemetry_events (event_type, data, session_id, created_at) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![event_type, data, session_id, now],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn list_telemetry(&self, limit: usize) -> Result<Vec<TelemetryRow>, String> {
+        let conn = self.connection()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, event_type, data, session_id, created_at \
+                 FROM telemetry_events ORDER BY id DESC LIMIT ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(TelemetryRow {
+                    id: row.get(0)?,
+                    event_type: row.get(1)?,
+                    data: row.get(2)?,
+                    session_id: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// Global singleton SQL store.
@@ -311,6 +506,54 @@ mod tests {
         let store = test_store();
         let id = store.insert_command("cargo build", Some("sess-1")).unwrap();
         assert!(id > 0);
+        let cmds = store.list_commands(10).unwrap();
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].command, "cargo build");
+        let _ = fs::remove_dir_all(&store.base_dir);
+    }
+
+    #[test]
+    fn memory_crud() {
+        let store = test_store();
+        let id = store
+            .insert_memory(
+                "user_role",
+                "user",
+                Some("User is a dev"),
+                "Senior Rust dev",
+                None,
+            )
+            .unwrap();
+        assert!(id > 0);
+
+        let mems = store.list_memories(10).unwrap();
+        assert_eq!(mems.len(), 1);
+        assert_eq!(mems[0].name, "user_role");
+        assert_eq!(mems[0].memory_type, "user");
+
+        let found = store.search_memories("Rust").unwrap();
+        assert_eq!(found.len(), 1);
+
+        let empty = store.search_memories("nonexistent_xyz").unwrap();
+        assert!(empty.is_empty());
+
+        assert!(store.delete_memory(id).unwrap());
+        assert!(store.list_memories(10).unwrap().is_empty());
+        let _ = fs::remove_dir_all(&store.base_dir);
+    }
+
+    #[test]
+    fn telemetry_crud() {
+        let store = test_store();
+        let id = store
+            .insert_telemetry("tool_call", Some(r#"{"tool":"Bash"}"#), Some("sess-1"))
+            .unwrap();
+        assert!(id > 0);
+
+        let events = store.list_telemetry(10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "tool_call");
+        assert!(events[0].data.as_ref().unwrap().contains("Bash"));
         let _ = fs::remove_dir_all(&store.base_dir);
     }
 
