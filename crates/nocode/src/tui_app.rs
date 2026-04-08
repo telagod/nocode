@@ -920,6 +920,17 @@ pub(crate) fn run_app_loop(
     let mut messages: Vec<Message> = Vec::new();
     let tool_defs = registry.definitions();
 
+    // Auto-generate session ID for persistence
+    let session_id = format!(
+        "{}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        std::process::id()
+    );
+    app.hud.session_id = session_id;
+
     let mut event_rx: Option<mpsc::Receiver<TuiEvent>> = None;
     let mut is_busy = false;
 
