@@ -18,7 +18,7 @@
 ## Current Architecture
 
 ```
-nocode (CLI/TUI shell — crates/nocode, 15 modules)
+nocode (CLI/TUI shell — crates/nocode, 18 modules)
   main.rs           — entry point, 9 run modes, provider detection
   repl.rs           — REPL session, 23 slash commands, session persistence
   tui_app.rs        — 4-pane TUI, async streaming, ❯/⎿/∴/✖ visual language
@@ -30,7 +30,7 @@ nocode (CLI/TUI shell — crates/nocode, 15 modules)
   tool_render.rs    — Claude Code visual tool display
   markdown_render.rs — Markdown rendering with syntect
 
-nocode-core (library — crates/nocode-core, 65+ modules)
+nocode-core (library — crates/nocode-core, 70+ modules)
   provider/         — Claude (2024-06-01) / OpenAI / Gemini / Custom / Mock
   provider/transport.rs — HTTP client, SSE, retry/backoff, status codes
   query/loop.rs     — agentic loop (stop_reason driven, auto-compaction, recovery)

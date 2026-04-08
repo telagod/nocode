@@ -1,7 +1,7 @@
 # nocode vs Claude Code 功能对齐清单
 
-> 更新时间：2026-04-08（v2 重写完成后）
-> 基准：Claude Code 2.1.88 (sdk-tools.d.ts 21 tools) vs nocode Rust (85 .rs files, 443 tests)
+> 更新时间：2026-04-08（v2 Phase 2 — TUI/Provider/Task/Bridge 深化后）
+> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (90 .rs files, 476 tests)
 
 ## 图例
 
@@ -25,7 +25,7 @@
 | Google Vertex AI | ✅ Vertex SDK | 🔶 可通过 Custom + claude format | 需用户配置 OAuth |
 | Anthropic Foundry | ✅ Foundry SDK | ❌ | — |
 | Mock provider | ✅ | ✅ | 完成 |
-| Live SSE streaming | ✅ | 🔶 管道已通，TUI 异步渲染已搭 | 缺真实 API 端到端验证 |
+| Live SSE streaming | ✅ | ✅ SseReader + stall detection | 完成 |
 | Tool call parsing (Claude) | ✅ | ✅ extract_claude_tool_calls | 完成 |
 | Tool call parsing (OpenAI) | ✅ | ✅ extract_openai_tool_calls | 完成 |
 | Tool call parsing (Gemini) | ❌ | ✅ extract_gemini_tool_calls | nocode 独有 |
@@ -86,27 +86,27 @@
 | 账户 (/login, /logout) | ✅ | ✅ | 完成 |
 | 诊断 (/doctor) | ✅ | ✅ | 完成 |
 | 插件 (/plugin list) | ✅ | ✅ 骨架 | 完成 |
-| /model | ✅ | ❌ | — |
-| /config | ✅ | ❌ | — |
-| /permissions | ✅ | ❌ | — |
+| /model | ✅ | ✅ | 完成 |
+| /config | ✅ | ✅ overlay | 完成 |
+| /permissions | ✅ | ✅ | 完成 |
 | /review, /ultrareview | ✅ | ❌ | — |
 | /plan, /ultraplan | ✅ | ❌ | — |
-| /compact | ✅ | ❌ | — |
-| /memory | ✅ | ❌ | — |
-| /agents | ✅ | ❌ | — |
+| /compact | ✅ | ✅ TailCompactor + RichCompactor | 完成 |
+| /memory | ✅ | ✅ overlay | 完成 |
+| /agents | ✅ | ✅ overlay | 完成 |
 | /skills | ✅ | ❌ | — |
-| /mcp | ✅ | ❌ | — |
+| /mcp | ✅ | ✅ overlay | 完成 |
 | /ide | ✅ | ❌ | — |
 | /voice | ✅ | ❌ | — |
-| /vim, /theme | ✅ | ❌ | — |
-| /cost, /usage | ✅ | ❌ | — |
+| /vim, /theme | ✅ | ✅ | 完成 |
+| /cost, /usage | ✅ | ✅ overlay | 完成 |
 | /insights | ✅ | ❌ | — |
-| /resume, /rewind | ✅ | ❌ | — |
-| /export, /copy | ✅ | ❌ | — |
+| /resume, /rewind | ✅ | ✅ /resume | 完成 |
+| /export, /copy | ✅ | ✅ /export | 完成 |
 | /env, /keybindings | ✅ | ❌ | — |
 | /bughunter, /security-review | ✅ | ❌ | — |
 | /free | ✅ | 🚫 不迁 | 设计决策 |
-| **合计** | **~103** | **~40** | **39%** |
+| **合计** | **~103** | **~52** | **50%** |
 
 ---
 
@@ -121,16 +121,16 @@
 | TUI adaptive poll | ❌ | ✅ 16ms streaming / 120ms idle | nocode 独有 |
 | TUI permission approve/deny | ❌ | ✅ F3 overlay | nocode 独有 |
 | 消息类型渲染 (38 种) | ✅ | 🔶 role badge + 行级着色 | 缺富文本 |
-| Permission 对话框 | ✅ 44 组件 | 🔶 F3 overlay | 缺完整 lifecycle |
-| 虚拟滚动 | ✅ | ❌ | — |
-| 代码高亮 | ✅ | ❌ | — |
+| Permission 对话框 | ✅ 44 组件 | ✅ y/n/a overlay + TuiPermissionBridge | 完成 |
+| 虚拟滚动 | ✅ | ✅ height cache + sticky scroll | 完成 |
+| 代码高亮 | ✅ | ✅ syntect + pulldown-cmark | 完成 |
 | Diff 视图 | ✅ | ❌ | — |
 | 搜索 (GlobalSearch, QuickOpen) | ✅ | ❌ | — |
-| 主题系统 | ✅ | ❌ | — |
-| Vim 模式 | ✅ | ❌ | — |
+| 主题系统 | ✅ | ✅ dark/light + Ctrl-T toggle | 完成 |
+| Vim 模式 | ✅ | ✅ h/j/k/l/w/b/x/0/$/I/A | 完成 |
 | 输入历史 | ✅ | ✅ | 完成 |
 | 草稿/队列 | ✅ | ✅ | 完成 |
-| Spinner / 进度条 | ✅ | ❌ | — |
+| Spinner / 进度条 | ✅ | ✅ Spinner + stall detection | 完成 |
 | 剪贴板集成 | ✅ | ❌ | — |
 | Onboarding 引导 | ✅ | ❌ | — |
 | 自动更新 | ✅ | ❌ | — |
@@ -147,12 +147,12 @@
 | Dream task | ✅ | ✅ | 完成 |
 | Daemon supervisor | ✅ | ✅ restart/backoff/failure | 完成 |
 | Team create (并行多 agent) | ✅ | ✅ /team-create | 完成 |
-| Task 持久化 (跨 session) | ✅ | 🔶 persist_task_record 存在 | 缺 resume |
-| Task resume / 恢复 | ✅ | ❌ | — |
-| Task 审计链 | ✅ | ❌ | — |
+| Task 持久化 (跨 session) | ✅ | ✅ JSONL persist/load | 完成 |
+| Task resume / 恢复 | ✅ | ✅ load_from_file | 完成 |
+| Task 审计链 | ✅ | ✅ TaskEvent lifecycle recording | 完成 |
 | Remote daemon | ✅ | ❌ | — |
 | Agent swarm (21 files) | ✅ | ❌ | — |
-| Inter-agent messaging | ✅ | ❌ | — |
+| Inter-agent messaging | ✅ | ✅ WorkerRegistry inbox | 完成 |
 | Agent creation wizard | ✅ | ❌ | — |
 | Scheduled tasks / Cron | ✅ | ❌ | — |
 
@@ -163,11 +163,11 @@
 | 能力 | redcode | nocode | 状态 |
 |------|---------|--------|------|
 | Local bridge | ✅ | ✅ | 完成 |
-| Remote bridge (HTTP) | ✅ | 🔶 demo transport | 功能可用 |
-| Session registry | ✅ | ❌ | — |
-| Session resume | ✅ | 🔶 resume_with_reader | 缺产品化 |
+| Remote bridge (HTTP) | ✅ | ✅ /v1/query + agentic loop | 完成 |
+| Session registry | ✅ | ✅ SessionRegistry + meta.json | 完成 |
+| Session resume | ✅ | ✅ JSONL + meta.json | 完成 |
 | WebSocket 长连接 | ✅ | ❌ | — |
-| Reconnect / heartbeat | ✅ | ❌ | — |
+| Reconnect / heartbeat | ✅ | ✅ ConnectionRegistry + timeout sweep | 完成 |
 | Permission callback | ✅ | ✅ wire 已通 | 完成 |
 | Bridge event streaming | ✅ | ✅ BridgeEventWire | 完成 |
 
@@ -273,7 +273,7 @@
 
 | 能力 | redcode | nocode | 状态 |
 |------|---------|--------|------|
-| Context compaction | ✅ 15 files | ✅ TruncatingCompactor | 完成（截断式） |
+| Context compaction | ✅ 15 files | ✅ TailCompactor + RichCompactor (LLM-powered) | 完成 |
 | CLAUDE.md 读取 | ✅ | ✅ discover + format | 完成 |
 | Session memory | ✅ | ❌ | — |
 | Memory extraction | ✅ | ❌ | — |
@@ -314,6 +314,14 @@
 | Bash 安全沙箱 | 9 条预设规则，check_bash_safety() |
 | response_result 统一命名 | 替代 structured_output 的新规范 |
 | Capability matrix | 全 provider 能力对比矩阵 |
+| ErrorKind 细粒度分类 | 10 种错误类型 (Auth/RateLimit/Quota/Timeout/ServerError 等) |
+| SSE stream state machine | SseReader 通用解析器 + stall detection |
+| Task cancel token | AtomicBool 协作式取消 + agentic loop 检查 |
+| Task audit trail | TaskEvent 生命周期事件记录 |
+| Bridge HTTP service | /v1/query + /v1/sessions + /v1/connect + heartbeat |
+| Session meta persistence | meta.json + SessionRegistry 全局索引 |
+| Message backgrounds | 按 role 着色消息背景 (user/assistant/tool/error) |
+| TUI modular split | overlays/commands/events 子模块拆分 |
 
 ---
 
@@ -328,8 +336,8 @@
 | Providers | 1 (Claude) | 5 (Claude/OpenAI/Gemini/Custom/Mock) | 超集 |
 | Run modes | ~5 | 9 | 超集 |
 | Slash commands | ~20 | 23 | 超集 |
-| Tests | — | 443 | — |
-| Modules | — | 85 .rs | — |
+| Tests | — | 476 | — |
+| Modules | — | 90 .rs | — |
 
 ### 与 v0.1 对比的进展
 
@@ -360,16 +368,16 @@
 9. ~~Task 持久化~~ ✅ (记录层)
 
 **P2 — 产品完整性（下一阶段）：**
-10. Live streaming 端到端验证
+10. ~~Live streaming 端到端验证~~ ✅ SseReader + stall detection
 11. IDE 集成 (VS Code server mode)
-12. LLM-powered context compaction
-13. Task resume from JSONL
+12. ~~LLM-powered context compaction~~ ✅ RichCompactor
+13. ~~Task resume from JSONL~~ ✅ load_from_file
 14. Plugin execution runtime
 15. Skill system
 
 **P3 — 长尾：**
 16. WebSocket bridge + reconnect
-17. Session registry
+17. ~~Session registry~~ ✅ SessionRegistry + meta.json
 18. Telemetry (opt-in)
 19. Voice mode
 20. Cross-platform packaging

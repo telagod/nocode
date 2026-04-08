@@ -5,7 +5,7 @@
 ```bash
 cargo build                                     # debug build
 cargo build --release                           # release build
-cargo test                                      # all tests (~443)
+cargo test                                      # all tests (~476)
 cargo test -p nocode-core                       # core library only
 cargo test -p nocode                            # CLI binary only
 cargo test <test_name>                          # single test by name

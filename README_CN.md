@@ -2,7 +2,7 @@
 
 [English](README.md) | [Development Guide](docs/DEVELOPMENT.md)
 
-终端原生 AI 编程助手。Rust 构建。85 模块，21 工具，443 测试。Claude Code 严格对齐。
+终端原生 AI 编程助手。Rust 构建。90 模块，21 工具，476 测试。Claude Code 严格对齐。
 
 ## 安装
 

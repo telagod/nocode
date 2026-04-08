@@ -11,7 +11,7 @@ A terminal-native AI coding assistant built in Rust. Connects to Claude, OpenAI,
 ```bash
 cargo build                                     # debug build
 cargo build --release                           # release build
-cargo test                                      # all tests (~439)
+cargo test                                      # all tests (~476)
 cargo test -p nocode-core                       # core library only
 cargo test -p nocode                            # CLI binary only
 cargo test <test_name>                          # single test by name
@@ -27,7 +27,7 @@ CI runs fmt → clippy → test on every push/PR to main (`.github/workflows/ci.
 Two-crate Cargo workspace (edition 2024, clippy all+pedantic+nursery, unsafe forbidden):
 
 ```
-crates/nocode-core/   — library (65 modules), all core logic
+crates/nocode-core/   — library (70+ modules), all core logic
 crates/nocode/        — binary (15 modules), CLI/REPL/TUI shell
 ```
 
