@@ -303,19 +303,431 @@ fn run_bridge_remote_once(prompt: &str) {
 }
 
 fn run_ide_server() {
-    eprintln!("IDE server mode — not yet implemented. Use --repl or --tui.");
+    // IDE server: JSON-RPC over stdio for IDE extensions (VS Code, JetBrains).
+    // Protocol: read JSON-RPC requests from stdin, write responses to stdout.
+    use std::io::{self, BufRead, Write};
+
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+
+    eprintln!(
+        "nocode IDE server v{} — JSON-RPC over stdio",
+        env!("CARGO_PKG_VERSION")
+    );
+
+    let cwd = env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| String::from("."));
+    let settings = Settings::load_merged(&cwd);
+    let provider_type = resolve_provider(&settings);
+    let model = resolve_model(&settings);
+    let registry = ToolRegistry::with_defaults(&cwd);
+    let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
+    let provider_box = build_provider(&provider_type, &settings);
+    let executor = ToolExecutor::new(&registry);
+    let max_tokens = settings.max_tokens.unwrap_or(16384);
+    let max_turns = settings.max_turns.unwrap_or(10);
+
+    for line in stdin.lock().lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let request: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(e) => {
+                let err_resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": null,
+                    "error": { "code": -32700, "message": format!("Parse error: {e}") }
+                });
+                let _ = writeln!(stdout, "{}", err_resp);
+                let _ = stdout.flush();
+                continue;
+            }
+        };
+
+        let id = request
+            .get("id")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let method = request["method"].as_str().unwrap_or("");
+
+        let response = match method {
+            "initialize" => {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "name": "nocode",
+                        "version": env!("CARGO_PKG_VERSION"),
+                        "capabilities": {
+                            "tools": registry.names(),
+                            "model": model,
+                            "provider": provider_type.as_str(),
+                        }
+                    }
+                })
+            }
+            "query" => {
+                let prompt = request["params"]["prompt"].as_str().unwrap_or("");
+                let messages = vec![Message::user_text(prompt)];
+                let config = r#loop::LoopConfig {
+                    model: model.clone(),
+                    max_tokens,
+                    max_turns,
+                    system: system_blocks.clone(),
+                    tools: registry.definitions(),
+                    parallel_tool_execution: true,
+                };
+                let mut observer = r#loop::NoopObserver;
+                match r#loop::run_agentic_loop(
+                    provider_box.as_ref(),
+                    &executor,
+                    &config,
+                    messages,
+                    &mut observer,
+                ) {
+                    Ok(result) => {
+                        let text: String = result
+                            .messages
+                            .iter()
+                            .filter(|m| m.role == nocode_core::message::Role::Assistant)
+                            .map(|m| m.text_content())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "result": {
+                                "text": text,
+                                "input_tokens": result.total_input_tokens,
+                                "output_tokens": result.total_output_tokens,
+                            }
+                        })
+                    }
+                    Err(e) => {
+                        serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": { "code": -32000, "message": format!("{e}") }
+                        })
+                    }
+                }
+            }
+            "shutdown" => {
+                let resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": null
+                });
+                let _ = writeln!(stdout, "{}", resp);
+                let _ = stdout.flush();
+                break;
+            }
+            _ => {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32601, "message": format!("Method not found: {method}") }
+                })
+            }
+        };
+
+        let _ = writeln!(stdout, "{}", response);
+        let _ = stdout.flush();
+    }
 }
 
 fn run_mcp_server() {
-    eprintln!("MCP server mode — not yet implemented.");
+    // MCP server: expose nocode tools via MCP protocol over stdio.
+    // Implements tools/list and tools/call for external MCP clients.
+    use std::io::{self, BufRead, Write};
+
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+
+    eprintln!(
+        "nocode MCP server v{} — stdio transport",
+        env!("CARGO_PKG_VERSION")
+    );
+
+    let cwd = env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| String::from("."));
+    let registry = ToolRegistry::with_defaults(&cwd);
+
+    for line in stdin.lock().lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let request: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(e) => {
+                let err_resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": null,
+                    "error": { "code": -32700, "message": format!("Parse error: {e}") }
+                });
+                let _ = writeln!(stdout, "{}", err_resp);
+                let _ = stdout.flush();
+                continue;
+            }
+        };
+
+        let id = request
+            .get("id")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let method = request["method"].as_str().unwrap_or("");
+
+        let response = match method {
+            "initialize" => {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": { "tools": {} },
+                        "serverInfo": {
+                            "name": "nocode",
+                            "version": env!("CARGO_PKG_VERSION"),
+                        }
+                    }
+                })
+            }
+            "tools/list" => {
+                let tools: Vec<serde_json::Value> = registry
+                    .definitions()
+                    .iter()
+                    .map(|d| {
+                        serde_json::json!({
+                            "name": d.name,
+                            "description": d.description,
+                            "inputSchema": d.input_schema,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "tools": tools }
+                })
+            }
+            "tools/call" => {
+                let tool_name = request["params"]["name"].as_str().unwrap_or("");
+                let arguments = request["params"]
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                if let Some(tool) = registry.get(tool_name) {
+                    let output = tool.execute(&arguments);
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": {
+                            "content": [{
+                                "type": "text",
+                                "text": output.content,
+                            }],
+                            "isError": output.is_error,
+                        }
+                    })
+                } else {
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32602, "message": format!("Unknown tool: {tool_name}") }
+                    })
+                }
+            }
+            "notifications/initialized" => continue,
+            _ => {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32601, "message": format!("Method not found: {method}") }
+                })
+            }
+        };
+
+        let _ = writeln!(stdout, "{}", response);
+        let _ = stdout.flush();
+    }
 }
 
 fn run_agent_daemon() {
-    eprintln!("Agent daemon mode — not yet implemented.");
+    // Agent daemon: long-running background process that manages agent workers.
+    // Listens on stdin for spawn/stop/status commands, manages worker lifecycle.
+    use std::io::{self, BufRead, Write};
+
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+
+    eprintln!(
+        "nocode agent daemon v{} — background process",
+        env!("CARGO_PKG_VERSION")
+    );
+
+    use nocode_core::agent::worker::global_worker_registry;
+
+    for line in stdin.lock().lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let request: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(e) => {
+                let resp = serde_json::json!({ "error": format!("Parse error: {e}") });
+                let _ = writeln!(stdout, "{}", resp);
+                let _ = stdout.flush();
+                continue;
+            }
+        };
+
+        let action = request["action"].as_str().unwrap_or("");
+        let response = match action {
+            "status" => {
+                let reg = global_worker_registry();
+                let reg = reg.lock().unwrap_or_else(|e| e.into_inner());
+                let workers = reg.list();
+                let list: Vec<serde_json::Value> = workers
+                    .iter()
+                    .map(|w| {
+                        serde_json::json!({
+                            "id": w.id,
+                            "name": w.name,
+                            "state": format!("{:?}", w.state),
+                        })
+                    })
+                    .collect();
+                serde_json::json!({ "workers": list })
+            }
+            "spawn" => {
+                let name = request["name"].as_str().unwrap_or("worker");
+                let prompt = request["prompt"].as_str().unwrap_or("");
+                let reg = global_worker_registry();
+                let mut reg = reg.lock().unwrap_or_else(|e| e.into_inner());
+                let id = reg.register(name, prompt);
+                serde_json::json!({ "spawned": id })
+            }
+            "stop" => {
+                let id = request["id"].as_str().unwrap_or("");
+                let reg = global_worker_registry();
+                let mut reg = reg.lock().unwrap_or_else(|e| e.into_inner());
+                let removed = reg.remove(id).is_some();
+                serde_json::json!({ "stopped": removed })
+            }
+            "shutdown" => {
+                let resp = serde_json::json!({ "shutdown": true });
+                let _ = writeln!(stdout, "{}", resp);
+                let _ = stdout.flush();
+                break;
+            }
+            _ => {
+                serde_json::json!({ "error": format!("Unknown action: {action}") })
+            }
+        };
+
+        let _ = writeln!(stdout, "{}", response);
+        let _ = stdout.flush();
+    }
 }
 
 fn run_agent_host() {
-    eprintln!("Agent host mode — not yet implemented.");
+    // Agent host: single-shot agent execution for spawned sub-agents.
+    // Reads a task from stdin, executes it, writes result to stdout.
+    use std::io::{self, Read, Write};
+
+    let mut stdin_buf = String::new();
+    if io::stdin().read_to_string(&mut stdin_buf).is_err() {
+        eprintln!("Failed to read stdin");
+        std::process::exit(1);
+    }
+
+    let request: serde_json::Value = match serde_json::from_str(&stdin_buf) {
+        Ok(v) => v,
+        Err(e) => {
+            let err = serde_json::json!({ "error": format!("Parse error: {e}") });
+            println!("{}", err);
+            std::process::exit(1);
+        }
+    };
+
+    let prompt = request["prompt"].as_str().unwrap_or("");
+    if prompt.is_empty() {
+        let err = serde_json::json!({ "error": "Missing prompt" });
+        println!("{}", err);
+        std::process::exit(1);
+    }
+
+    let cwd = env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| String::from("."));
+    let settings = Settings::load_merged(&cwd);
+    let provider_type = resolve_provider(&settings);
+    let model = resolve_model(&settings);
+    let registry = ToolRegistry::with_defaults(&cwd);
+    let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
+    let provider_box = build_provider(&provider_type, &settings);
+    let executor = ToolExecutor::new(&registry);
+    let max_tokens = settings.max_tokens.unwrap_or(16384);
+    let max_turns = settings.max_turns.unwrap_or(10);
+
+    let messages = vec![Message::user_text(prompt)];
+    let config = r#loop::LoopConfig {
+        model,
+        max_tokens,
+        max_turns,
+        system: system_blocks,
+        tools: registry.definitions(),
+        parallel_tool_execution: true,
+    };
+    let mut observer = r#loop::NoopObserver;
+
+    let result = match r#loop::run_agentic_loop(
+        provider_box.as_ref(),
+        &executor,
+        &config,
+        messages,
+        &mut observer,
+    ) {
+        Ok(result) => {
+            let text: String = result
+                .messages
+                .iter()
+                .filter(|m| m.role == nocode_core::message::Role::Assistant)
+                .map(|m| m.text_content())
+                .collect::<Vec<_>>()
+                .join("\n");
+            serde_json::json!({
+                "text": text,
+                "input_tokens": result.total_input_tokens,
+                "output_tokens": result.total_output_tokens,
+            })
+        }
+        Err(e) => {
+            serde_json::json!({ "error": format!("{e}") })
+        }
+    };
+
+    let mut stdout = io::stdout();
+    let _ = writeln!(stdout, "{}", result);
+    let _ = stdout.flush();
 }
 
 fn extract_arg(args: &[String], flag: &str) -> Option<String> {
