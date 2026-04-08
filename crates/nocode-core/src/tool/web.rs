@@ -301,3 +301,55 @@ fn strip_html_tags(s: &str) -> String {
         .replace("&#x27;", "'")
         .replace("&nbsp;", " ")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_html_tags_basic() {
+        assert_eq!(strip_html_tags("<b>hello</b>"), "hello");
+        assert_eq!(strip_html_tags("<a href=\"x\">link</a>"), "link");
+        assert_eq!(strip_html_tags("no tags"), "no tags");
+    }
+
+    #[test]
+    fn strip_html_tags_entities() {
+        assert_eq!(strip_html_tags("a &amp; b"), "a & b");
+        assert_eq!(strip_html_tags("&lt;code&gt;"), "<code>");
+    }
+
+    #[test]
+    fn strip_html_tags_simple_removes_script_style() {
+        let html = "<html><script>alert(1)</script><style>.x{}</style><p>text</p></html>";
+        let result = strip_html_tags_simple(html);
+        assert!(!result.contains("alert"));
+        assert!(!result.contains(".x{}"));
+        assert!(result.contains("text"));
+    }
+
+    #[test]
+    fn strip_html_tags_simple_collapses_whitespace() {
+        let html = "<p>hello</p>   \n\n   <p>world</p>";
+        let result = strip_html_tags_simple(html);
+        assert!(!result.contains("  "));
+    }
+
+    #[test]
+    fn extract_href_direct() {
+        let frag = r#"<a href="https://example.com" class="result__a">"#;
+        assert_eq!(extract_href(frag), Some("https://example.com".to_string()));
+    }
+
+    #[test]
+    fn extract_href_ddg_redirect() {
+        let frag = r#"<a href="/l/?uddg=https%3A%2F%2Fexample.com&rut=abc" class="result__a">"#;
+        assert_eq!(extract_href(frag), Some("https://example.com".to_string()));
+    }
+
+    #[test]
+    fn parse_ddg_results_empty() {
+        let results = parse_ddg_results("<html></html>", 10);
+        assert!(results.is_empty());
+    }
+}
