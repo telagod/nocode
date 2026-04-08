@@ -231,10 +231,12 @@ impl TuiApp {
     pub fn update_streaming_thinking(&mut self, accumulated: &str) {
         let lines: Vec<crate::markdown_render::RenderedLine> = accumulated
             .lines()
-            .map(|l| {
+            .enumerate()
+            .map(|(i, l)| {
                 let mut rl = crate::markdown_render::RenderedLine::new();
+                let prefix = if i == 0 { "∴ " } else { "  " };
                 rl.push(crate::markdown_render::LineSegment::new(
-                    l,
+                    format!("{prefix}{l}"),
                     crossterm::style::Color::DarkGrey,
                 ));
                 rl
