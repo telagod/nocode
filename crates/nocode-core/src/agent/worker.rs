@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkerState {
     Spawning,
+    TrustRequired,
+    ReadyForPrompt,
     Running,
     Finished,
     Failed,
