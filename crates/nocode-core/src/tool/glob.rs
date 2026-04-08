@@ -29,7 +29,7 @@ impl Tool for GlobTool {
         };
 
         let base = input["path"].as_str().unwrap_or(".");
-        let head_limit = input["head_limit"].as_u64().unwrap_or(250) as usize;
+        const MAX_RESULTS: usize = 250;
 
         let full_pattern = if pattern.starts_with('/') {
             pattern.to_string()
@@ -60,13 +60,13 @@ impl Tool for GlobTool {
         let total = files.len();
         let limited: Vec<&str> = files
             .iter()
-            .take(if head_limit > 0 { head_limit } else { total })
+            .take(MAX_RESULTS)
             .map(|(_, p)| p.as_str())
             .collect();
 
         let mut result = limited.join("\n");
-        if head_limit > 0 && total > head_limit {
-            result.push_str(&format!("\n... and {} more files", total - head_limit));
+        if total > MAX_RESULTS {
+            result.push_str(&format!("\n... and {} more files", total - MAX_RESULTS));
         }
 
         ToolOutput::success(result)
