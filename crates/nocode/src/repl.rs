@@ -30,6 +30,21 @@ pub fn run_repl(
     let cmd_reg = CommandRegistry::with_defaults();
     let mut current_model = model.to_string();
 
+    // Session persistence
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let session_id = format!(
+        "{}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        std::process::id()
+    );
+    let mut persistence =
+        nocode_core::session::persistence::SessionPersistence::new(&cwd, &session_id);
+
     loop {
         print!("> ");
         let _ = stdout.flush();
@@ -153,6 +168,7 @@ pub fn run_repl(
                     println!();
                 }
                 messages = result.messages;
+                persistence.flush_incremental(&messages);
             }
             Err(e) => {
                 eprintln!("\nerror: {e}");
