@@ -18,8 +18,8 @@ impl Tool for WriteTool {
         json!({
             "type": "object",
             "properties": {
-                "file_path": { "type": "string", "description": "Absolute path to the file" },
-                "content": { "type": "string", "description": "Content to write" }
+                "file_path": { "type": "string", "description": "The absolute path to the file to write (must be absolute, not relative)" },
+                "content": { "type": "string", "description": "The content to write to the file" }
             },
             "required": ["file_path", "content"]
         })

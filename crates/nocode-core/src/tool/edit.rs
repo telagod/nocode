@@ -17,10 +17,10 @@ impl Tool for EditTool {
         json!({
             "type": "object",
             "properties": {
-                "file_path": { "type": "string", "description": "Absolute path to the file" },
-                "old_string": { "type": "string", "description": "The exact text to replace" },
-                "new_string": { "type": "string", "description": "The replacement text" },
-                "replace_all": { "type": "boolean", "description": "Replace all occurrences (default false)" }
+                "file_path": { "type": "string", "description": "The absolute path to the file to modify" },
+                "old_string": { "type": "string", "description": "The text to replace" },
+                "new_string": { "type": "string", "description": "The text to replace it with (must be different from old_string)" },
+                "replace_all": { "type": "boolean", "description": "Replace all occurrences of old_string (default false)" }
             },
             "required": ["file_path", "old_string", "new_string"]
         })
