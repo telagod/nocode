@@ -129,26 +129,36 @@ impl Tool for TaskUpdateTool {
         "TaskUpdate"
     }
     fn description(&self) -> &str {
-        "Update a task's status, subject, description, or owner."
+        "Update a task's status, subject, description, owner, or dependencies."
     }
     fn input_schema(&self) -> Value {
         json!({"type":"object","properties":{
-            "id":{"type":"string"},"status":{"type":"string"},
-            "subject":{"type":"string"},"description":{"type":"string"},
-            "owner":{"type":"string"}
-        },"required":["id"]})
+            "taskId":{"type":"string","description":"The ID of the task to update"},
+            "status":{"type":"string","enum":["pending","in_progress","completed","failed","deleted"]},
+            "subject":{"type":"string","description":"New subject for the task"},
+            "description":{"type":"string","description":"New description"},
+            "activeForm":{"type":"string","description":"Present continuous form for spinner"},
+            "owner":{"type":"string","description":"New owner for the task"},
+            "addBlocks":{"type":"array","items":{"type":"string"},"description":"Task IDs that this task blocks"},
+            "addBlockedBy":{"type":"array","items":{"type":"string"},"description":"Task IDs that block this task"}
+        },"required":["taskId"]})
     }
     fn execute(&self, input: &Value) -> ToolOutput {
-        let Some(id) = input["id"].as_str() else {
-            return ToolOutput::error("Missing required parameter: id");
+        // Support both "taskId" and "id" for compatibility
+        let id = input["taskId"].as_str().or_else(|| input["id"].as_str());
+        let Some(id) = id else {
+            return ToolOutput::error("Missing required parameter: taskId");
         };
         let tc = global_task_coordinator();
         let mut guard = tc.lock().unwrap();
+
+        // Status
         if let Some(status) = input["status"].as_str() {
             let s = match status {
                 "pending" => TaskStatus::Pending,
                 "in_progress" => TaskStatus::InProgress,
                 "completed" => TaskStatus::Completed,
+                "failed" => TaskStatus::Failed,
                 "deleted" => TaskStatus::Deleted,
                 _ => TaskStatus::Pending,
             };
@@ -156,11 +166,37 @@ impl Tool for TaskUpdateTool {
                 return ToolOutput::error(e);
             }
         }
+
+        // Owner
         if let Some(owner) = input["owner"].as_str()
             && let Err(e) = guard.set_owner(id, owner)
         {
             return ToolOutput::error(e);
         }
+
+        // addBlockedBy
+        if let Some(blockers) = input["addBlockedBy"].as_array() {
+            for blocker in blockers {
+                if let Some(bid) = blocker.as_str()
+                    && let Err(e) = guard.add_blocked_by(id, bid)
+                {
+                    return ToolOutput::error(e);
+                }
+            }
+        }
+
+        // addBlocks
+        if let Some(blocked) = input["addBlocks"].as_array() {
+            for b in blocked {
+                if let Some(bid) = b.as_str()
+                    && let Err(e) = guard.add_blocks(id, bid)
+                {
+                    return ToolOutput::error(e);
+                }
+            }
+        }
+
+        // Subject, description, activeForm
         if let Some(task) = guard.get_mut(id) {
             if let Some(s) = input["subject"].as_str() {
                 task.subject = s.to_string();
@@ -169,6 +205,7 @@ impl Tool for TaskUpdateTool {
                 task.description = d.to_string();
             }
         }
+
         ToolOutput::success(format!("Task {id} updated"))
     }
 }
