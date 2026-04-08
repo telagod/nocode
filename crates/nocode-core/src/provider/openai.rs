@@ -303,3 +303,105 @@ impl Provider for OpenAiProvider {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::SystemBlock;
+
+    fn make_request() -> CreateMessageRequest {
+        CreateMessageRequest {
+            model: "gpt-4o".to_string(),
+            max_tokens: 1024,
+            system: vec![SystemBlock::text("You are helpful.")],
+            messages: vec![Message::user_text("Hello")],
+            tools: vec![],
+            stream: false,
+        }
+    }
+
+    #[test]
+    fn parse_non_streaming_response() {
+        let provider = OpenAiProvider::new("test-key");
+        let body = r#"{
+            "id": "chatcmpl-1",
+            "model": "gpt-4o",
+            "choices": [{
+                "message": {"role": "assistant", "content": "Hi there!"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+        }"#;
+        let resp = provider.parse_response(body).unwrap();
+        assert_eq!(resp.text_content(), "Hi there!");
+        assert_eq!(resp.stop_reason, StopReason::EndTurn);
+        assert_eq!(resp.usage.input_tokens, 10);
+        assert_eq!(resp.usage.output_tokens, 5);
+    }
+
+    #[test]
+    fn parse_tool_call_response() {
+        let provider = OpenAiProvider::new("test-key");
+        let body = r#"{
+            "id": "chatcmpl-2",
+            "model": "gpt-4o",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "Bash", "arguments": "{\"command\":\"ls\"}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 10}
+        }"#;
+        let resp = provider.parse_response(body).unwrap();
+        assert_eq!(resp.stop_reason, StopReason::ToolUse);
+        assert!(resp.has_tool_use());
+        let tools = resp.tool_uses();
+        assert_eq!(tools.len(), 1);
+        if let ContentBlock::ToolUse { name, .. } = &tools[0] {
+            assert_eq!(name, "Bash");
+        }
+    }
+
+    #[test]
+    fn convert_messages_includes_system() {
+        let provider = OpenAiProvider::new("test-key");
+        let req = make_request();
+        let msgs = provider.convert_messages(&req.system, &req.messages);
+        assert_eq!(msgs[0]["role"], "system");
+        assert_eq!(msgs[0]["content"], "You are helpful.");
+        assert_eq!(msgs[1]["role"], "user");
+    }
+
+    #[test]
+    fn convert_tools_format() {
+        let provider = OpenAiProvider::new("test-key");
+        let mut req = make_request();
+        req.tools.push(crate::provider::types::ToolDefinition {
+            name: "Bash".to_string(),
+            description: "Run a command".to_string(),
+            input_schema: json!({"type": "object", "properties": {"command": {"type": "string"}}}),
+            cache_control: None,
+        });
+        let tools = provider.convert_tools(&req);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["type"], "function");
+        assert_eq!(tools[0]["function"]["name"], "Bash");
+    }
+
+    #[test]
+    fn build_request_body_valid_json() {
+        let provider = OpenAiProvider::new("test-key");
+        let req = make_request();
+        let body = provider.build_request_body(&req, true);
+        let parsed: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["model"], "gpt-4o");
+        assert_eq!(parsed["stream"], true);
+    }
+}

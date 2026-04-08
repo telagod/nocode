@@ -27,6 +27,8 @@ pub struct LoopResult {
     pub stop_reason: StopReason,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
+    pub total_cache_read_tokens: u64,
+    pub total_cache_write_tokens: u64,
     pub turns: u32,
 }
 
@@ -178,6 +180,8 @@ pub fn run_agentic_loop_with_cancel(
     let mut messages = initial_messages;
     let mut total_input_tokens: u64 = 0;
     let mut total_output_tokens: u64 = 0;
+    let mut total_cache_read_tokens: u64 = 0;
+    let mut total_cache_write_tokens: u64 = 0;
     let mut turns: u32 = 0;
     let mut final_stop_reason = StopReason::EndTurn;
     let mut compaction_count: u32 = 0;
@@ -336,6 +340,8 @@ pub fn run_agentic_loop_with_cancel(
 
         total_input_tokens += response.usage.input_tokens;
         total_output_tokens += response.usage.output_tokens;
+        total_cache_read_tokens += response.usage.cache_read_input_tokens;
+        total_cache_write_tokens += response.usage.cache_creation_input_tokens;
         budget.record(response.usage.input_tokens, response.usage.output_tokens);
         final_stop_reason = response.stop_reason;
 
@@ -423,6 +429,8 @@ pub fn run_agentic_loop_with_cancel(
         stop_reason: final_stop_reason,
         total_input_tokens,
         total_output_tokens,
+        total_cache_read_tokens,
+        total_cache_write_tokens,
         turns,
     })
 }

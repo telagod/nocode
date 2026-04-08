@@ -186,6 +186,7 @@ impl Compactor for RichCompactor {
             system: vec![SystemBlock {
                 block_type: "text".to_string(),
                 text: "You are a conversation summarizer. Produce a structured summary of the conversation transcript below. Include: key decisions made, files modified, tools used, current state of work, and any unresolved issues. Be concise but preserve all actionable context.".to_string(),
+                cache_control: None,
             }],
             messages: vec![Message::user_text(format!(
                 "Summarize this conversation transcript:\n\n{transcript}"

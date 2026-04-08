@@ -904,6 +904,10 @@ pub(crate) fn run_app_loop(
                                     loop_result.total_input_tokens,
                                     loop_result.total_output_tokens,
                                 );
+                                app.hud.record_cache_tokens(
+                                    loop_result.total_cache_read_tokens,
+                                    loop_result.total_cache_write_tokens,
+                                );
                                 app.hud.end_turn();
                                 messages = loop_result.messages;
                             }

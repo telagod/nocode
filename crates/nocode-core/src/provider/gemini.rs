@@ -298,3 +298,107 @@ impl Provider for GeminiProvider {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::SystemBlock;
+
+    fn make_request() -> CreateMessageRequest {
+        CreateMessageRequest {
+            model: "gemini-2.5-pro".to_string(),
+            max_tokens: 1024,
+            system: vec![SystemBlock::text("You are helpful.")],
+            messages: vec![Message::user_text("Hello")],
+            tools: vec![],
+            stream: false,
+        }
+    }
+
+    #[test]
+    fn parse_text_response() {
+        let provider = GeminiProvider::new("test-key");
+        let body = r#"{
+            "candidates": [{
+                "content": {"parts": [{"text": "Hi there!"}]},
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5}
+        }"#;
+        let resp = provider.parse_response(body).unwrap();
+        assert_eq!(resp.text_content(), "Hi there!");
+        assert_eq!(resp.stop_reason, StopReason::EndTurn);
+        assert_eq!(resp.usage.input_tokens, 10);
+        assert_eq!(resp.usage.output_tokens, 5);
+    }
+
+    #[test]
+    fn parse_function_call_response() {
+        let provider = GeminiProvider::new("test-key");
+        // Gemini omits finishReason or uses non-STOP when returning function calls
+        let body = r#"{
+            "candidates": [{
+                "content": {"parts": [{"functionCall": {"name": "Bash", "args": {"command": "ls"}}}]}
+            }],
+            "usageMetadata": {"promptTokenCount": 15, "candidatesTokenCount": 8}
+        }"#;
+        let resp = provider.parse_response(body).unwrap();
+        assert_eq!(resp.stop_reason, StopReason::ToolUse);
+        let tools = resp.tool_uses();
+        assert_eq!(tools.len(), 1);
+        if let ContentBlock::ToolUse { name, id, .. } = &tools[0] {
+            assert_eq!(name, "Bash");
+            assert_eq!(id, "gemini-Bash");
+        }
+    }
+
+    #[test]
+    fn convert_messages_format() {
+        let provider = GeminiProvider::new("test-key");
+        let req = make_request();
+        let contents = provider.convert_messages(&req.system, &req.messages);
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[0]["parts"][0]["text"], "Hello");
+    }
+
+    #[test]
+    fn convert_tools_format() {
+        let provider = GeminiProvider::new("test-key");
+        let mut req = make_request();
+        req.tools.push(crate::provider::types::ToolDefinition {
+            name: "Bash".to_string(),
+            description: "Run a command".to_string(),
+            input_schema: json!({"type": "object"}),
+            cache_control: None,
+        });
+        let tools = provider.convert_tools(&req);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "Bash");
+    }
+
+    #[test]
+    fn build_request_body_includes_system() {
+        let provider = GeminiProvider::new("test-key");
+        let req = make_request();
+        let body = provider.build_request_body(&req);
+        let parsed: Value = serde_json::from_str(&body).unwrap();
+        assert!(parsed.get("systemInstruction").is_some());
+        assert_eq!(
+            parsed["systemInstruction"]["parts"][0]["text"],
+            "You are helpful."
+        );
+    }
+
+    #[test]
+    fn endpoint_format() {
+        let provider = GeminiProvider::new("my-key");
+        let ep = provider.endpoint("gemini-2.5-pro", false);
+        assert!(ep.contains("gemini-2.5-pro"));
+        assert!(ep.contains("generateContent"));
+        assert!(ep.contains("key=my-key"));
+
+        let ep_stream = provider.endpoint("gemini-2.5-pro", true);
+        assert!(ep_stream.contains("streamGenerateContent"));
+    }
+}

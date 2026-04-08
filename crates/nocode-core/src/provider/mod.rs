@@ -1,6 +1,7 @@
 pub mod claude;
 pub mod gemini;
 pub mod openai;
+pub mod pricing;
 pub mod transport;
 pub mod types;
 

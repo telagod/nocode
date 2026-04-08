@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use nocode_core::provider::pricing;
+
 /// TUI status bar HUD — tracks model name, token usage, turn timing, and session metadata.
 #[derive(Debug)]
 pub struct StatusHud {
@@ -8,6 +10,8 @@ pub struct StatusHud {
     pub turn_output_tokens: u64,
     pub cumulative_input_tokens: u64,
     pub cumulative_output_tokens: u64,
+    pub cumulative_cache_read_tokens: u64,
+    pub cumulative_cache_write_tokens: u64,
     pub turn_start: Option<Instant>,
     pub session_id: String,
     pub permission_mode: String,
@@ -25,6 +29,8 @@ impl StatusHud {
             turn_output_tokens: 0,
             cumulative_input_tokens: 0,
             cumulative_output_tokens: 0,
+            cumulative_cache_read_tokens: 0,
+            cumulative_cache_write_tokens: 0,
             turn_start: None,
             session_id: session_id.to_owned(),
             permission_mode: String::new(),
@@ -69,6 +75,12 @@ impl StatusHud {
         self.cumulative_output_tokens += output;
     }
 
+    /// Accumulate cache token counts.
+    pub fn record_cache_tokens(&mut self, cache_read: u64, cache_write: u64) {
+        self.cumulative_cache_read_tokens += cache_read;
+        self.cumulative_cache_write_tokens += cache_write;
+    }
+
     /// Mark the current turn as finished.
     pub fn end_turn(&mut self) {
         self.turn_start = None;
@@ -108,12 +120,17 @@ impl StatusHud {
         self.context_window_pct
     }
 
-    /// Get estimated cost in USD.
+    /// Get estimated cost in USD using model-aware pricing.
     #[must_use]
     pub fn estimated_cost(&self) -> f64 {
-        let input_cost = self.cumulative_input_tokens as f64 * 3.0 / 1_000_000.0;
-        let output_cost = self.cumulative_output_tokens as f64 * 15.0 / 1_000_000.0;
-        self.cost_usd + input_cost + output_cost
+        self.cost_usd
+            + pricing::calculate_cost(
+                &self.model_name,
+                self.cumulative_input_tokens,
+                self.cumulative_output_tokens,
+                self.cumulative_cache_read_tokens,
+                self.cumulative_cache_write_tokens,
+            )
     }
 
     /// Milliseconds elapsed since the current turn started, if any.
@@ -178,12 +195,9 @@ impl StatusHud {
         )
     }
 
-    /// Compute formatted cost string from cumulative tokens.
-    /// Simple inline estimate — $3/M input, $15/M output (Sonnet-class defaults).
+    /// Compute formatted cost string using model-aware pricing.
     fn format_cost(&self) -> String {
-        let input_cost = self.cumulative_input_tokens as f64 * 3.0 / 1_000_000.0;
-        let output_cost = self.cumulative_output_tokens as f64 * 15.0 / 1_000_000.0;
-        let total = self.cost_usd + input_cost + output_cost;
+        let total = self.estimated_cost();
         if total < 0.01 {
             "$0.00".to_string()
         } else {

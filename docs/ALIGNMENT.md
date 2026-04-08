@@ -1,7 +1,7 @@
 # nocode vs Claude Code 功能对齐清单
 
-> 更新时间：2026-04-08（v2 Phase 2 — TUI/Provider/Task/Bridge 深化后）
-> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (90 .rs files, 476 tests)
+> 更新时间：2026-04-09（v2 Phase 3 — Cost/Cache/Diff/Commands/MCP/Provider 深化后）
+> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (90+ .rs files, 500 tests)
 
 ## 图例
 
@@ -31,9 +31,9 @@
 | Tool call parsing (Gemini) | ❌ | ✅ extract_gemini_tool_calls | nocode 独有 |
 | Tool execution loop | ✅ | ✅ runtime.rs 完整循环 | 完成 |
 | Tools in API request body | ✅ | ✅ ToolSchema JSON | 完成 |
-| Prompt caching | ✅ cache control | ❌ | — |
+| Prompt caching | ✅ cache control | ✅ cache_control ephemeral on system + tools | 完成 |
 | Structured output / JSON schema | ✅ | 🔶 schema 字段存在 | 未产品化 |
-| Cost tracking / token billing | ✅ | 🔶 UsageTracker 存在 | 缺 USD 计费 |
+| Cost tracking / token billing | ✅ | ✅ ModelPricing 价格表 + USD 计费 | 完成 |
 | Reasoning effort | ✅ | ✅ env var 支持 | 完成 |
 | Thinking mode | ✅ extended thinking | 🔶 Adaptive/Disabled enum | 缺 thinkback |
 | Model selection / fallback | ✅ | ✅ | 完成 |
@@ -89,12 +89,12 @@
 | /model | ✅ | ✅ | 完成 |
 | /config | ✅ | ✅ overlay | 完成 |
 | /permissions | ✅ | ✅ | 完成 |
-| /review, /ultrareview | ✅ | ❌ | — |
-| /plan, /ultraplan | ✅ | ❌ | — |
+| /review, /ultrareview | ✅ | ✅ git diff --stat | 完成 |
+| /plan, /ultraplan | ✅ | ✅ plan mode 激活 | 完成 |
 | /compact | ✅ | ✅ TailCompactor + RichCompactor | 完成 |
 | /memory | ✅ | ✅ overlay | 完成 |
 | /agents | ✅ | ✅ overlay | 完成 |
-| /skills | ✅ | ❌ | — |
+| /skills | ✅ | ✅ 列出所有命令 | 完成 |
 | /mcp | ✅ | ✅ overlay | 完成 |
 | /ide | ✅ | ❌ | — |
 | /voice | ✅ | ❌ | — |
@@ -103,10 +103,10 @@
 | /insights | ✅ | ❌ | — |
 | /resume, /rewind | ✅ | ✅ /resume | 完成 |
 | /export, /copy | ✅ | ✅ /export | 完成 |
-| /env, /keybindings | ✅ | ❌ | — |
+| /env, /keybindings | ✅ | ✅ 环境变量 + 快捷键列表 | 完成 |
 | /bughunter, /security-review | ✅ | ❌ | — |
 | /free | ✅ | 🚫 不迁 | 设计决策 |
-| **合计** | **~103** | **~52** | **50%** |
+| **合计** | **~103** | **~57** | **55%** |
 
 ---
 
@@ -124,7 +124,7 @@
 | Permission 对话框 | ✅ 44 组件 | ✅ y/n/a overlay + TuiPermissionBridge | 完成 |
 | 虚拟滚动 | ✅ | ✅ height cache + sticky scroll | 完成 |
 | 代码高亮 | ✅ | ✅ syntect + pulldown-cmark | 完成 |
-| Diff 视图 | ✅ | ❌ | — |
+| Diff 视图 | ✅ | ✅ unified diff + TUI 着色 | 完成 |
 | 搜索 (GlobalSearch, QuickOpen) | ✅ | ❌ | — |
 | 主题系统 | ✅ | ✅ dark/light + Ctrl-T toggle | 完成 |
 | Vim 模式 | ✅ | ✅ h/j/k/l/w/b/x/0/$/I/A | 完成 |
@@ -213,7 +213,7 @@
 | MCP tool discovery | ✅ | ✅ list_tools() | 完成 |
 | MCP tool execution | ✅ | ✅ call_tool() + mcp: 分发 | 完成 |
 | MCP auth (OAuth) | ✅ 2,465 LOC | ❌ | — |
-| MCP resource listing/reading | ✅ | ❌ | — |
+| MCP resource listing/reading | ✅ | ✅ list_resources + read_resource | 完成 |
 | MCP server management | ✅ 12 components | ❌ | — |
 | MCP elicitation | ✅ 1,168 LOC | ❌ | — |
 | In-process transport | ✅ | ❌ | — |
@@ -322,6 +322,11 @@
 | Session meta persistence | meta.json + SessionRegistry 全局索引 |
 | Message backgrounds | 按 role 着色消息背景 (user/assistant/tool/error) |
 | TUI modular split | overlays/commands/events 子模块拆分 |
+| Model pricing table | 多 provider 价格表 + USD 实时计费 |
+| Prompt caching | cache_control ephemeral 自动注入 system + tools |
+| Unified diff output | FileEdit 生成 unified diff + TUI 绿红着色 |
+| MCP resource listing | list_resources + read_resource 完整实现 |
+| Cache token tracking | cache_read/write tokens 端到端回传 |
 
 ---
 
@@ -335,9 +340,9 @@
 | Tool schemas | sdk-tools.d.ts | 严格对齐 | 100% |
 | Providers | 1 (Claude) | 5 (Claude/OpenAI/Gemini/Custom/Mock) | 超集 |
 | Run modes | ~5 | 9 | 超集 |
-| Slash commands | ~20 | 23 | 超集 |
-| Tests | — | 476 | — |
-| Modules | — | 90 .rs | — |
+| Slash commands | ~20 | 28 | 超集 |
+| Tests | — | 500 | — |
+| Modules | — | 91 .rs | — |
 
 ### 与 v0.1 对比的进展
 

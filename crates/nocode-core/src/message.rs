@@ -138,12 +138,30 @@ impl Message {
     }
 }
 
+/// Cache control directive for prompt caching.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CacheControl {
+    #[serde(rename = "type")]
+    pub control_type: String,
+}
+
+impl CacheControl {
+    /// Create an ephemeral cache control (cached for the duration of the request).
+    pub fn ephemeral() -> Self {
+        Self {
+            control_type: String::from("ephemeral"),
+        }
+    }
+}
+
 /// System prompt block — sent in the `system` field, not in messages.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SystemBlock {
     #[serde(rename = "type")]
     pub block_type: String,
     pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
 }
 
 impl SystemBlock {
@@ -151,7 +169,23 @@ impl SystemBlock {
         Self {
             block_type: String::from("text"),
             text: content.into(),
+            cache_control: None,
         }
+    }
+
+    /// Create a text system block with ephemeral cache control.
+    pub fn text_cached(content: impl Into<String>) -> Self {
+        Self {
+            block_type: String::from("text"),
+            text: content.into(),
+            cache_control: Some(CacheControl::ephemeral()),
+        }
+    }
+
+    /// Add cache control to this block.
+    pub fn with_cache_control(mut self, cc: CacheControl) -> Self {
+        self.cache_control = Some(cc);
+        self
     }
 }
 
@@ -235,5 +269,23 @@ mod tests {
         let json = serde_json::to_value(&block).unwrap();
         assert_eq!(json["type"], "text");
         assert_eq!(json["text"], "You are a coding assistant.");
+        assert!(json.get("cache_control").is_none());
+    }
+
+    #[test]
+    fn system_block_cached_serialization() {
+        let block = SystemBlock::text_cached("You are a coding assistant.");
+        let json = serde_json::to_value(&block).unwrap();
+        assert_eq!(json["type"], "text");
+        assert_eq!(json["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn cache_control_roundtrip() {
+        let cc = CacheControl::ephemeral();
+        let json = serde_json::to_value(&cc).unwrap();
+        assert_eq!(json["type"], "ephemeral");
+        let parsed: CacheControl = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed, cc);
     }
 }

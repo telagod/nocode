@@ -31,6 +31,11 @@ pub enum CommandAction {
     Cost,
     Init,
     Login,
+    Plan,
+    Review,
+    Skills,
+    Env,
+    Keybindings,
 }
 
 /// A registered slash command.
@@ -213,6 +218,41 @@ impl CommandRegistry {
                 summary: "Configure API key",
                 argument_hint: None,
                 action: CommandAction::Login,
+            },
+            CommandEntry {
+                name: "plan",
+                aliases: &["ultraplan"],
+                summary: "Enter plan mode for structured task planning",
+                argument_hint: Some("[description]"),
+                action: CommandAction::Plan,
+            },
+            CommandEntry {
+                name: "review",
+                aliases: &["ultrareview"],
+                summary: "Review code changes (staged or working tree)",
+                argument_hint: Some("[path|--staged]"),
+                action: CommandAction::Review,
+            },
+            CommandEntry {
+                name: "skills",
+                aliases: &[],
+                summary: "List available skills and slash commands",
+                argument_hint: None,
+                action: CommandAction::Skills,
+            },
+            CommandEntry {
+                name: "env",
+                aliases: &[],
+                summary: "Show relevant environment variables",
+                argument_hint: None,
+                action: CommandAction::Env,
+            },
+            CommandEntry {
+                name: "keybindings",
+                aliases: &["keys"],
+                summary: "Show keyboard shortcuts",
+                argument_hint: None,
+                action: CommandAction::Keybindings,
             },
         ];
 

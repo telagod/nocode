@@ -76,6 +76,7 @@ pub trait Tool: Send + Sync {
             name: self.name().to_string(),
             description: self.description().to_string(),
             input_schema: self.input_schema(),
+            cache_control: None,
         }
     }
 }

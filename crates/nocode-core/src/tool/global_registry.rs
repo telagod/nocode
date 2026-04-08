@@ -153,6 +153,7 @@ mod tests {
             name: "mcp:test:echo".to_string(),
             description: "Echo tool".to_string(),
             input_schema: json!({"type": "object"}),
+            cache_control: None,
         };
         reg.register_bridged(
             "mcp:test:echo",
@@ -176,6 +177,7 @@ mod tests {
             name: "plugin:foo:bar".to_string(),
             description: "Foo bar".to_string(),
             input_schema: json!({"type": "object"}),
+            cache_control: None,
         };
         reg.register_bridged(
             "plugin:foo:bar",
@@ -194,6 +196,7 @@ mod tests {
             name: "temp".to_string(),
             description: "Temp".to_string(),
             input_schema: json!({"type": "object"}),
+            cache_control: None,
         };
         reg.register_bridged("temp", def, Box::new(|_| ToolOutput::success("ok")));
         assert!(reg.contains("temp"));

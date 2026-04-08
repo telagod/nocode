@@ -1,4 +1,4 @@
-use crate::message::ContentBlock;
+use crate::message::{CacheControl, ContentBlock};
 use crate::provider::Provider;
 use crate::provider::transport::{HttpTransport, SseReader, with_retry};
 use crate::provider::types::{
@@ -31,6 +31,17 @@ impl ClaudeProvider {
         serde_json::to_string(request)
             .map_err(|e| ProviderError::non_retryable(format!("Failed to serialize request: {e}")))
     }
+
+    /// Inject cache_control on the last system block and last tool definition.
+    /// This enables prompt caching for static content (system prompt + tool schemas).
+    fn inject_cache_control(request: &mut CreateMessageRequest) {
+        if let Some(last) = request.system.last_mut() {
+            last.cache_control = Some(CacheControl::ephemeral());
+        }
+        if let Some(last) = request.tools.last_mut() {
+            last.cache_control = Some(CacheControl::ephemeral());
+        }
+    }
 }
 
 impl Provider for ClaudeProvider {
@@ -40,6 +51,7 @@ impl Provider for ClaudeProvider {
     ) -> Result<CreateMessageResponse, ProviderError> {
         let mut req = request.clone();
         req.stream = false;
+        Self::inject_cache_control(&mut req);
         let body = self.serialize_request(&req)?;
 
         let response_text = with_retry(3, || self.transport.post_json("/v1/messages", &body))?;
@@ -55,6 +67,7 @@ impl Provider for ClaudeProvider {
     ) -> Result<CreateMessageResponse, ProviderError> {
         let mut req = request.clone();
         req.stream = true;
+        Self::inject_cache_control(&mut req);
         let body = self.serialize_request(&req)?;
 
         let reader = with_retry(3, || self.transport.post_json_stream("/v1/messages", &body))?;

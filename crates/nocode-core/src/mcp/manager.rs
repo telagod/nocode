@@ -1,6 +1,6 @@
 //! MCP Manager — lifecycle management, health checks, auto-connect.
 
-use crate::mcp::client::{McpClient, McpTool};
+use crate::mcp::client::{McpClient, McpResource, McpTool};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -271,6 +271,44 @@ impl McpManager {
             .as_mut()
             .ok_or_else(|| format!("MCP server '{server}' has no active client"))?;
         client.read_resource(uri)
+    }
+
+    /// List resources from a connected MCP server.
+    pub fn list_resources(&mut self, server: &str) -> Result<Vec<McpResource>, String> {
+        let entry = self
+            .servers
+            .get_mut(server)
+            .ok_or_else(|| format!("MCP server '{server}' not registered"))?;
+        if entry.phase != McpPhase::Connected {
+            return Err(format!(
+                "MCP server '{server}' is not connected ({:?})",
+                entry.phase
+            ));
+        }
+        let client = entry
+            .client
+            .as_mut()
+            .ok_or_else(|| format!("MCP server '{server}' has no active client"))?;
+        client.list_resources()
+    }
+
+    /// List resources from all connected servers.
+    pub fn all_resources(&mut self) -> Vec<(String, McpResource)> {
+        let connected: Vec<String> = self
+            .servers
+            .values()
+            .filter(|e| e.phase == McpPhase::Connected)
+            .map(|e| e.name.clone())
+            .collect();
+        let mut result = Vec::new();
+        for name in connected {
+            if let Ok(resources) = self.list_resources(&name) {
+                for r in resources {
+                    result.push((name.clone(), r));
+                }
+            }
+        }
+        result
     }
 
     /// Connect all registered servers.

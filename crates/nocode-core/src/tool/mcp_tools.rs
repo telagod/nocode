@@ -27,19 +27,42 @@ impl Tool for ListMcpResourcesTool {
     fn execute(&self, input: &Value) -> ToolOutput {
         let server_filter = input["server"].as_str();
         let mgr = crate::mcp::manager::global_mcp_manager();
-        let guard = mgr.lock().unwrap();
-        let tools = guard.all_tools();
-        let filtered: Vec<Value> = tools
+        let mut guard = mgr.lock().unwrap();
+
+        // List actual resources from connected servers
+        let resources = guard.all_resources();
+        let filtered: Vec<Value> = resources
             .iter()
-            .filter(|(srv, _)| server_filter.is_none_or(|f| *srv == f))
-            .map(|(srv, t)| {
+            .filter(|(srv, _)| server_filter.is_none_or(|f| srv == f))
+            .map(|(srv, r)| {
                 json!({
                     "server": srv,
-                    "name": t.name,
-                    "description": t.description,
+                    "uri": r.uri,
+                    "name": r.name,
+                    "description": r.description,
+                    "mimeType": r.mime_type,
                 })
             })
             .collect();
+
+        // If no resources found, fall back to listing tools as resource-like entries
+        if filtered.is_empty() {
+            let tools = guard.all_tools();
+            let tool_list: Vec<Value> = tools
+                .iter()
+                .filter(|(srv, _)| server_filter.is_none_or(|f| *srv == f))
+                .map(|(srv, t)| {
+                    json!({
+                        "server": srv,
+                        "type": "tool",
+                        "name": t.name,
+                        "description": t.description,
+                    })
+                })
+                .collect();
+            return ToolOutput::success(serde_json::to_string(&tool_list).unwrap_or_default());
+        }
+
         ToolOutput::success(serde_json::to_string(&filtered).unwrap_or_default())
     }
 }

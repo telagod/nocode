@@ -35,6 +35,21 @@ pub(crate) fn convert_color(c: crossterm::style::Color) -> Color {
     }
 }
 
+/// Detect diff lines and return appropriate color, or None for non-diff lines.
+fn diff_line_color(line: &str, theme: &crate::tui_theme::Theme) -> Option<Color> {
+    if line.starts_with("+++") || line.starts_with("---") {
+        Some(theme.text_dim)
+    } else if line.starts_with('+') {
+        Some(theme.diff_added)
+    } else if line.starts_with('-') {
+        Some(theme.diff_removed)
+    } else if line.starts_with("@@") {
+        Some(theme.assistant)
+    } else {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ChatMessage
 // ---------------------------------------------------------------------------
@@ -193,12 +208,23 @@ impl ChatMessage {
                         "  \u{23BF} ",
                         Style::default().fg(theme.border),
                     )];
-                    spans.extend(rendered_line.segments.iter().map(|seg| {
-                        Span::styled(
-                            seg.text.as_str(),
-                            Style::default().fg(convert_color(seg.color)),
-                        )
-                    }));
+                    // Diff-aware coloring for tool output
+                    let line_text: String = rendered_line
+                        .segments
+                        .iter()
+                        .map(|s| s.text.as_str())
+                        .collect();
+                    let diff_color = diff_line_color(&line_text, &theme);
+                    if let Some(color) = diff_color {
+                        spans.push(Span::styled(line_text, Style::default().fg(color)));
+                    } else {
+                        spans.extend(rendered_line.segments.iter().map(|seg| {
+                            Span::styled(
+                                seg.text.as_str(),
+                                Style::default().fg(convert_color(seg.color)),
+                            )
+                        }));
+                    }
                     result.push(Line::from(spans));
                 }
             }

@@ -143,6 +143,26 @@ pub(crate) fn handle_slash_command(
             );
             SlashResult::Handled
         }
+        CommandAction::Plan => {
+            cmd_plan(app, args.as_deref());
+            SlashResult::Handled
+        }
+        CommandAction::Review => {
+            cmd_review(app, args.as_deref());
+            SlashResult::Handled
+        }
+        CommandAction::Skills => {
+            cmd_skills(app);
+            SlashResult::Handled
+        }
+        CommandAction::Env => {
+            cmd_env(app);
+            SlashResult::Handled
+        }
+        CommandAction::Keybindings => {
+            cmd_keybindings(app);
+            SlashResult::Handled
+        }
     }
 }
 
@@ -337,4 +357,130 @@ fn cmd_init(app: &mut TuiApp) {
         Ok(()) => app.push_system(&format!("Created {claude_md_path}")),
         Err(e) => app.push_error(&format!("Failed to create CLAUDE.md: {e}")),
     }
+}
+
+fn cmd_plan(app: &mut TuiApp, description: Option<&str>) {
+    let desc = description.unwrap_or("(no description)");
+    app.push_system(&format!(
+        "Plan mode activated: {desc}\n\n\
+         Outline your approach, then use /send to submit.\n\
+         The model will help structure your plan before execution."
+    ));
+    app.input_mode = InputMode::Insert;
+}
+
+fn cmd_review(app: &mut TuiApp, args: Option<&str>) {
+    let flag = args.unwrap_or("");
+    let cmd = if flag == "--staged" || flag == "staged" {
+        "git diff --staged --stat"
+    } else if flag.is_empty() {
+        "git diff --stat"
+    } else {
+        // Treat as path
+        &format!("git diff -- {flag}")
+    };
+
+    match std::process::Command::new("sh").arg("-c").arg(cmd).output() {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stdout.is_empty() && stderr.is_empty() {
+                app.push_system("No changes to review.");
+            } else {
+                let mut lines = String::new();
+                lines.push_str("Code review:\n\n");
+                if !stdout.is_empty() {
+                    lines.push_str(&stdout);
+                }
+                if !stderr.is_empty() {
+                    lines.push_str(&stderr);
+                }
+                app.push_system(&lines);
+            }
+        }
+        Err(e) => app.push_error(&format!("Failed to run git diff: {e}")),
+    }
+}
+
+fn cmd_skills(app: &mut TuiApp) {
+    let registry = crate::command_registry::CommandRegistry::with_defaults();
+    let mut lines = vec!["Available skills and commands:".to_string(), String::new()];
+    for cmd in registry.all_commands() {
+        let mut line = format!("  /{:<16}", cmd.name);
+        line.push_str(cmd.summary);
+        if !cmd.aliases.is_empty() {
+            let aliases: Vec<String> = cmd.aliases.iter().map(|a| format!("/{a}")).collect();
+            line.push_str(&format!("  ({})", aliases.join(", ")));
+        }
+        lines.push(line);
+    }
+    lines.push(String::new());
+    lines.push(format!("Total: {} commands", registry.all_commands().len()));
+    app.push_system(&lines.join("\n"));
+}
+
+fn cmd_env(app: &mut TuiApp) {
+    let vars = [
+        ("NOCODE_MODEL_PROVIDER", "Provider override"),
+        ("NOCODE_MODEL", "Model override"),
+        ("NOCODE_CUSTOM_BASE_URL", "Custom endpoint"),
+        ("NOCODE_CUSTOM_API_FORMAT", "Custom API format"),
+        ("NOCODE_SYSTEM_PROMPT", "System prompt override"),
+        ("NOCODE_MODEL_REASONING_EFFORT", "Reasoning effort"),
+        ("ANTHROPIC_API_KEY", "Claude API key"),
+        ("OPENAI_API_KEY", "OpenAI API key"),
+        ("GEMINI_API_KEY", "Gemini API key"),
+        ("ANTHROPIC_BASE_URL", "Claude base URL"),
+        ("OPENAI_BASE_URL", "OpenAI base URL"),
+        ("NOCODE_BRIDGE_BASE_URL", "Bridge endpoint"),
+        ("NOCODE_BRIDGE_AUTH_TOKEN", "Bridge auth token"),
+    ];
+
+    let mut lines = vec!["Environment variables:".to_string(), String::new()];
+    for (var, desc) in &vars {
+        let val = std::env::var(var).ok();
+        let display = match val {
+            Some(v) if var.contains("KEY") || var.contains("TOKEN") => {
+                if v.len() > 8 {
+                    format!("{}...{}", &v[..4], &v[v.len() - 4..])
+                } else {
+                    "(set)".to_string()
+                }
+            }
+            Some(v) => v,
+            None => "(not set)".to_string(),
+        };
+        lines.push(format!("  {var:<35} {display:<20} {desc}"));
+    }
+    app.push_system(&lines.join("\n"));
+}
+
+fn cmd_keybindings(app: &mut TuiApp) {
+    app.push_system(
+        "Keyboard shortcuts:\n\n\
+         General:\n\
+         \x20 Alt-1..4        Focus pane (transcript/tasks/detail/events)\n\
+         \x20 Tab / Shift-Tab Cycle panes\n\
+         \x20 Ctrl-T          Toggle dark/light theme\n\
+         \x20 Ctrl-O          Expand/collapse thinking blocks\n\
+         \x20 F1 / ?          Help overlay\n\
+         \x20 F2              Inspector overlay\n\
+         \x20 F3              Permission overlay\n\
+         \x20 Esc             Close overlay / exit\n\n\
+         Input:\n\
+         \x20 Enter           Send message\n\
+         \x20 Shift-Enter     New line\n\
+         \x20 Ctrl-P / Ctrl-N Input history prev/next\n\
+         \x20 Ctrl-U          Clear input\n\
+         \x20 Tab (on tool)   Collapse/expand tool output\n\n\
+         Scrolling:\n\
+         \x20 Up / Down       Scroll or navigate\n\
+         \x20 PgUp / PgDn    Fast scroll\n\n\
+         Vim mode (toggle with /vim):\n\
+         \x20 Esc             Normal mode\n\
+         \x20 i / a / I / A   Insert mode\n\
+         \x20 h/j/k/l         Movement\n\
+         \x20 w/b/e           Word movement\n\
+         \x20 x / dd / C      Delete char / line / to end",
+    );
 }

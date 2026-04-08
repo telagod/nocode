@@ -20,6 +20,16 @@ pub struct McpTool {
     pub input_schema: Value,
 }
 
+/// An MCP resource descriptor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpResource {
+    pub uri: String,
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub mime_type: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct McpToolResult {
     pub content: String,
@@ -162,6 +172,40 @@ impl McpClient {
         } else {
             Ok(contents)
         }
+    }
+
+    /// List available resources from the MCP server.
+    pub fn list_resources(&mut self) -> Result<Vec<McpResource>, String> {
+        let response = self.request("resources/list", json!({}))?;
+        let resources = response
+            .get("resources")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        Some(McpResource {
+                            uri: v.get("uri")?.as_str()?.to_string(),
+                            name: v
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
+                            description: v
+                                .get("description")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
+                            mime_type: v
+                                .get("mimeType")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(resources)
     }
 
     fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
