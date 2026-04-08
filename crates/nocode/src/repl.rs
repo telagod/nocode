@@ -107,6 +107,20 @@ pub fn run_repl(
                 CommandAction::Permissions => {
                     println!("Permission mode: ask (default)");
                 }
+                CommandAction::Compact => {
+                    use nocode_core::session::compaction::{Compactor, TailCompactor};
+                    let compactor = TailCompactor::new(10);
+                    let result = compactor.compact(&messages);
+                    if result.compacted_count > 0 {
+                        messages = result.messages;
+                        println!(
+                            "Compacted {} messages, ~{} tokens saved",
+                            result.compacted_count, result.tokens_saved
+                        );
+                    } else {
+                        println!("Nothing to compact (conversation too short)");
+                    }
+                }
                 _ => {
                     println!("(command not available in REPL mode)");
                 }
