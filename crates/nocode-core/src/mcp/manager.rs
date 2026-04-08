@@ -9,12 +9,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub enum McpPhase {
     Registered,
     Spawning,
+    Initializing,
     Handshake,
     ToolDiscovery,
     Connected,
     HealthCheck,
     Degraded,
     Reconnecting,
+    Failed,
     Shutdown,
 }
 
@@ -24,22 +26,32 @@ impl McpPhase {
         matches!(
             (self, target),
             (Registered, Spawning)
-                | (Spawning, Handshake)
+                | (Spawning, Initializing)
+                | (Spawning, Failed)
                 | (Spawning, Shutdown)
+                | (Initializing, Handshake)
+                | (Initializing, Failed)
                 | (Handshake, ToolDiscovery)
+                | (Handshake, Failed)
                 | (Handshake, Shutdown)
                 | (ToolDiscovery, Connected)
+                | (ToolDiscovery, Failed)
                 | (ToolDiscovery, Shutdown)
                 | (Connected, HealthCheck)
                 | (Connected, Degraded)
                 | (Connected, Shutdown)
                 | (HealthCheck, Connected)
                 | (HealthCheck, Degraded)
+                | (HealthCheck, Failed)
                 | (HealthCheck, Shutdown)
                 | (Degraded, Reconnecting)
+                | (Degraded, Failed)
                 | (Degraded, Shutdown)
                 | (Reconnecting, Spawning)
+                | (Reconnecting, Failed)
                 | (Reconnecting, Shutdown)
+                | (Failed, Reconnecting)
+                | (Failed, Shutdown)
                 | (Shutdown, Registered)
         )
     }
@@ -112,11 +124,12 @@ impl McpManager {
         let mut client = match McpClient::spawn(&entry.command, &args_refs) {
             Ok(c) => c,
             Err(e) => {
-                entry.phase = McpPhase::Shutdown;
+                entry.phase = McpPhase::Failed;
                 return Err(format!("Failed to spawn '{name}': {e}"));
             }
         };
 
+        entry.transition(McpPhase::Initializing)?;
         entry.transition(McpPhase::Handshake)?;
         entry.transition(McpPhase::ToolDiscovery)?;
 
@@ -128,7 +141,7 @@ impl McpManager {
                 Ok(())
             }
             Err(e) => {
-                entry.phase = McpPhase::Shutdown;
+                entry.phase = McpPhase::Failed;
                 Err(format!("Tool discovery failed for '{name}': {e}"))
             }
         }
@@ -201,6 +214,7 @@ impl McpManager {
         let args_refs: Vec<&str> = entry.args.iter().map(String::as_str).collect();
         match McpClient::spawn(&entry.command, &args_refs) {
             Ok(mut client) => {
+                entry.transition(McpPhase::Initializing)?;
                 entry.transition(McpPhase::Handshake)?;
                 entry.transition(McpPhase::ToolDiscovery)?;
                 match client.list_tools() {
@@ -211,13 +225,13 @@ impl McpManager {
                         Ok(())
                     }
                     Err(e) => {
-                        entry.phase = McpPhase::Shutdown;
+                        entry.phase = McpPhase::Failed;
                         Err(format!("Reconnect tool discovery failed: {e}"))
                     }
                 }
             }
             Err(e) => {
-                entry.phase = McpPhase::Shutdown;
+                entry.phase = McpPhase::Failed;
                 Err(format!("Reconnect spawn failed: {e}"))
             }
         }
