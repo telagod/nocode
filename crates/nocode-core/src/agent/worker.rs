@@ -23,6 +23,16 @@ pub struct Worker {
     pub prompt: String,
     pub result: Option<String>,
     pub error: Option<String>,
+    /// Inbox for inter-agent messages.
+    pub inbox: Vec<AgentMessage>,
+}
+
+/// A message sent between agents.
+#[derive(Debug, Clone)]
+pub struct AgentMessage {
+    pub from: String,
+    pub content: serde_json::Value,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 impl Worker {
@@ -34,6 +44,7 @@ impl Worker {
             prompt: prompt.to_string(),
             result: None,
             error: None,
+            inbox: Vec::new(),
         }
     }
 }
@@ -97,6 +108,46 @@ impl WorkerRegistry {
     /// Remove a finished/failed worker.
     pub fn remove(&mut self, id: &str) -> Option<Worker> {
         self.workers.remove(id)
+    }
+
+    /// Find a worker by name (returns first match).
+    pub fn find_by_name(&self, name: &str) -> Option<&Worker> {
+        self.workers.values().find(|w| w.name == name)
+    }
+
+    /// Send a message to a worker by ID or name.
+    pub fn send_message(
+        &mut self,
+        to: &str,
+        from: &str,
+        content: serde_json::Value,
+    ) -> Result<(), String> {
+        // Resolve target: try by ID first, then by name
+        let key = if self.workers.contains_key(to) {
+            to.to_string()
+        } else {
+            self.workers
+                .values()
+                .find(|w| w.name == to)
+                .map(|w| w.id.clone())
+                .ok_or_else(|| format!("Worker '{to}' not found"))?
+        };
+
+        let worker = self.workers.get_mut(&key).unwrap();
+        worker.inbox.push(AgentMessage {
+            from: from.to_string(),
+            content,
+            timestamp: chrono::Utc::now(),
+        });
+        Ok(())
+    }
+
+    /// Drain all messages from a worker's inbox.
+    pub fn drain_inbox(&mut self, id: &str) -> Vec<AgentMessage> {
+        self.workers
+            .get_mut(id)
+            .map(|w| std::mem::take(&mut w.inbox))
+            .unwrap_or_default()
     }
 }
 

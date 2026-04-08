@@ -67,6 +67,8 @@ fn core_modules_exist() {
         "tool/mcp_tools.rs",
         "tool/session_tools.rs",
         "tool/interactive_tools.rs",
+        "tool/send_message.rs",
+        "tool/skill.rs",
         "query/mod.rs",
         "query/loop.rs",
         "query/budget.rs",
@@ -138,8 +140,8 @@ fn tool_registry_has_25_tools() {
     let reg = nocode_core::tool::ToolRegistry::with_defaults("/tmp");
     let names = reg.names();
     assert!(
-        names.len() >= 34,
-        "Expected >= 34 tools, got {}",
+        names.len() >= 37,
+        "Expected >= 37 tools, got {}",
         names.len()
     );
 }
@@ -192,12 +194,28 @@ fn tool_categories_complete() {
         assert!(reg.get(name).is_some(), "Missing MCP tool: {name}");
     }
     // Session tools
-    for name in &["ExitPlanMode", "EnterWorktree", "ExitWorktree"] {
+    for name in &[
+        "EnterPlanMode",
+        "ExitPlanMode",
+        "EnterWorktree",
+        "ExitWorktree",
+    ] {
         assert!(reg.get(name).is_some(), "Missing session tool: {name}");
     }
     // Interactive tools
     for name in &["AskUserQuestion", "Config", "NotebookEdit"] {
         assert!(reg.get(name).is_some(), "Missing interactive tool: {name}");
+    }
+    // Communication tools
+    for name in &["SendMessage"] {
+        assert!(
+            reg.get(name).is_some(),
+            "Missing communication tool: {name}"
+        );
+    }
+    // Skill tools
+    for name in &["Skill"] {
+        assert!(reg.get(name).is_some(), "Missing skill tool: {name}");
     }
 }
 

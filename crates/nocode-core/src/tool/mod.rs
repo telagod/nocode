@@ -18,7 +18,9 @@ pub mod memory_tools;
 pub mod permission;
 pub mod plugin_registry;
 pub mod read;
+pub mod send_message;
 pub mod session_tools;
+pub mod skill;
 pub mod task_tools;
 pub mod team_tools;
 pub mod tool_validation;
@@ -145,6 +147,7 @@ impl ToolRegistry {
         registry.register(Box::new(mcp_tools::ReadMcpResourceTool));
         registry.register(Box::new(mcp_tools::McpTool));
         // Session tools
+        registry.register(Box::new(session_tools::EnterPlanModeTool));
         registry.register(Box::new(session_tools::ExitPlanModeTool));
         registry.register(Box::new(session_tools::EnterWorktreeTool));
         registry.register(Box::new(session_tools::ExitWorktreeTool));
@@ -152,6 +155,10 @@ impl ToolRegistry {
         registry.register(Box::new(interactive_tools::AskUserQuestionTool));
         registry.register(Box::new(interactive_tools::ConfigTool));
         registry.register(Box::new(interactive_tools::NotebookEditTool));
+        // Communication tools
+        registry.register(Box::new(send_message::SendMessageTool));
+        // Skill tools
+        registry.register(Box::new(skill::SkillTool));
         registry
     }
 }

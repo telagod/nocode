@@ -1,7 +1,33 @@
-//! Session control tools — ExitPlanMode, EnterWorktree, ExitWorktree.
+//! Session control tools — EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree.
 
 use crate::tool::{Tool, ToolOutput};
 use serde_json::{Value, json};
+
+// ---------------------------------------------------------------------------
+// EnterPlanMode
+// ---------------------------------------------------------------------------
+
+pub struct EnterPlanModeTool;
+
+impl Tool for EnterPlanModeTool {
+    fn name(&self) -> &str {
+        "EnterPlanMode"
+    }
+    fn description(&self) -> &str {
+        "Enter plan mode to explore the codebase and design an implementation approach before writing code."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {}
+        })
+    }
+    fn execute(&self, _input: &Value) -> ToolOutput {
+        ToolOutput::success(
+            "Entered plan mode. Explore the codebase and present your plan for approval.",
+        )
+    }
+}
 
 // ---------------------------------------------------------------------------
 // ExitPlanMode
