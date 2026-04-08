@@ -32,8 +32,15 @@ impl Tool for AgentTool {
         };
         let description = input["description"].as_str().unwrap_or("");
         let name = input["name"].as_str().unwrap_or("agent");
+        let model_override = input["model"].as_str().map(|m| match m {
+            "sonnet" => "claude-sonnet-4-20250514",
+            "opus" => "claude-opus-4-20250514",
+            "haiku" => "claude-haiku-4-5-20251001",
+            other => other,
+        });
         let prompt_owned = prompt.to_string();
         let name_owned = name.to_string();
+        let model_owned = model_override.map(String::from);
 
         // Register worker
         let registry = global_worker_registry();
@@ -48,7 +55,7 @@ impl Tool for AgentTool {
 
         // Spawn background thread — worker builds its own provider/executor/loop
         std::thread::spawn(move || {
-            run_worker_thread(&worker_id, &prompt_owned);
+            run_worker_thread(&worker_id, &prompt_owned, model_owned.as_deref());
         });
 
         ToolOutput::success(
@@ -59,7 +66,7 @@ impl Tool for AgentTool {
 
 /// Execute a worker's prompt on a background thread.
 /// Builds provider, tool registry, and agentic loop from global config.
-fn run_worker_thread(worker_id: &str, prompt: &str) {
+fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&str>) {
     use crate::config::settings::Settings;
     use crate::message::Message;
     use crate::prompt::assembly::{self, TruncationBudget};
@@ -81,12 +88,11 @@ fn run_worker_thread(worker_id: &str, prompt: &str) {
             .unwrap_or_else(|_| String::from("."));
 
         let settings = Settings::load_merged(&cwd);
-        let model = std::env::var("NOCODE_MODEL").unwrap_or_else(|_| {
-            settings
-                .model
-                .clone()
-                .unwrap_or_else(|| String::from("claude-sonnet-4-20250514"))
-        });
+        let model = model_override
+            .map(String::from)
+            .or_else(|| std::env::var("NOCODE_MODEL").ok())
+            .or_else(|| settings.model.clone())
+            .unwrap_or_else(|| String::from("claude-sonnet-4-20250514"));
         let max_tokens = settings.max_tokens.unwrap_or(16384);
         let max_turns = settings.max_turns.unwrap_or(10);
 
