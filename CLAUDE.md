@@ -11,7 +11,7 @@ A terminal-native AI coding assistant built in Rust. Connects to Claude, OpenAI,
 ```bash
 cargo build                                     # debug build
 cargo build --release                           # release build
-cargo test                                      # all tests (~909)
+cargo test                                      # all tests (~373)
 cargo test -p nocode-core                       # core library only
 cargo test -p nocode                            # CLI binary only
 cargo test <test_name>                          # single test by name
@@ -27,8 +27,8 @@ CI runs fmt → clippy → test on every push/PR to main (`.github/workflows/ci.
 Two-crate Cargo workspace (edition 2024, clippy all+pedantic+nursery, unsafe forbidden):
 
 ```
-crates/nocode-core/   — library (55 modules), all core logic
-crates/nocode/        — binary (14 modules), CLI/REPL/TUI shell
+crates/nocode-core/   — library (65 modules), all core logic
+crates/nocode/        — binary (15 modules), CLI/REPL/TUI shell
 ```
 
 Key dependencies: serde, serde_json, reqwest, jsonschema, rusqlite (bundled), chrono, pulldown-cmark, syntect, crossterm.
@@ -44,7 +44,7 @@ User Input → main.rs (mode dispatch) → QueryEngine (9-state loop)
   → hook runner → sandbox → execute → result back to QueryEngine loop
 ```
 
-The query engine (`query_engine.rs`) drives an agentic conversation loop. Each iteration: send messages to the model via `provider_transport.rs` (SSE streaming), parse the response, execute any tool calls through `DefaultToolExecutor`, feed tool results back to the model, and loop until the model stops requesting tools or budget is exhausted.
+The query engine (`query/loop.rs`) drives an agentic conversation loop. Each iteration: send messages to the model via `provider/transport.rs` (SSE streaming), parse the response, execute any tool calls through `ToolExecutor`, feed tool results back to the model, and loop until the model stops requesting tools or budget is exhausted. On failure, the recovery system classifies errors and applies retry/backoff/compaction strategies.
 
 ### Dependency Injection
 
