@@ -30,6 +30,7 @@ impl Tool for AgentTool {
         let Some(prompt) = input["prompt"].as_str() else {
             return ToolOutput::error("Missing required parameter: prompt");
         };
+        let description = input["description"].as_str().unwrap_or("");
         let name = input["name"].as_str().unwrap_or("agent");
         let prompt_owned = prompt.to_string();
         let name_owned = name.to_string();
@@ -51,7 +52,7 @@ impl Tool for AgentTool {
         });
 
         ToolOutput::success(
-            json!({"worker_id": id, "name": name_owned, "status": "spawned"}).to_string(),
+            json!({"worker_id": id, "name": name_owned, "description": description, "status": "spawned"}).to_string(),
         )
     }
 }
