@@ -172,3 +172,98 @@ fn read_notebook(path: &str) -> ToolOutput {
 
     ToolOutput::success(output)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_extension_extracts_correctly() {
+        assert_eq!(file_extension("/tmp/foo.png"), Some("png".to_string()));
+        assert_eq!(file_extension("/tmp/foo.JPG"), Some("jpg".to_string()));
+        assert_eq!(file_extension("/tmp/foo"), None);
+    }
+
+    #[test]
+    fn mime_types_correct() {
+        assert_eq!(mime_for_extension("png"), "image/png");
+        assert_eq!(mime_for_extension("jpg"), "image/jpeg");
+        assert_eq!(mime_for_extension("gif"), "image/gif");
+        assert_eq!(mime_for_extension("webp"), "image/webp");
+    }
+
+    #[test]
+    fn read_text_file() {
+        let path = "/tmp/nocode_read_test.txt";
+        std::fs::write(path, "line1\nline2\nline3\n").unwrap();
+        let tool = ReadTool;
+        let result = tool.execute(&json!({"file_path": path}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("line1"));
+        assert!(result.content.contains("line3"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn read_image_returns_base64() {
+        let path = "/tmp/nocode_test_img.png";
+        // Write minimal PNG header
+        std::fs::write(path, b"\x89PNG\r\n\x1a\n").unwrap();
+        let tool = ReadTool;
+        let result = tool.execute(&json!({"file_path": path}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("image/png"));
+        assert!(result.content.contains("base64"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn read_notebook_parses_cells() {
+        let path = "/tmp/nocode_test_nb.ipynb";
+        let nb = json!({
+            "cells": [
+                {"cell_type": "code", "source": ["print('hello')\n"]},
+                {"cell_type": "markdown", "source": ["# Title\n"]}
+            ],
+            "metadata": {},
+            "nbformat": 4
+        });
+        std::fs::write(path, serde_json::to_string(&nb).unwrap()).unwrap();
+        let tool = ReadTool;
+        let result = tool.execute(&json!({"file_path": path}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("Cell 1 (code)"));
+        assert!(result.content.contains("print('hello')"));
+        assert!(result.content.contains("Cell 2 (markdown)"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn read_pdf_returns_error() {
+        let tool = ReadTool;
+        let result = tool.execute(&json!({"file_path": "/tmp/test.pdf"}));
+        assert!(result.is_error);
+        assert!(result.content.contains("PDF"));
+    }
+
+    #[test]
+    fn read_nonexistent_returns_error() {
+        let tool = ReadTool;
+        let result = tool.execute(&json!({"file_path": "/tmp/nocode_nonexistent_xyz_99999"}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn read_with_offset_and_limit() {
+        let path = "/tmp/nocode_read_offset_test.txt";
+        let content: String = (0..20).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(path, &content).unwrap();
+        let tool = ReadTool;
+        let result = tool.execute(&json!({"file_path": path, "offset": 5, "limit": 3}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("line 5"));
+        assert!(result.content.contains("line 7"));
+        assert!(!result.content.contains("line 8"));
+        let _ = std::fs::remove_file(path);
+    }
+}
