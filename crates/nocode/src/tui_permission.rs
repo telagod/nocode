@@ -1,6 +1,7 @@
 //! TUI-aware permission bridge that sends tool permission decisions
 //! to the TUI overlay via mpsc channels.
 
+use nocode_core::tool::permission::{PermissionDecision, PermissionPrompter};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -9,7 +10,7 @@ use std::time::Duration;
 pub struct TuiPermissionRequest {
     pub tool_name: String,
     pub arguments_summary: String,
-    pub response_tx: mpsc::Sender<bool>,
+    pub response_tx: mpsc::Sender<PermissionDecision>,
 }
 
 /// Permission bridge that sends requests to the TUI overlay
@@ -28,10 +29,10 @@ impl TuiPermissionBridge {
     pub fn with_default_timeout(tx: mpsc::Sender<TuiPermissionRequest>) -> Self {
         Self::new(tx, Duration::from_secs(60))
     }
+}
 
-    /// Check permission for a tool call. Blocks until user responds or timeout.
-    /// Returns `true` if approved, `false` if denied/timeout/error.
-    pub fn check(&self, tool_name: &str, arguments_summary: &str) -> bool {
+impl PermissionPrompter for TuiPermissionBridge {
+    fn prompt(&self, tool_name: &str, arguments_summary: &str) -> PermissionDecision {
         let (response_tx, response_rx) = mpsc::channel();
         let request = TuiPermissionRequest {
             tool_name: tool_name.to_string(),
@@ -40,10 +41,12 @@ impl TuiPermissionBridge {
         };
 
         if self.tx.send(request).is_err() {
-            return false;
+            return PermissionDecision::Deny;
         }
 
-        response_rx.recv_timeout(self.timeout).unwrap_or_default()
+        response_rx
+            .recv_timeout(self.timeout)
+            .unwrap_or(PermissionDecision::Deny)
     }
 }
 
@@ -68,10 +71,13 @@ mod tests {
         thread::spawn(move || {
             let req = rx.recv().unwrap();
             assert_eq!(req.tool_name, "Bash");
-            req.response_tx.send(true).unwrap();
+            req.response_tx.send(PermissionDecision::Allow).unwrap();
         });
 
-        assert!(bridge.check("Bash", "command=ls"));
+        assert_eq!(
+            bridge.prompt("Bash", "command=ls"),
+            PermissionDecision::Allow
+        );
     }
 
     #[test]
@@ -81,17 +87,41 @@ mod tests {
 
         thread::spawn(move || {
             let req = rx.recv().unwrap();
-            req.response_tx.send(false).unwrap();
+            req.response_tx.send(PermissionDecision::Deny).unwrap();
         });
 
-        assert!(!bridge.check("Write", "file_path=foo.rs"));
+        assert_eq!(
+            bridge.prompt("Write", "file_path=foo.rs"),
+            PermissionDecision::Deny
+        );
+    }
+
+    #[test]
+    fn bridge_always_allow() {
+        let (tx, rx) = mpsc::channel();
+        let bridge = TuiPermissionBridge::new(tx, Duration::from_secs(5));
+
+        thread::spawn(move || {
+            let req = rx.recv().unwrap();
+            req.response_tx
+                .send(PermissionDecision::AlwaysAllow)
+                .unwrap();
+        });
+
+        assert_eq!(
+            bridge.prompt("Edit", "old=a new=b"),
+            PermissionDecision::AlwaysAllow
+        );
     }
 
     #[test]
     fn bridge_timeout() {
         let (tx, _rx) = mpsc::channel();
         let bridge = TuiPermissionBridge::new(tx, Duration::from_millis(50));
-        assert!(!bridge.check("Agent", "prompt=test"));
+        assert_eq!(
+            bridge.prompt("Agent", "prompt=test"),
+            PermissionDecision::Deny
+        );
     }
 
     #[test]
@@ -99,6 +129,9 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         drop(rx);
         let bridge = TuiPermissionBridge::new(tx, Duration::from_secs(5));
-        assert!(!bridge.check("Edit", "old=a new=b"));
+        assert_eq!(
+            bridge.prompt("Edit", "old=a new=b"),
+            PermissionDecision::Deny
+        );
     }
 }

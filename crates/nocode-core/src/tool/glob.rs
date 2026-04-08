@@ -17,7 +17,8 @@ impl Tool for GlobTool {
             "type": "object",
             "properties": {
                 "pattern": { "type": "string", "description": "Glob pattern (e.g. **/*.rs)" },
-                "path": { "type": "string", "description": "Directory to search in (defaults to cwd)" }
+                "path": { "type": "string", "description": "Directory to search in (defaults to cwd)" },
+                "head_limit": { "type": "integer", "description": "Limit output to first N files (default 250)" }
             },
             "required": ["pattern"]
         })
@@ -29,6 +30,8 @@ impl Tool for GlobTool {
         };
 
         let base = input["path"].as_str().unwrap_or(".");
+        let head_limit = input["head_limit"].as_u64().unwrap_or(250) as usize;
+
         let full_pattern = if pattern.starts_with('/') {
             pattern.to_string()
         } else {
@@ -55,11 +58,17 @@ impl Tool for GlobTool {
             return ToolOutput::success("No files matched the pattern.");
         }
 
-        let result = files
+        let total = files.len();
+        let limited: Vec<&str> = files
             .iter()
+            .take(if head_limit > 0 { head_limit } else { total })
             .map(|(_, p)| p.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
+            .collect();
+
+        let mut result = limited.join("\n");
+        if head_limit > 0 && total > head_limit {
+            result.push_str(&format!("\n... and {} more files", total - head_limit));
+        }
 
         ToolOutput::success(result)
     }

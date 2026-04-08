@@ -19,7 +19,8 @@ impl Tool for EditTool {
             "properties": {
                 "file_path": { "type": "string", "description": "Absolute path to the file" },
                 "old_string": { "type": "string", "description": "The exact text to replace" },
-                "new_string": { "type": "string", "description": "The replacement text" }
+                "new_string": { "type": "string", "description": "The replacement text" },
+                "replace_all": { "type": "boolean", "description": "Replace all occurrences (default false)" }
             },
             "required": ["file_path", "old_string", "new_string"]
         })
@@ -35,6 +36,7 @@ impl Tool for EditTool {
         let Some(new_string) = input["new_string"].as_str() else {
             return ToolOutput::error("Missing required parameter: new_string");
         };
+        let replace_all = input["replace_all"].as_bool().unwrap_or(false);
 
         let content = match fs::read_to_string(path) {
             Ok(c) => c,
@@ -47,15 +49,27 @@ impl Tool for EditTool {
                 "old_string not found in {path}. Make sure it matches exactly."
             ));
         }
-        if count > 1 {
-            return ToolOutput::error(format!(
-                "old_string found {count} times in {path}. It must be unique. Provide more context."
-            ));
-        }
 
-        let new_content = content.replacen(old_string, new_string, 1);
+        let new_content = if replace_all {
+            content.replace(old_string, new_string)
+        } else {
+            if count > 1 {
+                return ToolOutput::error(format!(
+                    "old_string found {count} times in {path}. It must be unique. Provide more context, or use replace_all."
+                ));
+            }
+            content.replacen(old_string, new_string, 1)
+        };
+
         match fs::write(path, &new_content) {
-            Ok(()) => ToolOutput::success(format!("Edited {path}")),
+            Ok(()) => {
+                let msg = if replace_all && count > 1 {
+                    format!("Edited {path} ({count} replacements)")
+                } else {
+                    format!("Edited {path}")
+                };
+                ToolOutput::success(msg)
+            }
             Err(e) => ToolOutput::error(format!("Failed to write {path}: {e}")),
         }
     }

@@ -6,16 +6,18 @@ use crate::tool::ToolRegistry;
 use crate::tool::bash_validation;
 use crate::tool::file_safety;
 use crate::tool::hook_runner::HookRunner;
-use crate::tool::permission::PermissionMode;
+use crate::tool::permission::{PermissionDecision, PermissionMode, PermissionPrompter};
 use crate::tool::tool_validation::validate_tool_input;
 use crate::tool::trust::{PermissionEnforcer, TrustDecision};
 use serde_json::Value;
+use std::collections::HashSet;
+use std::sync::Mutex;
 
 /// Full tool execution pipeline:
 /// 1. JSON Schema validation
 /// 2. Trust check (TrustResolver)
 /// 3. PreToolUse hooks (can deny)
-/// 4. Permission mode check
+/// 4. Permission mode check (with interactive prompter)
 /// 5. Bash command validation (Bash tool only)
 /// 6. Sandbox enforcement (path/network restrictions)
 /// 7. Execute
@@ -27,6 +29,8 @@ pub struct ToolExecutor<'a> {
     trust_enforcer: Option<PermissionEnforcer>,
     hook_runner: Option<&'a HookRunner>,
     sandbox: Option<SandboxConfig>,
+    prompter: Option<&'a dyn PermissionPrompter>,
+    always_allowed: Mutex<HashSet<String>>,
 }
 
 impl<'a> ToolExecutor<'a> {
@@ -37,6 +41,8 @@ impl<'a> ToolExecutor<'a> {
             trust_enforcer: None,
             hook_runner: None,
             sandbox: None,
+            prompter: None,
+            always_allowed: Mutex::new(HashSet::new()),
         }
     }
 
@@ -57,6 +63,11 @@ impl<'a> ToolExecutor<'a> {
 
     pub fn with_sandbox(mut self, config: SandboxConfig) -> Self {
         self.sandbox = Some(config);
+        self
+    }
+
+    pub fn with_prompter(mut self, prompter: &'a dyn PermissionPrompter) -> Self {
+        self.prompter = Some(prompter);
         self
     }
 
@@ -157,14 +168,47 @@ impl<'a> ToolExecutor<'a> {
         match self.permission_mode {
             PermissionMode::Auto => true,
             PermissionMode::Ask => {
+                // Read-only tools are always allowed
                 match name {
                     "Read" | "Glob" | "Grep" | "TaskGet" | "TaskList" | "TaskOutput"
-                    | "MemoryList" | "MemorySearch" | "CronList" | "ToolSearch" => true,
+                    | "MemoryList" | "MemorySearch" | "CronList" | "ToolSearch" => return true,
                     "Bash" => {
                         let cmd = input["command"].as_str().unwrap_or("");
-                        bash_validation::is_read_only_command(cmd)
+                        if bash_validation::is_read_only_command(cmd) {
+                            return true;
+                        }
                     }
-                    _ => true, // TODO: wire PermissionPrompter for interactive approval
+                    _ => {}
+                }
+
+                // Check if tool was previously always-allowed
+                if let Ok(allowed) = self.always_allowed.lock()
+                    && allowed.contains(name)
+                {
+                    return true;
+                }
+
+                // Ask the prompter if available
+                if let Some(prompter) = self.prompter {
+                    let args_summary = input.to_string();
+                    let summary = if args_summary.len() > 200 {
+                        format!("{}...", &args_summary[..200])
+                    } else {
+                        args_summary
+                    };
+                    match prompter.prompt(name, &summary) {
+                        PermissionDecision::Allow => true,
+                        PermissionDecision::AlwaysAllow => {
+                            if let Ok(mut allowed) = self.always_allowed.lock() {
+                                allowed.insert(name.to_string());
+                            }
+                            true
+                        }
+                        PermissionDecision::Deny => false,
+                    }
+                } else {
+                    // No prompter — default allow (non-interactive mode)
+                    true
                 }
             }
             PermissionMode::Deny => false,

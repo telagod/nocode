@@ -42,6 +42,30 @@ pub trait LoopObserver: Send {
 pub struct NoopObserver;
 impl LoopObserver for NoopObserver {}
 
+fn emit_tool_result_event(
+    observer: &mut dyn LoopObserver,
+    id: &str,
+    name: &str,
+    result: &ContentBlock,
+) {
+    observer.on_tool_done(name, id, result);
+    observer.on_tool_result(name, result);
+    observer.on_model_event(&ModelStreamEvent::ToolResult {
+        tool_use_id: id.to_string(),
+        name: name.to_string(),
+        content: if let ContentBlock::ToolResult { content, .. } = result {
+            content.clone()
+        } else {
+            String::new()
+        },
+        is_error: if let ContentBlock::ToolResult { is_error, .. } = result {
+            *is_error
+        } else {
+            false
+        },
+    });
+}
+
 /// Execute tool calls in parallel, returning results in order.
 fn execute_tools_parallel(
     executor: &ToolExecutor<'_>,
@@ -49,47 +73,38 @@ fn execute_tools_parallel(
     observer: &mut dyn LoopObserver,
 ) -> Vec<ContentBlock> {
     if tool_calls.len() <= 1 {
-        // Single tool — no need for threads
         return tool_calls
             .iter()
             .map(|(id, name, input)| {
                 observer.on_tool_start(name, id);
                 let result = executor.execute_tool_use(id, name, input);
-                observer.on_tool_done(name, id, &result);
-                observer.on_tool_result(name, &result);
-                observer.on_model_event(&ModelStreamEvent::ToolResult {
-                    tool_use_id: id.clone(),
-                    name: name.clone(),
-                    content: if let ContentBlock::ToolResult { content, .. } = &result {
-                        content.clone()
-                    } else {
-                        String::new()
-                    },
-                    is_error: if let ContentBlock::ToolResult { is_error, .. } = &result {
-                        *is_error
-                    } else {
-                        false
-                    },
-                });
+                emit_tool_result_event(observer, id, name, &result);
                 result
             })
             .collect();
     }
 
-    // Parallel execution via scoped threads
+    // Notify all tool starts before parallel execution
+    for (id, name, _) in tool_calls {
+        observer.on_tool_start(name, id);
+    }
+
+    // True parallel execution via scoped threads
     let (tx, rx) = mpsc::channel();
 
-    for (idx, (id, name, input)) in tool_calls.iter().enumerate() {
-        observer.on_tool_start(name, id);
-        let tx = tx.clone();
-        let id = id.clone();
-        let name = name.clone();
-        let input = input.clone();
+    std::thread::scope(|s| {
+        for (idx, (id, name, input)) in tool_calls.iter().enumerate() {
+            let tx = tx.clone();
+            let id = id.clone();
+            let name = name.clone();
+            let input = input.clone();
 
-        // ToolExecutor uses synchronous execution, spawn threads
-        let result = executor.execute_tool_use(&id, &name, &input);
-        let _ = tx.send((idx, name, id, result));
-    }
+            s.spawn(move || {
+                let result = executor.execute_tool_use(&id, &name, &input);
+                let _ = tx.send((idx, name, id, result));
+            });
+        }
+    });
     drop(tx);
 
     // Collect results and sort by original index
@@ -99,22 +114,7 @@ fn execute_tools_parallel(
     indexed_results
         .into_iter()
         .map(|(_, name, id, result)| {
-            observer.on_tool_done(&name, &id, &result);
-            observer.on_tool_result(&name, &result);
-            observer.on_model_event(&ModelStreamEvent::ToolResult {
-                tool_use_id: id,
-                name: name.clone(),
-                content: if let ContentBlock::ToolResult { content, .. } = &result {
-                    content.clone()
-                } else {
-                    String::new()
-                },
-                is_error: if let ContentBlock::ToolResult { is_error, .. } = &result {
-                    *is_error
-                } else {
-                    false
-                },
-            });
+            emit_tool_result_event(observer, &id, &name, &result);
             result
         })
         .collect()

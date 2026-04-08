@@ -82,7 +82,7 @@ fn grep_searches_content() {
     let result = exec.execute_tool_use(
         "t4",
         "Grep",
-        &json!({"pattern": "hello", "path": "/tmp/nocode_grep_test.txt"}),
+        &json!({"pattern": "hello", "path": "/tmp/nocode_grep_test.txt", "output_mode": "content"}),
     );
     assert_tool_success(&result);
     if let ContentBlock::ToolResult { content, .. } = &result {

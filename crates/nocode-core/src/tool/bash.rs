@@ -1,6 +1,7 @@
 use crate::tool::{Tool, ToolOutput};
 use serde_json::{Value, json};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 pub struct BashTool {
     cwd: String,
@@ -37,42 +38,66 @@ impl Tool for BashTool {
             return ToolOutput::error("Missing required parameter: command");
         };
 
-        let _timeout_ms = input["timeout"].as_u64().unwrap_or(120_000).min(600_000);
+        let timeout_ms = input["timeout"].as_u64().unwrap_or(120_000).min(600_000);
+        let timeout = Duration::from_millis(timeout_ms);
 
-        let result = Command::new("sh")
+        let mut child = match Command::new("sh")
             .arg("-c")
             .arg(command)
             .current_dir(&self.cwd)
-            .output();
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => return ToolOutput::error(format!("Failed to execute command: {e}")),
+        };
 
-        match result {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let mut result = String::new();
-                if !stdout.is_empty() {
-                    result.push_str(&stdout);
-                }
-                if !stderr.is_empty() {
-                    if !result.is_empty() {
-                        result.push('\n');
+        let start = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(_status)) => break,
+                Ok(None) => {
+                    if start.elapsed() >= timeout {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return ToolOutput::error(
+                            json!({
+                                "stdout": "",
+                                "stderr": format!("Command timed out after {timeout_ms}ms"),
+                                "exit_code": -1,
+                                "timed_out": true
+                            })
+                            .to_string(),
+                        );
                     }
-                    result.push_str("STDERR:\n");
-                    result.push_str(&stderr);
+                    std::thread::sleep(Duration::from_millis(50));
                 }
-                if result.is_empty() {
-                    result = format!("(exit code {})", output.status.code().unwrap_or(-1));
-                }
-                if output.status.success() {
-                    ToolOutput::success(result)
-                } else {
-                    ToolOutput::error(format!(
-                        "Exit code {}\n{result}",
-                        output.status.code().unwrap_or(-1)
-                    ))
+                Err(e) => {
+                    return ToolOutput::error(format!("Failed to wait for command: {e}"));
                 }
             }
-            Err(e) => ToolOutput::error(format!("Failed to execute command: {e}")),
+        }
+
+        let output = match child.wait_with_output() {
+            Ok(o) => o,
+            Err(e) => return ToolOutput::error(format!("Failed to read output: {e}")),
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let exit_code = output.status.code().unwrap_or(-1);
+
+        let result_json = json!({
+            "stdout": stdout,
+            "stderr": stderr,
+            "exit_code": exit_code
+        });
+
+        if output.status.success() {
+            ToolOutput::success(result_json.to_string())
+        } else {
+            ToolOutput::error(result_json.to_string())
         }
     }
 }
