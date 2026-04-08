@@ -23,6 +23,7 @@ pub mod session_tools;
 pub mod skill;
 pub mod task_tools;
 pub mod team_tools;
+pub mod todo_write;
 pub mod tool_validation;
 pub mod trust;
 pub mod web;
@@ -107,59 +108,52 @@ impl ToolRegistry {
         self.tools.keys().map(String::as_str).collect()
     }
 
-    /// Create a registry with all built-in tools.
+    /// Create a registry with Claude Code's 21 built-in tools.
     pub fn with_defaults(cwd: impl Into<String>) -> Self {
         let cwd = cwd.into();
         let mut registry = Self::new();
-        // Core tools
-        registry.register(Box::new(bash::BashTool::new(&cwd)));
-        registry.register(Box::new(read::ReadTool));
-        registry.register(Box::new(write::WriteTool));
-        registry.register(Box::new(edit::EditTool));
-        registry.register(Box::new(glob::GlobTool));
-        registry.register(Box::new(grep::GrepTool));
-        registry.register(Box::new(web::WebFetchTool));
-        registry.register(Box::new(web::WebSearchTool));
+        // 1. Agent
         registry.register(Box::new(agent::AgentTool));
-        // Task tools
-        registry.register(Box::new(task_tools::TaskCreateTool));
-        registry.register(Box::new(task_tools::TaskGetTool));
-        registry.register(Box::new(task_tools::TaskListTool));
-        registry.register(Box::new(task_tools::TaskUpdateTool));
-        registry.register(Box::new(task_tools::TaskStopTool));
-        registry.register(Box::new(task_tools::TaskOutputTool));
-        // Team tools
-        registry.register(Box::new(team_tools::TeamCreateTool));
-        registry.register(Box::new(team_tools::TeamDeleteTool));
-        // Cron tools
-        registry.register(Box::new(cron_tools::CronCreateTool));
-        registry.register(Box::new(cron_tools::CronDeleteTool));
-        registry.register(Box::new(cron_tools::CronListTool));
-        // Discovery tools
-        registry.register(Box::new(discovery_tools::ToolSearchTool));
-        registry.register(Box::new(discovery_tools::LspTool));
-        // Memory tools
-        registry.register(Box::new(memory_tools::MemorySaveTool));
-        registry.register(Box::new(memory_tools::MemoryListTool));
-        registry.register(Box::new(memory_tools::MemorySearchTool));
-        registry.register(Box::new(memory_tools::MemoryDeleteTool));
-        // MCP tools
-        registry.register(Box::new(mcp_tools::ListMcpResourcesTool));
-        registry.register(Box::new(mcp_tools::ReadMcpResourceTool));
-        registry.register(Box::new(mcp_tools::McpTool));
-        // Session tools
-        registry.register(Box::new(session_tools::EnterPlanModeTool));
-        registry.register(Box::new(session_tools::ExitPlanModeTool));
-        registry.register(Box::new(session_tools::EnterWorktreeTool));
-        registry.register(Box::new(session_tools::ExitWorktreeTool));
-        // Interactive tools
+        // 2. AskUserQuestion
         registry.register(Box::new(interactive_tools::AskUserQuestionTool));
+        // 3. Bash
+        registry.register(Box::new(bash::BashTool::new(&cwd)));
+        // 4. Config
         registry.register(Box::new(interactive_tools::ConfigTool));
+        // 5. EnterWorktree
+        registry.register(Box::new(session_tools::EnterWorktreeTool));
+        // 6. ExitPlanMode
+        registry.register(Box::new(session_tools::ExitPlanModeTool));
+        // 7. ExitWorktree
+        registry.register(Box::new(session_tools::ExitWorktreeTool));
+        // 8. FileEdit
+        registry.register(Box::new(edit::EditTool));
+        // 9. FileRead
+        registry.register(Box::new(read::ReadTool));
+        // 10. FileWrite
+        registry.register(Box::new(write::WriteTool));
+        // 11. Glob
+        registry.register(Box::new(glob::GlobTool));
+        // 12. Grep
+        registry.register(Box::new(grep::GrepTool));
+        // 13. ListMcpResources
+        registry.register(Box::new(mcp_tools::ListMcpResourcesTool));
+        // 14. Mcp
+        registry.register(Box::new(mcp_tools::McpTool));
+        // 15. NotebookEdit
         registry.register(Box::new(interactive_tools::NotebookEditTool));
-        // Communication tools
-        registry.register(Box::new(send_message::SendMessageTool));
-        // Skill tools
-        registry.register(Box::new(skill::SkillTool));
+        // 16. ReadMcpResource
+        registry.register(Box::new(mcp_tools::ReadMcpResourceTool));
+        // 17. TaskOutput
+        registry.register(Box::new(task_tools::TaskOutputTool));
+        // 18. TaskStop
+        registry.register(Box::new(task_tools::TaskStopTool));
+        // 19. TodoWrite
+        registry.register(Box::new(todo_write::TodoWriteTool));
+        // 20. WebFetch
+        registry.register(Box::new(web::WebFetchTool));
+        // 21. WebSearch
+        registry.register(Box::new(web::WebSearchTool));
         registry
     }
 }

@@ -170,7 +170,7 @@ impl<'a> ToolExecutor<'a> {
             PermissionMode::Ask => {
                 // Read-only tools are always allowed
                 match name {
-                    "Read" | "Glob" | "Grep" | "TaskGet" | "TaskList" | "TaskOutput"
+                    "FileRead" | "Glob" | "Grep" | "TaskGet" | "TaskList" | "TaskOutput"
                     | "MemoryList" | "MemorySearch" | "CronList" | "ToolSearch" => return true,
                     "Bash" => {
                         let cmd = input["command"].as_str().unwrap_or("");
@@ -218,7 +218,7 @@ impl<'a> ToolExecutor<'a> {
     /// Check sandbox restrictions for file/network operations.
     fn check_sandbox(&self, name: &str, input: &Value, sandbox: &SandboxConfig) -> Option<String> {
         match name {
-            "Read" | "Write" | "Edit" => {
+            "FileRead" | "FileWrite" | "FileEdit" => {
                 if let Some(path) = input["file_path"].as_str().or(input["path"].as_str()) {
                     if !sandbox.allowed_paths.is_empty()
                         && !sandbox.allowed_paths.iter().any(|p| path.starts_with(p))

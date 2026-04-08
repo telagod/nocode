@@ -58,7 +58,7 @@ fn read_nonexistent_file_returns_error() {
     let exec = ToolExecutor::new(&reg);
     let result = exec.execute_tool_use(
         "t2",
-        "Read",
+        "FileRead",
         &json!({"file_path": "/tmp/nocode_test_nonexistent_xyz_12345"}),
     );
     assert_tool_error(&result, "");
@@ -99,12 +99,12 @@ fn write_and_read_roundtrip() {
 
     let write_result = exec.execute_tool_use(
         "t5w",
-        "Write",
+        "FileWrite",
         &json!({"file_path": path, "content": "test content 123"}),
     );
     assert_tool_success(&write_result);
 
-    let read_result = exec.execute_tool_use("t5r", "Read", &json!({"file_path": path}));
+    let read_result = exec.execute_tool_use("t5r", "FileRead", &json!({"file_path": path}));
     assert_tool_success(&read_result);
     if let ContentBlock::ToolResult { content, .. } = &read_result {
         assert!(content.contains("test content 123"));
@@ -121,7 +121,7 @@ fn edit_replaces_text() {
 
     let result = exec.execute_tool_use(
         "t6",
-        "Edit",
+        "FileEdit",
         &json!({
             "file_path": path,
             "old_string": "old text",

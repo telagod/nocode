@@ -147,6 +147,11 @@ impl TaskCoordinator {
     pub fn delete(&mut self, id: &str) -> Result<(), String> {
         self.set_status(id, TaskStatus::Deleted)
     }
+
+    /// Clear all tasks (used by TodoWrite to replace the entire list).
+    pub fn clear(&mut self) {
+        self.tasks.clear();
+    }
 }
 
 impl Default for TaskCoordinator {

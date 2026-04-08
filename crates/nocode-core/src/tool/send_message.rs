@@ -48,3 +48,49 @@ impl Tool for SendMessageTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::worker::global_worker_registry;
+
+    #[test]
+    fn send_message_missing_to() {
+        let tool = SendMessageTool;
+        let result = tool.execute(&json!({"message": "hello"}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn send_message_missing_message() {
+        let tool = SendMessageTool;
+        let result = tool.execute(&json!({"to": "worker-1"}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn send_message_to_nonexistent_worker() {
+        let tool = SendMessageTool;
+        let result = tool.execute(&json!({"to": "ghost", "message": "hello"}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn send_message_delivers_to_worker() {
+        let reg = global_worker_registry();
+        let id = {
+            let mut guard = reg.lock().unwrap();
+            guard.register("test-recv", "test prompt")
+        };
+        let tool = SendMessageTool;
+        let result = tool.execute(&json!({"to": &id, "message": "hello agent"}));
+        assert!(!result.is_error, "Send failed: {}", result.content);
+
+        // Verify message arrived
+        let mut guard = reg.lock().unwrap();
+        let msgs = guard.drain_inbox(&id);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, json!("hello agent"));
+        guard.remove(&id);
+    }
+}

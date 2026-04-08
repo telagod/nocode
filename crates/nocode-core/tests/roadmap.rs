@@ -136,12 +136,13 @@ fn cli_modules_exist() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn tool_registry_has_25_tools() {
+fn tool_registry_has_21_tools() {
     let reg = nocode_core::tool::ToolRegistry::with_defaults("/tmp");
     let names = reg.names();
-    assert!(
-        names.len() >= 38,
-        "Expected >= 38 tools, got {}",
+    assert_eq!(
+        names.len(),
+        21,
+        "Expected exactly 21 tools (Claude Code parity), got {}",
         names.len()
     );
 }
@@ -149,67 +150,31 @@ fn tool_registry_has_25_tools() {
 #[test]
 fn tool_categories_complete() {
     let reg = nocode_core::tool::ToolRegistry::with_defaults("/tmp");
-    // Core
+    // All 21 Claude Code tools
     for name in &[
+        "Agent",
+        "AskUserQuestion",
         "Bash",
-        "Read",
-        "Write",
-        "Edit",
+        "Config",
+        "EnterWorktree",
+        "ExitPlanMode",
+        "ExitWorktree",
+        "FileEdit",
+        "FileRead",
+        "FileWrite",
         "Glob",
         "Grep",
+        "ListMcpResources",
+        "Mcp",
+        "NotebookEdit",
+        "ReadMcpResource",
+        "TaskOutput",
+        "TaskStop",
+        "TodoWrite",
         "WebFetch",
         "WebSearch",
-        "Agent",
     ] {
-        assert!(reg.get(name).is_some(), "Missing core tool: {name}");
-    }
-    // Task
-    for name in &[
-        "TaskCreate",
-        "TaskGet",
-        "TaskList",
-        "TaskUpdate",
-        "TaskStop",
-        "TaskOutput",
-    ] {
-        assert!(reg.get(name).is_some(), "Missing task tool: {name}");
-    }
-    // Team
-    for name in &["TeamCreate", "TeamDelete"] {
-        assert!(reg.get(name).is_some(), "Missing team tool: {name}");
-    }
-    // Cron
-    for name in &["CronCreate", "CronDelete", "CronList"] {
-        assert!(reg.get(name).is_some(), "Missing cron tool: {name}");
-    }
-    // Discovery
-    for name in &["ToolSearch", "Lsp"] {
-        assert!(reg.get(name).is_some(), "Missing discovery tool: {name}");
-    }
-    // Memory
-    for name in &["MemorySave", "MemoryList", "MemorySearch", "MemoryDelete"] {
-        assert!(reg.get(name).is_some(), "Missing memory tool: {name}");
-    }
-    // MCP tools
-    for name in &["ListMcpResources", "ReadMcpResource", "Mcp"] {
-        assert!(reg.get(name).is_some(), "Missing MCP tool: {name}");
-    }
-    // Session tools
-    for name in &[
-        "EnterPlanMode",
-        "ExitPlanMode",
-        "EnterWorktree",
-        "ExitWorktree",
-    ] {
-        assert!(reg.get(name).is_some(), "Missing session tool: {name}");
-    }
-    // Interactive tools
-    for name in &["AskUserQuestion", "Config", "NotebookEdit"] {
-        assert!(reg.get(name).is_some(), "Missing interactive tool: {name}");
-    }
-    // Communication + Skill tools
-    for name in &["SendMessage", "Skill"] {
-        assert!(reg.get(name).is_some(), "Missing tool: {name}");
+        assert!(reg.get(name).is_some(), "Missing Claude Code tool: {name}");
     }
 }
 

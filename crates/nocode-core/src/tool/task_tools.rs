@@ -273,3 +273,48 @@ impl Tool for TaskOutputTool {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod task_create_tests {
+    use super::*;
+
+    #[test]
+    fn create_returns_id() {
+        let tool = TaskCreateTool;
+        let result = tool.execute(&json!({"subject": "test task", "description": "do stuff"}));
+        assert!(!result.is_error);
+        let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        assert!(v["id"].as_str().is_some());
+        assert_eq!(v["status"], "pending");
+    }
+
+    #[test]
+    fn create_missing_subject() {
+        let tool = TaskCreateTool;
+        let result = tool.execute(&json!({"description": "no subject"}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn create_missing_description() {
+        let tool = TaskCreateTool;
+        let result = tool.execute(&json!({"subject": "no desc"}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn update_with_task_id_param() {
+        let create = TaskCreateTool;
+        let r = create.execute(&json!({"subject": "s", "description": "d"}));
+        let v: serde_json::Value = serde_json::from_str(&r.content).unwrap();
+        let id = v["id"].as_str().unwrap();
+
+        let update = TaskUpdateTool;
+        let r2 = update.execute(&json!({"taskId": id, "status": "in_progress"}));
+        assert!(!r2.is_error, "Update failed: {}", r2.content);
+    }
+}
