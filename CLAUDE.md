@@ -56,14 +56,16 @@ Every tool call flows through: JSON Schema validation (`tool_validation.rs`) →
 
 Bash commands get extra validation through 6 submodules in `bash_validation.rs` (read_only, destructive, mode, sed, path, semantics). File operations go through `file_safety.rs` (symlink escape prevention, binary detection, 10MB limit).
 
-### Tool Categories (25 tools)
+### Tool Categories (21 tools — Claude Code parity)
 
-- Core: Read, Edit, Write, Bash, Glob, Grep, WebFetch, WebSearch, Agent
-- Task: TaskGet, TaskList, TaskUpdate, TaskStop, TaskOutput
-- Team: TeamCreate, TeamDelete
-- Cron: CronCreate, CronDelete, CronList
-- Discovery: ToolSearch, Lsp
-- Memory: MemorySave, MemoryList, MemorySearch, MemoryDelete
+- Core: Bash, FileRead, FileEdit, FileWrite, Glob, Grep, Agent
+- Web: WebFetch, WebSearch
+- Task: TaskOutput, TaskStop, TodoWrite
+- Session: ExitPlanMode, EnterWorktree, ExitWorktree
+- Interactive: AskUserQuestion, Config, NotebookEdit
+- MCP: ListMcpResources, ReadMcpResource, Mcp
+
+Additional tool modules (not registered by default): Task CRUD (TaskCreate/Get/List/Update), Team (TeamCreate/TeamDelete), Cron (CronCreate/CronDelete/CronList), Discovery (ToolSearch/Lsp), Memory (MemorySave/MemoryList/MemorySearch/MemoryDelete), SendMessage, Skill.
 
 MCP tools are bridged via `mcp_bridge.rs` with `mcp:server:tool` prefix dispatch. All tools (base + plugin + MCP + runtime) are unified in `GlobalToolRegistry`.
 
