@@ -131,3 +131,52 @@ impl Tool for BashTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn bash_echo() {
+        let tool = BashTool::new("/tmp");
+        let result = tool.execute(&json!({"command": "echo hello"}));
+        assert!(!result.is_error);
+        let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        assert!(v["stdout"].as_str().unwrap().contains("hello"));
+        assert_eq!(v["exit_code"], 0);
+    }
+
+    #[test]
+    fn bash_exit_code() {
+        let tool = BashTool::new("/tmp");
+        let result = tool.execute(&json!({"command": "exit 42"}));
+        assert!(result.is_error);
+        let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(v["exit_code"], 42);
+    }
+
+    #[test]
+    fn bash_stderr() {
+        let tool = BashTool::new("/tmp");
+        let result = tool.execute(&json!({"command": "echo err >&2"}));
+        let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        assert!(v["stderr"].as_str().unwrap().contains("err"));
+    }
+
+    #[test]
+    fn bash_missing_command() {
+        let tool = BashTool::new("/tmp");
+        let result = tool.execute(&json!({}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn bash_background() {
+        let tool = BashTool::new("/tmp");
+        let result = tool.execute(&json!({"command": "sleep 0.01", "run_in_background": true}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("pid"));
+        assert!(result.content.contains("background"));
+    }
+}

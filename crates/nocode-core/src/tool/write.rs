@@ -47,3 +47,47 @@ impl Tool for WriteTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn write_creates_file() {
+        let path = "/tmp/nocode_write_unit.txt";
+        let _ = std::fs::remove_file(path);
+        let tool = WriteTool;
+        let result = tool.execute(&json!({"file_path": path, "content": "hello"}));
+        assert!(!result.is_error);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "hello");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn write_overwrites_existing() {
+        let path = "/tmp/nocode_write_overwrite.txt";
+        std::fs::write(path, "old").unwrap();
+        let tool = WriteTool;
+        let result = tool.execute(&json!({"file_path": path, "content": "new"}));
+        assert!(!result.is_error);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "new");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn write_missing_params() {
+        let tool = WriteTool;
+        assert!(tool.execute(&json!({})).is_error);
+        assert!(tool.execute(&json!({"file_path": "/tmp/x"})).is_error);
+    }
+
+    #[test]
+    fn write_reports_byte_count() {
+        let path = "/tmp/nocode_write_bytes.txt";
+        let tool = WriteTool;
+        let result = tool.execute(&json!({"file_path": path, "content": "12345"}));
+        assert!(result.content.contains("5 bytes"));
+        let _ = std::fs::remove_file(path);
+    }
+}

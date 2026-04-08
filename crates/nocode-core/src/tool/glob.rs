@@ -72,3 +72,39 @@ impl Tool for GlobTool {
         ToolOutput::success(result)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn glob_finds_files() {
+        let tool = GlobTool;
+        let result = tool.execute(&json!({"pattern": "/tmp/*"}));
+        assert!(!result.is_error);
+    }
+
+    #[test]
+    fn glob_no_matches() {
+        let tool = GlobTool;
+        let result = tool.execute(&json!({"pattern": "/tmp/nocode_nonexistent_xyz_*"}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("No files matched"));
+    }
+
+    #[test]
+    fn glob_missing_pattern() {
+        let tool = GlobTool;
+        let result = tool.execute(&json!({}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn glob_with_path() {
+        let tool = GlobTool;
+        let result = tool.execute(&json!({"pattern": "*.rs", "path": "/tmp"}));
+        // Should succeed even if no .rs files in /tmp
+        assert!(!result.is_error);
+    }
+}
