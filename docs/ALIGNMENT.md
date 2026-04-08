@@ -1,7 +1,7 @@
-# nocode vs redcode 功能对齐清单
+# nocode vs Claude Code 功能对齐清单
 
-> 更新时间：2026-04-06（v0.2 完成后）
-> 基准：redcode TS/Bun (507,396 LOC, 1,910 files) vs nocode Rust (~37,600 LOC, 43 files)
+> 更新时间：2026-04-08（v2 重写完成后）
+> 基准：Claude Code 2.1.88 (sdk-tools.d.ts 21 tools) vs nocode Rust (85 .rs files, 443 tests)
 
 ## 图例
 
@@ -42,41 +42,32 @@
 
 ---
 
-## 2. Tool 层
+## 2. Tool 层 (21/21 — 100% Claude Code parity)
 
-| 工具 | redcode | nocode | 状态 |
-|------|---------|--------|------|
-| Read (FileRead) | ✅ | ✅ | 完成 |
-| Edit (FileEdit) | ✅ | ✅ | 完成 |
-| Write (FileWrite) | ✅ | ✅ | 完成 |
-| Bash | ✅ 2,621 LOC | ✅ 含安全沙箱 | 完成 |
-| Glob | ✅ | ✅ 基于 find | 完成 |
-| Grep | ✅ | ✅ 基于 grep -rn | 完成 |
-| WebSearch | ✅ | ✅ | 完成 |
-| WebFetch | ✅ | ✅ | 完成 |
-| Agent (spawn sub-agent) | ✅ | ✅ InProcessAgentHost | 完成 |
-| MCP Tool | ✅ | ✅ mcp: 前缀动态分发 | 完成 |
-| NotebookEdit | ✅ 490 LOC | ❌ | — |
-| PowerShell | ✅ 2,049 LOC | ❌ | — |
-| LSP Tool | ✅ 860 LOC | ❌ | — |
-| ListMcpResources | ✅ | ❌ | — |
-| ReadMcpResource | ✅ | ❌ | — |
-| McpAuth | ✅ 215 LOC | ❌ | — |
-| SkillTool | ✅ | ❌ | — |
-| TaskCreate/Get/List/Update/Stop/Output | ✅ 6 tools | ❌ | — |
-| TeamCreate/Delete | ✅ | ❌ (命令层有) | — |
-| SendMessage | ✅ | ❌ | — |
-| AskUserQuestion | ✅ | ❌ | — |
-| TodoWrite | ✅ | ❌ | — |
-| EnterPlanMode / ExitPlanMode | ✅ | ❌ | — |
-| EnterWorktree / ExitWorktree | ✅ | ❌ | — |
-| ConfigTool | ✅ | ❌ | — |
-| ToolSearch | ✅ | ❌ | — |
-| BriefTool | ✅ | ❌ | — |
-| SleepTool | ✅ | ❌ | — |
-| ScheduleCron / RemoteTrigger | ✅ | ❌ | — |
-| SyntheticOutput | ✅ | ❌ | — |
-| **合计** | **42 tools** | **10 tools** | **24%** |
+| 工具 | Claude Code | nocode | 状态 |
+|------|------------|--------|------|
+| Agent | ✅ | ✅ 后台线程 + model override | 完成 |
+| AskUserQuestion | ✅ | ✅ 结构化问题 | 完成 |
+| Bash | ✅ | ✅ JSON output + timeout + background + sandbox | 完成 |
+| Config | ✅ | ✅ get/set/list | 完成 |
+| EnterWorktree | ✅ | ✅ git worktree | 完成 |
+| ExitPlanMode | ✅ | ✅ allowedPrompts | 完成 |
+| ExitWorktree | ✅ | ✅ git worktree remove | 完成 |
+| FileEdit | ✅ | ✅ replace + replace_all | 完成 |
+| FileRead | ✅ | ✅ text + image base64 + notebook + PDF | 完成 |
+| FileWrite | ✅ | ✅ create/overwrite | 完成 |
+| Glob | ✅ | ✅ mtime sorted | 完成 |
+| Grep | ✅ | ✅ rg flags (-B/-A/-C/-n/-i/type/offset/multiline) | 完成 |
+| ListMcpResources | ✅ | ✅ server filter | 完成 |
+| Mcp | ✅ | ✅ generic dispatch | 完成 |
+| NotebookEdit | ✅ | ✅ replace/insert/delete cells | 完成 |
+| ReadMcpResource | ✅ | ✅ resources/read via McpClient | 完成 |
+| TaskOutput | ✅ | ✅ task_id/block/timeout | 完成 |
+| TaskStop | ✅ | ✅ task_id/shell_id + PID kill | 完成 |
+| TodoWrite | ✅ | ✅ batch write/replace | 完成 |
+| WebFetch | ✅ | ✅ HTML strip + prompt context | 完成 |
+| WebSearch | ✅ | ✅ DuckDuckGo + domain filter | 完成 |
+| **合计** | **21 tools** | **21 tools** | **100%** |
 
 ---
 
@@ -330,14 +321,15 @@
 
 ### 量化对比
 
-| 维度 | redcode | nocode | 覆盖率 |
-|------|---------|--------|--------|
-| 代码量 | 507,396 LOC | ~37,600 LOC | 7.4% |
-| 文件数 | 1,910 | 43 | 2.3% |
-| Tools | 42 | 10 | 24% |
-| Commands | ~103 | ~40 | 39% |
-| Providers | 6 | 5 (含 Custom + Gemini) | 83% |
-| Feature flags | 88 | 0 | 0% |
+| 维度 | Claude Code | nocode | 覆盖率 |
+|------|------------|--------|--------|
+| Tools | 21 | 21 | 100% |
+| Tool schemas | sdk-tools.d.ts | 严格对齐 | 100% |
+| Providers | 1 (Claude) | 5 (Claude/OpenAI/Gemini/Custom/Mock) | 超集 |
+| Run modes | ~5 | 9 | 超集 |
+| Slash commands | ~20 | 23 | 超集 |
+| Tests | — | 443 | — |
+| Modules | — | 85 .rs | — |
 
 ### 与 v0.1 对比的进展
 
