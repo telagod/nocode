@@ -22,23 +22,86 @@ impl Tool for WebFetchTool {
         let Some(url) = input["url"].as_str() else {
             return ToolOutput::error("Missing required parameter: url");
         };
-        let _prompt = input["prompt"].as_str().unwrap_or("");
+        let prompt = input["prompt"].as_str().unwrap_or("");
         let max_len: usize = 50_000;
         match reqwest::blocking::get(url) {
             Ok(resp) => match resp.text() {
                 Ok(body) => {
-                    let truncated = if body.len() > max_len {
-                        format!("{}...(truncated)", &body[..max_len])
+                    // Strip HTML tags for cleaner content
+                    let cleaned = strip_html_tags_simple(&body);
+                    let truncated = if cleaned.len() > max_len {
+                        format!("{}...(truncated)", &cleaned[..max_len])
                     } else {
-                        body
+                        cleaned
                     };
-                    ToolOutput::success(truncated)
+                    // Include prompt context in output for model to process
+                    if prompt.is_empty() {
+                        ToolOutput::success(truncated)
+                    } else {
+                        ToolOutput::success(format!(
+                            "Content from {url} (prompt: {prompt}):\n\n{truncated}"
+                        ))
+                    }
                 }
                 Err(e) => ToolOutput::error(format!("Failed to read response: {e}")),
             },
             Err(e) => ToolOutput::error(format!("Fetch failed: {e}")),
         }
     }
+}
+
+/// Simple HTML tag stripping for web content.
+fn strip_html_tags_simple(html: &str) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut in_tag = false;
+    let mut in_script = false;
+    let mut in_style = false;
+
+    let lower = html.to_lowercase();
+    let bytes = html.as_bytes();
+    let lower_bytes = lower.as_bytes();
+
+    let mut i = 0;
+    while i < bytes.len() {
+        if !in_tag && bytes[i] == b'<' {
+            // Check for script/style start
+            if i + 7 < lower_bytes.len() && &lower_bytes[i..i + 7] == b"<script" {
+                in_script = true;
+            }
+            if i + 6 < lower_bytes.len() && &lower_bytes[i..i + 6] == b"<style" {
+                in_style = true;
+            }
+            in_tag = true;
+        } else if in_tag && bytes[i] == b'>' {
+            // Check for script/style end
+            if i >= 8 && &lower_bytes[i - 8..=i] == b"</script>" {
+                in_script = false;
+            }
+            if i >= 7 && &lower_bytes[i - 7..=i] == b"</style>" {
+                in_style = false;
+            }
+            in_tag = false;
+        } else if !in_tag && !in_script && !in_style {
+            result.push(bytes[i] as char);
+        }
+        i += 1;
+    }
+
+    // Collapse whitespace
+    let mut collapsed = String::with_capacity(result.len());
+    let mut prev_ws = false;
+    for ch in result.chars() {
+        if ch.is_whitespace() {
+            if !prev_ws {
+                collapsed.push(' ');
+            }
+            prev_ws = true;
+        } else {
+            collapsed.push(ch);
+            prev_ws = false;
+        }
+    }
+    collapsed.trim().to_string()
 }
 
 pub struct WebSearchTool;
