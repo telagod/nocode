@@ -1,7 +1,7 @@
 # nocode vs Claude Code 功能对齐清单
 
-> 更新时间：2026-04-09（v2 Phase 3 — Cost/Cache/Diff/Commands/MCP/Provider 深化后）
-> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (90+ .rs files, 500 tests)
+> 更新时间：2026-04-09（v0.2.11 — Phase 3-5 完成，Thinking/StructuredOutput/APIVerify/SessionMemory/ReadOnly/Cron/Clipboard）
+> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (92 .rs files, 528 tests)
 
 ## 图例
 
@@ -32,10 +32,10 @@
 | Tool execution loop | ✅ | ✅ runtime.rs 完整循环 | 完成 |
 | Tools in API request body | ✅ | ✅ ToolSchema JSON | 完成 |
 | Prompt caching | ✅ cache control | ✅ cache_control ephemeral on system + tools | 完成 |
-| Structured output / JSON schema | ✅ | 🔶 schema 字段存在 | 未产品化 |
+| Structured output / JSON schema | ✅ | ✅ ResponseFormat (JsonSchema/JsonObject) | 完成 |
 | Cost tracking / token billing | ✅ | ✅ ModelPricing 价格表 + USD 计费 | 完成 |
 | Reasoning effort | ✅ | ✅ env var 支持 | 完成 |
-| Thinking mode | ✅ extended thinking | 🔶 Adaptive/Disabled enum | 缺 thinkback |
+| Thinking mode | ✅ extended thinking | ✅ ThinkingConfig (enabled/disabled + budget_tokens) | 完成 |
 | Model selection / fallback | ✅ | ✅ | 完成 |
 | Retry / backoff | ✅ | ✅ 指数退避 | 完成 |
 | `/free` embedded proxy | ✅ cursor2api | 🚫 明确不迁 | 设计决策 |
@@ -131,7 +131,7 @@
 | 输入历史 | ✅ | ✅ | 完成 |
 | 草稿/队列 | ✅ | ✅ | 完成 |
 | Spinner / 进度条 | ✅ | ✅ Spinner + stall detection | 完成 |
-| 剪贴板集成 | ✅ | ❌ | — |
+| 剪贴板集成 | ✅ | ✅ Ctrl-Y 跨平台 (xclip/pbcopy/clip.exe) | 完成 |
 | Onboarding 引导 | ✅ | ❌ | — |
 | 自动更新 | ✅ | ❌ | — |
 
@@ -154,7 +154,7 @@
 | Agent swarm (21 files) | ✅ | ❌ | — |
 | Inter-agent messaging | ✅ | ✅ WorkerRegistry inbox | 完成 |
 | Agent creation wizard | ✅ | ❌ | — |
-| Scheduled tasks / Cron | ✅ | ❌ | — |
+| Scheduled tasks / Cron | ✅ | ✅ CronSchedule + tick executor | 完成 |
 
 ---
 
@@ -196,7 +196,7 @@
 | Bash 权限沙箱 | ✅ 2,621 LOC | ✅ check_bash_safety() | 完成 |
 | Permission rules engine | ✅ | ✅ CommandContains + ArgumentContains | 完成 |
 | 9 条预设安全规则 | — | ✅ rm -rf, mkfs, dd, shutdown 等 | nocode 独有 |
-| Bash 只读验证 | ✅ 1,990 LOC | ❌ | — |
+| Bash 只读验证 | ✅ 1,990 LOC | ✅ is_write_command + ReadOnly mode | 完成 |
 | PowerShell 路径验证 | ✅ 2,049 LOC | ❌ | — |
 | Permission rules UI | ✅ 1,178 LOC | ❌ | — |
 | Auto-approve / deny | ✅ | ✅ bridge 层 | 完成 |
@@ -252,7 +252,7 @@
 |------|---------|--------|------|
 | /login /logout | ✅ | ✅ 凭证存储 | 完成 |
 | OAuth client | ✅ | ❌ | — |
-| API key verification | ✅ | ❌ (直接用 env var) | — |
+| API key verification | ✅ | ✅ verify_key() per provider | 完成 |
 | Session ingress auth | ✅ | ❌ | — |
 | Referral / passes | ✅ | ❌ | — |
 
@@ -275,7 +275,7 @@
 |------|---------|--------|------|
 | Context compaction | ✅ 15 files | ✅ TailCompactor + RichCompactor (LLM-powered) | 完成 |
 | CLAUDE.md 读取 | ✅ | ✅ discover + format | 完成 |
-| Session memory | ✅ | ❌ | — |
+| Session memory | ✅ | ✅ SessionMemory (save/load/search/prompt) | 完成 |
 | Memory extraction | ✅ | ❌ | — |
 | Auto-dream consolidation | ✅ | ❌ | — |
 | Context collapse | ✅ | ❌ | — |
@@ -341,8 +341,8 @@
 | Providers | 1 (Claude) | 5 (Claude/OpenAI/Gemini/Custom/Mock) | 超集 |
 | Run modes | ~5 | 9 | 超集 |
 | Slash commands | ~20 | 28 | 超集 |
-| Tests | — | 500 | — |
-| Modules | — | 91 .rs | — |
+| Tests | — | 528 | — |
+| Modules | — | 92 .rs | — |
 
 ### 与 v0.1 对比的进展
 
