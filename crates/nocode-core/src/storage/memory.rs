@@ -408,6 +408,193 @@ impl SessionMemory {
     }
 }
 
+// ---------------------------------------------------------------------------
+// MemoryExtractor — automatic memory extraction from conversations
+// ---------------------------------------------------------------------------
+
+/// A candidate memory extracted from conversation.
+#[derive(Debug, Clone)]
+pub struct MemoryCandidate {
+    pub name: String,
+    pub description: String,
+    pub memory_type: MemoryType,
+    pub content: String,
+    /// Confidence score (0.0 to 1.0).
+    pub confidence: f64,
+}
+
+/// Pattern-based memory extractor — identifies key information from conversation text.
+pub struct MemoryExtractor;
+
+/// Patterns that indicate user preferences/feedback.
+const FEEDBACK_PATTERNS: &[&str] = &[
+    "don't ",
+    "do not ",
+    "stop ",
+    "always ",
+    "never ",
+    "prefer ",
+    "i like ",
+    "i hate ",
+    "please use ",
+    "please avoid ",
+    "不要",
+    "总是",
+    "永远不",
+    "请用",
+    "请避免",
+];
+
+/// Patterns that indicate user identity/role.
+const USER_PATTERNS: &[&str] = &[
+    "i am a ",
+    "i'm a ",
+    "my role ",
+    "i work ",
+    "my team ",
+    "我是",
+    "我的角色",
+    "我负责",
+];
+
+/// Patterns that indicate project decisions.
+const PROJECT_PATTERNS: &[&str] = &[
+    "we decided ",
+    "the plan is ",
+    "deadline ",
+    "milestone ",
+    "we're using ",
+    "we switched ",
+    "blocked by ",
+    "我们决定",
+    "计划是",
+    "截止日期",
+    "里程碑",
+];
+
+/// Patterns that indicate external references.
+const REFERENCE_PATTERNS: &[&str] = &[
+    "check the ",
+    "documented in ",
+    "tracked in ",
+    "the wiki ",
+    "the dashboard ",
+    "jira ",
+    "linear ",
+    "confluence ",
+    "参考",
+    "文档在",
+    "记录在",
+];
+
+impl MemoryExtractor {
+    /// Extract memory candidates from a list of user messages.
+    pub fn extract(messages: &[crate::message::Message]) -> Vec<MemoryCandidate> {
+        let mut candidates = Vec::new();
+
+        for msg in messages {
+            if msg.role != crate::message::Role::User {
+                continue;
+            }
+            let text = msg.text_content();
+            if text.len() < 10 {
+                continue;
+            }
+            let lower = text.to_lowercase();
+
+            // Check feedback patterns
+            for pattern in FEEDBACK_PATTERNS {
+                if lower.contains(pattern) {
+                    let name = Self::extract_name(&text, "feedback");
+                    candidates.push(MemoryCandidate {
+                        name,
+                        description: Self::truncate(&text, 80),
+                        memory_type: MemoryType::Feedback,
+                        content: text.clone(),
+                        confidence: 0.7,
+                    });
+                    break;
+                }
+            }
+
+            // Check user identity patterns
+            for pattern in USER_PATTERNS {
+                if lower.contains(pattern) {
+                    let name = Self::extract_name(&text, "user");
+                    candidates.push(MemoryCandidate {
+                        name,
+                        description: Self::truncate(&text, 80),
+                        memory_type: MemoryType::User,
+                        content: text.clone(),
+                        confidence: 0.8,
+                    });
+                    break;
+                }
+            }
+
+            // Check project patterns
+            for pattern in PROJECT_PATTERNS {
+                if lower.contains(pattern) {
+                    let name = Self::extract_name(&text, "project");
+                    candidates.push(MemoryCandidate {
+                        name,
+                        description: Self::truncate(&text, 80),
+                        memory_type: MemoryType::Project,
+                        content: text.clone(),
+                        confidence: 0.6,
+                    });
+                    break;
+                }
+            }
+
+            // Check reference patterns
+            for pattern in REFERENCE_PATTERNS {
+                if lower.contains(pattern) {
+                    let name = Self::extract_name(&text, "reference");
+                    candidates.push(MemoryCandidate {
+                        name,
+                        description: Self::truncate(&text, 80),
+                        memory_type: MemoryType::Reference,
+                        content: text.clone(),
+                        confidence: 0.6,
+                    });
+                    break;
+                }
+            }
+        }
+
+        // Deduplicate by name
+        candidates.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let mut seen = std::collections::HashSet::new();
+        candidates.retain(|c| seen.insert(c.name.clone()));
+        candidates
+    }
+
+    /// Extract a short name from text.
+    fn extract_name(text: &str, prefix: &str) -> String {
+        let words: Vec<&str> = text.split_whitespace().take(5).collect();
+        let slug = words.join("_").to_lowercase();
+        let clean: String = slug
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '_')
+            .take(30)
+            .collect();
+        format!("{prefix}_{clean}")
+    }
+
+    fn truncate(text: &str, max: usize) -> String {
+        if text.len() <= max {
+            text.to_string()
+        } else {
+            format!("{}...", &text[..max.min(text.len())])
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -621,5 +808,81 @@ mod tests {
         sm.store().ensure_dir().unwrap();
         assert!(sm.load_for_prompt().is_empty());
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // --- MemoryExtractor ---
+    #[test]
+    fn extract_feedback_from_conversation() {
+        use crate::message::Message;
+        let msgs = vec![
+            Message::user_text("don't mock the database in tests"),
+            Message::assistant_text("understood"),
+        ];
+        let candidates = MemoryExtractor::extract(&msgs);
+        assert!(!candidates.is_empty());
+        assert_eq!(candidates[0].memory_type, MemoryType::Feedback);
+    }
+
+    #[test]
+    fn extract_user_identity() {
+        use crate::message::Message;
+        let msgs = vec![Message::user_text(
+            "I'm a senior security researcher at Acme Corp",
+        )];
+        let candidates = MemoryExtractor::extract(&msgs);
+        assert!(!candidates.is_empty());
+        assert_eq!(candidates[0].memory_type, MemoryType::User);
+    }
+
+    #[test]
+    fn extract_project_decision() {
+        use crate::message::Message;
+        let msgs = vec![Message::user_text(
+            "we decided to use PostgreSQL instead of MySQL for the new service",
+        )];
+        let candidates = MemoryExtractor::extract(&msgs);
+        assert!(!candidates.is_empty());
+        assert_eq!(candidates[0].memory_type, MemoryType::Project);
+    }
+
+    #[test]
+    fn extract_reference() {
+        use crate::message::Message;
+        let msgs = vec![Message::user_text(
+            "bugs are tracked in Linear project BACKEND",
+        )];
+        let candidates = MemoryExtractor::extract(&msgs);
+        assert!(!candidates.is_empty());
+        assert_eq!(candidates[0].memory_type, MemoryType::Reference);
+    }
+
+    #[test]
+    fn extract_skips_short_messages() {
+        use crate::message::Message;
+        let msgs = vec![Message::user_text("ok")];
+        let candidates = MemoryExtractor::extract(&msgs);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn extract_skips_assistant_messages() {
+        use crate::message::Message;
+        let msgs = vec![Message::assistant_text(
+            "I prefer to always use Rust for this",
+        )];
+        let candidates = MemoryExtractor::extract(&msgs);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn extract_deduplicates() {
+        use crate::message::Message;
+        let msgs = vec![
+            Message::user_text("don't use mocks in integration tests"),
+            Message::user_text("don't use mocks in integration tests"),
+        ];
+        let candidates = MemoryExtractor::extract(&msgs);
+        // Same text → same name → deduplicated
+        assert_eq!(candidates.len(), 1);
     }
 }

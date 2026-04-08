@@ -233,6 +233,109 @@ impl Compactor for RichCompactor {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ContextCollapser — automatic context collapse controller
+// ---------------------------------------------------------------------------
+
+/// Configuration for automatic context collapse.
+#[derive(Debug, Clone)]
+pub struct CollapseConfig {
+    /// Maximum number of messages before triggering collapse.
+    pub max_messages: usize,
+    /// Maximum estimated tokens before triggering collapse.
+    pub max_tokens: u64,
+    /// Number of recent messages to always keep intact.
+    pub keep_recent: usize,
+    /// Whether collapse is enabled.
+    pub enabled: bool,
+}
+
+impl Default for CollapseConfig {
+    fn default() -> Self {
+        Self {
+            max_messages: 50,
+            max_tokens: 100_000,
+            keep_recent: 15,
+            enabled: true,
+        }
+    }
+}
+
+/// Automatic context collapse controller.
+/// Monitors conversation size and triggers compaction when thresholds are exceeded.
+pub struct ContextCollapser {
+    config: CollapseConfig,
+    compactor: Box<dyn Compactor>,
+    /// Number of times collapse has been triggered.
+    pub collapse_count: u32,
+    /// Total tokens saved across all collapses.
+    pub total_tokens_saved: u64,
+}
+
+impl ContextCollapser {
+    pub fn new(config: CollapseConfig, compactor: Box<dyn Compactor>) -> Self {
+        Self {
+            config,
+            compactor,
+            collapse_count: 0,
+            total_tokens_saved: 0,
+        }
+    }
+
+    /// Create with default config and TailCompactor.
+    pub fn with_defaults() -> Self {
+        let config = CollapseConfig::default();
+        let keep = config.keep_recent;
+        Self::new(config, Box::new(TailCompactor::new(keep)))
+    }
+
+    /// Estimate token count for a message list.
+    fn estimate_tokens(messages: &[Message]) -> u64 {
+        messages
+            .iter()
+            .flat_map(|m| &m.content)
+            .map(|b| match b {
+                ContentBlock::Text { text } => text.len() as u64 / 4,
+                ContentBlock::ToolUse { input, .. } => input.to_string().len() as u64 / 4,
+                ContentBlock::ToolResult { content, .. } => content.len() as u64 / 4,
+                ContentBlock::Thinking { thinking } => thinking.len() as u64 / 4,
+            })
+            .sum()
+    }
+
+    /// Check if collapse should be triggered.
+    pub fn should_collapse(&self, messages: &[Message]) -> bool {
+        if !self.config.enabled {
+            return false;
+        }
+        if messages.len() > self.config.max_messages {
+            return true;
+        }
+        Self::estimate_tokens(messages) > self.config.max_tokens
+    }
+
+    /// Attempt to collapse the conversation if thresholds are exceeded.
+    /// Returns Some(result) if collapse happened, None if not needed.
+    pub fn maybe_collapse(&mut self, messages: &[Message]) -> Option<CompactionResult> {
+        if !self.should_collapse(messages) {
+            return None;
+        }
+        let result = self.compactor.compact(messages);
+        if result.compacted_count > 0 {
+            self.collapse_count += 1;
+            self.total_tokens_saved += result.tokens_saved;
+            Some(result)
+        } else {
+            None
+        }
+    }
+
+    /// Get collapse statistics.
+    pub fn stats(&self) -> (u32, u64) {
+        (self.collapse_count, self.total_tokens_saved)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,5 +413,91 @@ mod tests {
         // ~34 chars / 4 ≈ 8 tokens
         assert!(tokens > 0);
         assert!(tokens < 100);
+    }
+
+    // --- ContextCollapser ---
+    #[test]
+    fn collapser_no_collapse_under_threshold() {
+        let mut c = ContextCollapser::with_defaults();
+        let msgs: Vec<Message> = (0..5)
+            .map(|i| Message::user_text(format!("msg {i}")))
+            .collect();
+        assert!(!c.should_collapse(&msgs));
+        assert!(c.maybe_collapse(&msgs).is_none());
+    }
+
+    #[test]
+    fn collapser_triggers_on_message_count() {
+        let config = CollapseConfig {
+            max_messages: 10,
+            max_tokens: 1_000_000,
+            keep_recent: 5,
+            enabled: true,
+        };
+        let mut c = ContextCollapser::new(config, Box::new(TailCompactor::new(5)));
+        let msgs: Vec<Message> = (0..20)
+            .map(|i| Message::user_text(format!("message number {i} with some content")))
+            .collect();
+        assert!(c.should_collapse(&msgs));
+        let result = c.maybe_collapse(&msgs).unwrap();
+        assert!(result.compacted_count > 0);
+        assert_eq!(c.collapse_count, 1);
+    }
+
+    #[test]
+    fn collapser_triggers_on_token_count() {
+        let config = CollapseConfig {
+            max_messages: 1000,
+            max_tokens: 100, // very low threshold
+            keep_recent: 2,
+            enabled: true,
+        };
+        let mut c = ContextCollapser::new(config, Box::new(TailCompactor::new(2)));
+        let msgs: Vec<Message> = (0..10)
+            .map(|i| {
+                Message::user_text(format!(
+                    "message {i} with enough text to exceed the very low token threshold we set"
+                ))
+            })
+            .collect();
+        assert!(c.should_collapse(&msgs));
+        let result = c.maybe_collapse(&msgs).unwrap();
+        assert!(result.compacted_count > 0);
+    }
+
+    #[test]
+    fn collapser_disabled_never_triggers() {
+        let config = CollapseConfig {
+            max_messages: 1,
+            max_tokens: 1,
+            keep_recent: 1,
+            enabled: false,
+        };
+        let mut c = ContextCollapser::new(config, Box::new(TailCompactor::new(1)));
+        let msgs: Vec<Message> = (0..100)
+            .map(|i| Message::user_text(format!("msg {i}")))
+            .collect();
+        assert!(!c.should_collapse(&msgs));
+        assert!(c.maybe_collapse(&msgs).is_none());
+    }
+
+    #[test]
+    fn collapser_stats_accumulate() {
+        let config = CollapseConfig {
+            max_messages: 5,
+            max_tokens: 1_000_000,
+            keep_recent: 3,
+            enabled: true,
+        };
+        let mut c = ContextCollapser::new(config, Box::new(TailCompactor::new(3)));
+        let msgs: Vec<Message> = (0..10)
+            .map(|i| Message::user_text(format!(
+                "This is a substantially longer message number {i} that contains enough text content to ensure the compaction summary is shorter than the original messages combined, which is necessary for tokens_saved to be positive in this test case."
+            )))
+            .collect();
+        c.maybe_collapse(&msgs);
+        c.maybe_collapse(&msgs);
+        let (count, _saved) = c.stats();
+        assert_eq!(count, 2);
     }
 }

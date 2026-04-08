@@ -62,6 +62,18 @@ fn main() {
         .into_owned();
 
     let settings = Settings::load_merged(&cwd);
+
+    // Load stored credentials into env (if no API keys set)
+    let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
+    if let Ok(creds) = nocode_core::storage::credentials::CredentialStore::load(&cred_path) {
+        creds.load_into_env();
+    }
+
+    // Onboarding: check if any API key is available
+    if !has_any_api_key() && !args.iter().any(|a| a == "--status" || a == "--help") {
+        run_onboarding();
+    }
+
     let provider_type = resolve_provider(&settings);
     let model = resolve_model(&settings);
     let max_turns = settings.max_turns.unwrap_or(10);
@@ -143,6 +155,87 @@ fn main() {
 }
 
 // --- PLACEHOLDER_REST ---
+
+fn has_any_api_key() -> bool {
+    env::var("ANTHROPIC_API_KEY").is_ok()
+        || env::var("OPENAI_API_KEY").is_ok()
+        || env::var("GEMINI_API_KEY").is_ok()
+        || env::var("NOCODE_MODEL_PROVIDER").is_ok()
+}
+
+fn run_onboarding() {
+    use std::io::{self, Write};
+
+    println!();
+    println!("  Welcome to nocode v{}!", env!("CARGO_PKG_VERSION"));
+    println!();
+    println!("  No API key detected. Let's set one up.");
+    println!();
+    println!("  Which provider?");
+    println!("    1) Anthropic (Claude)");
+    println!("    2) OpenAI");
+    println!("    3) Google (Gemini)");
+    println!("    4) Skip (set env vars manually)");
+    println!();
+    print!("  Choice [1-4]: ");
+    let _ = io::stdout().flush();
+
+    let mut choice = String::new();
+    if io::stdin().read_line(&mut choice).is_err() {
+        return;
+    }
+
+    let (provider, env_var, prompt_text) = match choice.trim() {
+        "1" => (
+            "anthropic",
+            "ANTHROPIC_API_KEY",
+            "Anthropic API key (sk-ant-...)",
+        ),
+        "2" => ("openai", "OPENAI_API_KEY", "OpenAI API key (sk-...)"),
+        "3" => ("gemini", "GEMINI_API_KEY", "Gemini API key"),
+        _ => {
+            println!();
+            println!("  Set your API key via environment variable:");
+            println!("    export ANTHROPIC_API_KEY=sk-ant-...");
+            println!("    export OPENAI_API_KEY=sk-...");
+            println!("    export GEMINI_API_KEY=...");
+            println!();
+            return;
+        }
+    };
+
+    print!("  {prompt_text}: ");
+    let _ = io::stdout().flush();
+
+    let mut key = String::new();
+    if io::stdin().read_line(&mut key).is_err() {
+        return;
+    }
+    let key = key.trim();
+    if key.is_empty() {
+        println!("  No key entered. Skipping.");
+        return;
+    }
+
+    // Store encrypted
+    let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
+    let mut store =
+        nocode_core::storage::credentials::CredentialStore::load(&cred_path).unwrap_or_default();
+    store.set_key(provider, key);
+    if let Err(e) = store.save(&cred_path) {
+        eprintln!("  Failed to save credentials: {e}");
+    } else {
+        println!("  Key saved to {}", cred_path.display());
+    }
+
+    // Set in current process
+    // SAFETY: called during single-threaded startup
+    unsafe {
+        env::set_var(env_var, key);
+    }
+    println!("  {} configured. Ready to go!", provider);
+    println!();
+}
 
 fn resolve_provider(_settings: &Settings) -> ModelProvider {
     if let Ok(p) = env::var("NOCODE_MODEL_PROVIDER")
