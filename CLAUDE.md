@@ -11,7 +11,7 @@ A terminal-native AI coding assistant built in Rust. Connects to Claude, OpenAI,
 ```bash
 cargo build                                     # debug build
 cargo build --release                           # release build
-cargo test                                      # all tests (~373)
+cargo test                                      # all tests (~439)
 cargo test -p nocode-core                       # core library only
 cargo test -p nocode                            # CLI binary only
 cargo test <test_name>                          # single test by name
