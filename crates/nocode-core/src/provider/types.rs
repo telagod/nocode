@@ -64,7 +64,9 @@ pub enum StopReason {
 /// Token usage from a model call.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
+    #[serde(default)]
     pub input_tokens: u64,
+    #[serde(default)]
     pub output_tokens: u64,
     #[serde(default)]
     pub cache_creation_input_tokens: u64,
@@ -142,12 +144,66 @@ pub enum StreamDelta {
     ThinkingDelta { thinking: String },
 }
 
+/// Fine-grained error classification for provider errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorKind {
+    /// Authentication failure (invalid/expired API key). HTTP 401/403.
+    Auth,
+    /// Rate limited. HTTP 429.
+    RateLimit,
+    /// Quota exceeded (billing/usage limit). HTTP 402 or specific error codes.
+    Quota,
+    /// Request timeout or stalled stream.
+    Timeout,
+    /// Server-side error. HTTP 5xx.
+    ServerError,
+    /// Invalid request (bad params, too large, etc). HTTP 400.
+    InvalidRequest,
+    /// Network/connection error.
+    NetworkError,
+    /// Response parsing failure (malformed JSON, unexpected format).
+    ParseError,
+    /// Model overloaded (Claude 529). Retryable with longer backoff.
+    Overloaded,
+    /// Unknown/unclassified error.
+    Unknown,
+}
+
+impl ErrorKind {
+    /// Whether this error kind is retryable.
+    pub fn is_retryable(self) -> bool {
+        matches!(
+            self,
+            Self::RateLimit
+                | Self::Timeout
+                | Self::ServerError
+                | Self::NetworkError
+                | Self::Overloaded
+        )
+    }
+
+    /// Classify from HTTP status code.
+    pub fn from_status(status: u16) -> Self {
+        match status {
+            400 => Self::InvalidRequest,
+            401 | 403 => Self::Auth,
+            402 => Self::Quota,
+            429 => Self::RateLimit,
+            529 => Self::Overloaded,
+            408 | 504 => Self::Timeout,
+            s if s >= 500 => Self::ServerError,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 /// Error from a provider call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderError {
     pub message: String,
     pub retryable: bool,
     pub status_code: Option<u16>,
+    pub kind: ErrorKind,
 }
 
 impl ProviderError {
@@ -156,14 +212,26 @@ impl ProviderError {
             message: message.into(),
             retryable,
             status_code: None,
+            kind: ErrorKind::Unknown,
         }
     }
 
     pub fn with_status(message: impl Into<String>, retryable: bool, status: u16) -> Self {
+        let kind = ErrorKind::from_status(status);
         Self {
             message: message.into(),
-            retryable,
+            retryable: retryable || kind.is_retryable(),
             status_code: Some(status),
+            kind,
+        }
+    }
+
+    pub fn with_kind(message: impl Into<String>, kind: ErrorKind) -> Self {
+        Self {
+            message: message.into(),
+            retryable: kind.is_retryable(),
+            status_code: None,
+            kind,
         }
     }
 
@@ -173,6 +241,18 @@ impl ProviderError {
 
     pub fn retryable(message: impl Into<String>) -> Self {
         Self::new(message, true)
+    }
+
+    pub fn parse_error(message: impl Into<String>) -> Self {
+        Self::with_kind(message, ErrorKind::ParseError)
+    }
+
+    pub fn network_error(message: impl Into<String>) -> Self {
+        Self::with_kind(message, ErrorKind::NetworkError)
+    }
+
+    pub fn timeout(message: impl Into<String>) -> Self {
+        Self::with_kind(message, ErrorKind::Timeout)
     }
 }
 
@@ -231,5 +311,64 @@ mod tests {
         };
         assert_eq!(resp.text_content(), "Hello world");
         assert!(!resp.has_tool_use());
+    }
+
+    #[test]
+    fn error_kind_from_status() {
+        assert_eq!(ErrorKind::from_status(400), ErrorKind::InvalidRequest);
+        assert_eq!(ErrorKind::from_status(401), ErrorKind::Auth);
+        assert_eq!(ErrorKind::from_status(403), ErrorKind::Auth);
+        assert_eq!(ErrorKind::from_status(402), ErrorKind::Quota);
+        assert_eq!(ErrorKind::from_status(429), ErrorKind::RateLimit);
+        assert_eq!(ErrorKind::from_status(500), ErrorKind::ServerError);
+        assert_eq!(ErrorKind::from_status(502), ErrorKind::ServerError);
+        assert_eq!(ErrorKind::from_status(503), ErrorKind::ServerError);
+        assert_eq!(ErrorKind::from_status(529), ErrorKind::Overloaded);
+        assert_eq!(ErrorKind::from_status(408), ErrorKind::Timeout);
+        assert_eq!(ErrorKind::from_status(504), ErrorKind::Timeout);
+        assert_eq!(ErrorKind::from_status(418), ErrorKind::Unknown);
+    }
+
+    #[test]
+    fn error_kind_retryable() {
+        assert!(ErrorKind::RateLimit.is_retryable());
+        assert!(ErrorKind::Timeout.is_retryable());
+        assert!(ErrorKind::ServerError.is_retryable());
+        assert!(ErrorKind::NetworkError.is_retryable());
+        assert!(ErrorKind::Overloaded.is_retryable());
+        assert!(!ErrorKind::Auth.is_retryable());
+        assert!(!ErrorKind::InvalidRequest.is_retryable());
+        assert!(!ErrorKind::Quota.is_retryable());
+        assert!(!ErrorKind::ParseError.is_retryable());
+    }
+
+    #[test]
+    fn provider_error_with_status_sets_kind() {
+        let e = ProviderError::with_status("rate limited", false, 429);
+        assert_eq!(e.kind, ErrorKind::RateLimit);
+        assert!(e.retryable); // overridden by kind
+
+        let e = ProviderError::with_status("bad request", false, 400);
+        assert_eq!(e.kind, ErrorKind::InvalidRequest);
+        assert!(!e.retryable);
+
+        let e = ProviderError::with_status("overloaded", false, 529);
+        assert_eq!(e.kind, ErrorKind::Overloaded);
+        assert!(e.retryable);
+    }
+
+    #[test]
+    fn provider_error_convenience_constructors() {
+        let e = ProviderError::parse_error("bad json");
+        assert_eq!(e.kind, ErrorKind::ParseError);
+        assert!(!e.retryable);
+
+        let e = ProviderError::network_error("connection refused");
+        assert_eq!(e.kind, ErrorKind::NetworkError);
+        assert!(e.retryable);
+
+        let e = ProviderError::timeout("timed out");
+        assert_eq!(e.kind, ErrorKind::Timeout);
+        assert!(e.retryable);
     }
 }

@@ -208,6 +208,15 @@ pub fn run_agentic_loop_with_budget(
         let stream_result = provider.create_message_stream(&request, &mut |event| {
             observer.on_stream_event(&event);
             match &event {
+                StreamEvent::ContentBlockStart {
+                    content_block: ContentBlock::ToolUse { id, name, .. },
+                    ..
+                } => {
+                    observer.on_model_event(&ModelStreamEvent::ToolUseStart {
+                        id: id.clone(),
+                        name: name.clone(),
+                    });
+                }
                 StreamEvent::ContentBlockDelta { delta, .. } => match delta {
                     StreamDelta::TextDelta { text } => {
                         observer
@@ -218,7 +227,9 @@ pub fn run_agentic_loop_with_budget(
                             thinking: thinking.clone(),
                         });
                     }
-                    StreamDelta::InputJsonDelta { .. } => {}
+                    StreamDelta::InputJsonDelta { .. } => {
+                        // Forwarded via on_stream_event above — TUI handles directly
+                    }
                 },
                 StreamEvent::MessageDelta { usage, .. } => {
                     observer.on_model_event(&ModelStreamEvent::UsageUpdate {

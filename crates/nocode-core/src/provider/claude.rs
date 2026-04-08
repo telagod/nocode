@@ -66,7 +66,7 @@ impl Provider for ClaudeProvider {
 
 /// Parse an SSE stream from the Claude Messages API into events,
 /// accumulating the final `CreateMessageResponse`.
-fn parse_sse_stream(
+pub(crate) fn parse_sse_stream(
     reader: impl std::io::Read,
     on_event: &mut dyn FnMut(StreamEvent),
 ) -> Result<CreateMessageResponse, ProviderError> {
@@ -230,4 +230,210 @@ fn parse_sse_stream(
         usage,
         model,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn make_sse(events: &[(&str, &str)]) -> String {
+        let mut out = String::new();
+        for (event_type, data) in events {
+            out.push_str(&format!("event: {event_type}\ndata: {data}\n\n"));
+        }
+        out
+    }
+
+    #[test]
+    fn parse_simple_text_stream() {
+        let sse = make_sse(&[
+            (
+                "message_start",
+                r#"{"message":{"id":"msg-1","model":"claude-opus-4-20250514","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+            ),
+            (
+                "content_block_start",
+                r#"{"index":0,"content_block":{"type":"text","text":""}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"index":0,"delta":{"type":"text_delta","text":"Hello"}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"index":0,"delta":{"type":"text_delta","text":" world"}}"#,
+            ),
+            ("content_block_stop", r#"{"index":0}"#),
+            (
+                "message_delta",
+                r#"{"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
+            ),
+            ("message_stop", "{}"),
+        ]);
+
+        let mut events = Vec::new();
+        let resp = parse_sse_stream(Cursor::new(sse.as_bytes()), &mut |e| events.push(e)).unwrap();
+
+        assert_eq!(resp.id, "msg-1");
+        assert_eq!(resp.model, "claude-opus-4-20250514");
+        assert_eq!(resp.stop_reason, StopReason::EndTurn);
+        assert_eq!(resp.usage.input_tokens, 10);
+        assert_eq!(resp.usage.output_tokens, 5);
+        assert_eq!(resp.text_content(), "Hello world");
+
+        let delta_count = events
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::ContentBlockDelta { .. }))
+            .count();
+        assert_eq!(delta_count, 2);
+    }
+
+    #[test]
+    fn parse_tool_use_stream() {
+        let sse = make_sse(&[
+            (
+                "message_start",
+                r#"{"message":{"id":"msg-2","model":"claude-opus-4-20250514","usage":{"input_tokens":20,"output_tokens":0}}}"#,
+            ),
+            (
+                "content_block_start",
+                r#"{"index":0,"content_block":{"type":"tool_use","id":"tu-1","name":"Bash","input":{}}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"index":0,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"index":0,"delta":{"type":"input_json_delta","partial_json":"nd\":\"ls\"}"}}"#,
+            ),
+            ("content_block_stop", r#"{"index":0}"#),
+            (
+                "message_delta",
+                r#"{"delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":10}}"#,
+            ),
+            ("message_stop", "{}"),
+        ]);
+
+        let mut events = Vec::new();
+        let resp = parse_sse_stream(Cursor::new(sse.as_bytes()), &mut |e| events.push(e)).unwrap();
+
+        assert_eq!(resp.stop_reason, StopReason::ToolUse);
+        assert!(resp.has_tool_use());
+        let tool_uses = resp.tool_uses();
+        assert_eq!(tool_uses.len(), 1);
+        if let ContentBlock::ToolUse { id, name, .. } = &tool_uses[0] {
+            assert_eq!(id, "tu-1");
+            assert_eq!(name, "Bash");
+        } else {
+            panic!("expected ToolUse block");
+        }
+    }
+
+    #[test]
+    fn parse_thinking_stream() {
+        let sse = make_sse(&[
+            (
+                "message_start",
+                r#"{"message":{"id":"msg-3","model":"claude-opus-4-20250514","usage":{"input_tokens":5,"output_tokens":0}}}"#,
+            ),
+            (
+                "content_block_start",
+                r#"{"index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"index":0,"delta":{"type":"thinking_delta","thinking":"Let me think..."}}"#,
+            ),
+            ("content_block_stop", r#"{"index":0}"#),
+            (
+                "content_block_start",
+                r#"{"index":1,"content_block":{"type":"text","text":""}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"index":1,"delta":{"type":"text_delta","text":"Done."}}"#,
+            ),
+            ("content_block_stop", r#"{"index":1}"#),
+            (
+                "message_delta",
+                r#"{"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":8}}"#,
+            ),
+            ("message_stop", "{}"),
+        ]);
+
+        let mut events = Vec::new();
+        let resp = parse_sse_stream(Cursor::new(sse.as_bytes()), &mut |e| events.push(e)).unwrap();
+
+        assert_eq!(resp.text_content(), "Done.");
+        let thinking_count = events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    StreamEvent::ContentBlockDelta {
+                        delta: StreamDelta::ThinkingDelta { .. },
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(thinking_count, 1);
+    }
+
+    #[test]
+    fn parse_ping_events() {
+        let sse = make_sse(&[
+            ("ping", "{}"),
+            (
+                "message_start",
+                r#"{"message":{"id":"msg-4","model":"test","usage":{"input_tokens":1,"output_tokens":0}}}"#,
+            ),
+            ("ping", "{}"),
+            (
+                "content_block_start",
+                r#"{"index":0,"content_block":{"type":"text","text":""}}"#,
+            ),
+            (
+                "content_block_delta",
+                r#"{"index":0,"delta":{"type":"text_delta","text":"Hi"}}"#,
+            ),
+            ("content_block_stop", r#"{"index":0}"#),
+            (
+                "message_delta",
+                r#"{"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}"#,
+            ),
+            ("message_stop", "{}"),
+        ]);
+
+        let mut events = Vec::new();
+        let resp = parse_sse_stream(Cursor::new(sse.as_bytes()), &mut |e| events.push(e)).unwrap();
+
+        assert_eq!(resp.text_content(), "Hi");
+        let ping_count = events
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::Ping))
+            .count();
+        assert_eq!(ping_count, 2);
+    }
+
+    #[test]
+    fn parse_empty_stream() {
+        let sse = make_sse(&[
+            (
+                "message_start",
+                r#"{"message":{"id":"msg-5","model":"test","usage":{"input_tokens":0,"output_tokens":0}}}"#,
+            ),
+            (
+                "message_delta",
+                r#"{"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":0}}"#,
+            ),
+            ("message_stop", "{}"),
+        ]);
+
+        let resp = parse_sse_stream(Cursor::new(sse.as_bytes()), &mut |_| {}).unwrap();
+        assert_eq!(resp.text_content(), "");
+        assert_eq!(resp.stop_reason, StopReason::EndTurn);
+    }
 }
