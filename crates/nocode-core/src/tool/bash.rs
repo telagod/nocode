@@ -43,10 +43,8 @@ impl Tool for BashTool {
 
         let timeout_ms = input["timeout"].as_u64().unwrap_or(120_000).min(600_000);
         let run_in_background = input["run_in_background"].as_bool().unwrap_or(false);
-        let _disable_sandbox = input["dangerouslyDisableSandbox"]
-            .as_bool()
-            .unwrap_or(false);
-        let _description = input["description"].as_str().unwrap_or("");
+        // dangerouslyDisableSandbox is handled by the executor layer
+        // description is metadata for the caller, not used in execution
 
         if run_in_background {
             // Background execution: spawn and return immediately with PID

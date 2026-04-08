@@ -60,8 +60,28 @@ impl Tool for ExitPlanModeTool {
             }
         })
     }
-    fn execute(&self, _input: &Value) -> ToolOutput {
-        ToolOutput::success("Exited plan mode. Ready to implement.")
+    fn execute(&self, input: &Value) -> ToolOutput {
+        let prompts = input["allowedPrompts"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|p| {
+                        let tool = p["tool"].as_str()?;
+                        let prompt = p["prompt"].as_str()?;
+                        Some(format!("{tool}: {prompt}"))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if prompts.is_empty() {
+            ToolOutput::success("Exited plan mode. Ready to implement.")
+        } else {
+            ToolOutput::success(format!(
+                "Exited plan mode. Allowed actions:\n{}",
+                prompts.join("\n")
+            ))
+        }
     }
 }
 
