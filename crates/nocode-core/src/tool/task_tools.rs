@@ -237,6 +237,22 @@ impl Tool for TaskStopTool {
         let Some(id) = id else {
             return ToolOutput::error("Missing required parameter: task_id");
         };
+
+        // Try to kill as PID first (background Bash processes)
+        if let Ok(pid) = id.parse::<u32>() {
+            #[cfg(unix)]
+            {
+                use std::process::Command;
+                let _ = Command::new("kill").arg(pid.to_string()).output();
+                return ToolOutput::success(format!("Sent kill signal to PID {pid}"));
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = pid;
+            }
+        }
+
+        // Fall back to task coordinator
         let tc = global_task_coordinator();
         let mut guard = tc.lock().unwrap();
         match guard.set_status(id, TaskStatus::Failed) {
