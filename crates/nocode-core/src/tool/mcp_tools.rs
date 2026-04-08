@@ -110,3 +110,42 @@ impl Tool for McpTool {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn list_mcp_resources_succeeds() {
+        let tool = ListMcpResourcesTool;
+        let result = tool.execute(&json!({}));
+        assert!(!result.is_error);
+    }
+
+    #[test]
+    fn read_mcp_resource_missing_server() {
+        let tool = ReadMcpResourceTool;
+        assert!(tool.execute(&json!({"uri": "test://x"})).is_error);
+    }
+
+    #[test]
+    fn read_mcp_resource_missing_uri() {
+        let tool = ReadMcpResourceTool;
+        assert!(tool.execute(&json!({"server": "test"})).is_error);
+    }
+
+    #[test]
+    fn read_mcp_resource_nonexistent_server() {
+        let tool = ReadMcpResourceTool;
+        let result = tool.execute(&json!({"server": "nonexistent_xyz", "uri": "test://x"}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn mcp_generic_returns_error() {
+        let tool = McpTool;
+        let result = tool.execute(&json!({"name": "test"}));
+        assert!(result.is_error);
+    }
+}

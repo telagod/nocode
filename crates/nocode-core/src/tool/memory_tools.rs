@@ -146,3 +146,42 @@ impl Tool for MemoryDeleteTool {
         ToolOutput::success(format!("Deleted memory: {file_name}"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn memory_save_missing_params() {
+        let tool = MemorySaveTool;
+        assert!(tool.execute(&json!({})).is_error);
+        assert!(tool.execute(&json!({"name": "x"})).is_error);
+    }
+
+    #[test]
+    fn memory_list_succeeds() {
+        let tool = MemoryListTool;
+        let result = tool.execute(&json!({}));
+        assert!(!result.is_error);
+    }
+
+    #[test]
+    fn memory_search_missing_query() {
+        let tool = MemorySearchTool;
+        assert!(tool.execute(&json!({})).is_error);
+    }
+
+    #[test]
+    fn memory_search_succeeds() {
+        let tool = MemorySearchTool;
+        let result = tool.execute(&json!({"query": "nonexistent_xyz"}));
+        assert!(!result.is_error);
+    }
+
+    #[test]
+    fn memory_delete_missing_file() {
+        let tool = MemoryDeleteTool;
+        assert!(tool.execute(&json!({})).is_error);
+    }
+}

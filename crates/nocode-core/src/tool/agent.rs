@@ -218,3 +218,52 @@ fn build_worker_provider(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn agent_missing_prompt() {
+        let tool = AgentTool;
+        let result = tool.execute(&json!({"description": "test"}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn agent_spawns_worker() {
+        let tool = AgentTool;
+        let result = tool.execute(&json!({
+            "description": "test task",
+            "prompt": "echo hello",
+            "name": "test-agent"
+        }));
+        assert!(!result.is_error);
+        assert!(result.content.contains("worker_id"));
+        assert!(result.content.contains("test-agent"));
+        assert!(result.content.contains("spawned"));
+    }
+
+    #[test]
+    fn agent_default_name() {
+        let tool = AgentTool;
+        let result = tool.execute(&json!({
+            "description": "d",
+            "prompt": "p"
+        }));
+        assert!(!result.is_error);
+        assert!(result.content.contains("agent"));
+    }
+
+    #[test]
+    fn agent_model_override() {
+        let tool = AgentTool;
+        let result = tool.execute(&json!({
+            "description": "d",
+            "prompt": "p",
+            "model": "haiku"
+        }));
+        assert!(!result.is_error);
+    }
+}
