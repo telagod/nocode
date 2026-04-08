@@ -56,63 +56,60 @@ pub fn format_tool_call_start(tool_name: &str, input: &Value) -> Vec<String> {
 
     match tool_name {
         "Bash" => {
-            lines.push(String::from("┌─ 🔧 Bash ─────────"));
+            lines.push(String::from("❯ Bash"));
             let cmd = extract_json_field(input, "command");
-            lines.push(format!("│ $ {cmd}"));
+            lines.push(format!("  $ {cmd}"));
         }
-        "Read" => {
-            lines.push(String::from("┌─ 📄 Read ─────────"));
+        "FileRead" => {
+            lines.push(String::from("❯ FileRead"));
             let fp = extract_json_field(input, "file_path");
-            lines.push(format!("│ {fp}"));
+            lines.push(format!("  {fp}"));
         }
-        "Write" => {
-            lines.push(String::from("┌─ ✏️ Write ────────"));
+        "FileWrite" => {
+            lines.push(String::from("❯ FileWrite"));
             let fp = extract_json_field(input, "file_path");
             let content_lines = input
                 .get("content")
                 .and_then(Value::as_str)
                 .map(|c| c.lines().count())
                 .unwrap_or(0);
-            lines.push(format!("│ {fp} ({content_lines} lines)"));
+            lines.push(format!("  {fp} ({content_lines} lines)"));
         }
-        "Edit" => {
-            lines.push(String::from("┌─ 📝 Edit ─────────"));
+        "FileEdit" => {
+            lines.push(String::from("❯ FileEdit"));
             let fp = extract_json_field(input, "file_path");
-            lines.push(format!("│ {fp}"));
-            // old_string preview (first 3 lines)
+            lines.push(format!("  {fp}"));
             if let Some(old) = input.get("old_string").and_then(Value::as_str) {
-                lines.push(String::from("│ old:"));
+                lines.push(String::from("  old:"));
                 for line in old.lines().take(3) {
-                    lines.push(format!("│   {line}"));
+                    lines.push(format!("    {line}"));
                 }
             }
-            // new_string preview (first 3 lines)
             if let Some(new) = input.get("new_string").and_then(Value::as_str) {
-                lines.push(String::from("│ new:"));
+                lines.push(String::from("  new:"));
                 for line in new.lines().take(3) {
-                    lines.push(format!("│   {line}"));
+                    lines.push(format!("    {line}"));
                 }
             }
         }
         "Glob" => {
-            lines.push(String::from("┌─ 🔍 Glob ─────────"));
+            lines.push(String::from("❯ Glob"));
             let pattern = extract_json_field(input, "pattern");
-            lines.push(format!("│ pattern: {pattern}"));
+            lines.push(format!("  pattern: {pattern}"));
         }
         "Grep" => {
-            lines.push(String::from("┌─ 🔍 Grep ─────────"));
+            lines.push(String::from("❯ Grep"));
             let pattern = extract_json_field(input, "pattern");
             let path = extract_json_field(input, "path");
-            lines.push(format!("│ pattern: {pattern} path: {path}"));
+            lines.push(format!("  pattern: {pattern} path: {path}"));
         }
         other => {
-            lines.push(format!("┌─ 🔧 {other} ──"));
+            lines.push(format!("❯ {other}"));
             let summary = truncate_str(&input.to_string(), 200);
-            lines.push(format!("│ {summary}"));
+            lines.push(format!("  {summary}"));
         }
     }
 
-    lines.push(String::from("└─────────────────"));
     lines
 }
 
@@ -127,15 +124,15 @@ pub fn format_tool_call_start(tool_name: &str, input: &Value) -> Vec<String> {
 pub fn format_tool_result(tool_name: &str, output: &str) -> Vec<String> {
     let raw_lines: Vec<String> = match tool_name {
         "Bash" => format_bash_result(output),
-        "Read" => format_read_result(output),
-        "Write" => vec![format!("✔ wrote file")],
-        "Edit" => vec![format!("✔ edited file")],
+        "FileRead" => format_read_result(output),
+        "FileWrite" => vec![String::from("⎿ wrote file")],
+        "FileEdit" => vec![String::from("⎿ edited file")],
         _ => format_generic_result(output),
     };
 
     raw_lines
         .into_iter()
-        .map(|line| format!("  ▸ {line}"))
+        .map(|line| format!("  ⎿ {line}"))
         .collect()
 }
 
@@ -227,35 +224,33 @@ mod tests {
         let input = json!({"command": "ls -la"});
         let lines = format_tool_call_start("Bash", &input);
 
-        assert_eq!(lines[0], "┌─ 🔧 Bash ─────────");
-        assert_eq!(lines[1], "│ $ ls -la");
-        assert_eq!(lines.last().unwrap(), "└─────────────────");
+        assert_eq!(lines[0], "❯ Bash");
+        assert_eq!(lines[1], "  $ ls -la");
     }
 
-    // -- format_tool_call_start: Read -----------------------------------------
+    // -- format_tool_call_start: FileRead ------------------------------------
 
     #[test]
     fn read_call_start_shows_file_path() {
         let input = json!({"file_path": "/tmp/foo.rs"});
-        let lines = format_tool_call_start("Read", &input);
+        let lines = format_tool_call_start("FileRead", &input);
 
-        assert_eq!(lines[0], "┌─ 📄 Read ─────────");
-        assert_eq!(lines[1], "│ /tmp/foo.rs");
-        assert_eq!(lines.last().unwrap(), "└─────────────────");
+        assert_eq!(lines[0], "❯ FileRead");
+        assert_eq!(lines[1], "  /tmp/foo.rs");
     }
 
-    // -- format_tool_call_start: Write ----------------------------------------
+    // -- format_tool_call_start: FileWrite -----------------------------------
 
     #[test]
     fn write_call_start_shows_line_count() {
         let input = json!({"file_path": "/tmp/out.rs", "content": "a\nb\nc\n"});
-        let lines = format_tool_call_start("Write", &input);
+        let lines = format_tool_call_start("FileWrite", &input);
 
-        assert_eq!(lines[0], "┌─ ✏️ Write ────────");
-        assert_eq!(lines[1], "│ /tmp/out.rs (3 lines)");
+        assert_eq!(lines[0], "❯ FileWrite");
+        assert_eq!(lines[1], "  /tmp/out.rs (3 lines)");
     }
 
-    // -- format_tool_call_start: Edit -----------------------------------------
+    // -- format_tool_call_start: FileEdit ------------------------------------
 
     #[test]
     fn edit_call_start_shows_old_new_preview() {
@@ -264,43 +259,42 @@ mod tests {
             "old_string": "line1\nline2\nline3\nline4",
             "new_string": "new1\nnew2\nnew3\nnew4"
         });
-        let lines = format_tool_call_start("Edit", &input);
+        let lines = format_tool_call_start("FileEdit", &input);
 
-        assert_eq!(lines[0], "┌─ 📝 Edit ─────────");
-        assert_eq!(lines[1], "│ /tmp/edit.rs");
-        assert!(lines.contains(&String::from("│ old:")));
-        assert!(lines.contains(&String::from("│   line1")));
-        assert!(lines.contains(&String::from("│   line3")));
-        // line4 should NOT appear (only first 3 lines)
-        assert!(!lines.contains(&String::from("│   line4")));
-        assert!(lines.contains(&String::from("│ new:")));
-        assert!(lines.contains(&String::from("│   new1")));
-        assert!(!lines.contains(&String::from("│   new4")));
+        assert_eq!(lines[0], "❯ FileEdit");
+        assert_eq!(lines[1], "  /tmp/edit.rs");
+        assert!(lines.contains(&String::from("  old:")));
+        assert!(lines.contains(&String::from("    line1")));
+        assert!(lines.contains(&String::from("    line3")));
+        assert!(!lines.contains(&String::from("    line4")));
+        assert!(lines.contains(&String::from("  new:")));
+        assert!(lines.contains(&String::from("    new1")));
+        assert!(!lines.contains(&String::from("    new4")));
     }
 
-    // -- format_tool_call_start: Glob -----------------------------------------
+    // -- format_tool_call_start: Glob ----------------------------------------
 
     #[test]
     fn glob_call_start_shows_pattern() {
         let input = json!({"pattern": "**/*.rs"});
         let lines = format_tool_call_start("Glob", &input);
 
-        assert_eq!(lines[0], "┌─ 🔍 Glob ─────────");
-        assert_eq!(lines[1], "│ pattern: **/*.rs");
+        assert_eq!(lines[0], "❯ Glob");
+        assert_eq!(lines[1], "  pattern: **/*.rs");
     }
 
-    // -- format_tool_call_start: Grep -----------------------------------------
+    // -- format_tool_call_start: Grep ----------------------------------------
 
     #[test]
     fn grep_call_start_shows_pattern_and_path() {
         let input = json!({"pattern": "TODO", "path": "/src"});
         let lines = format_tool_call_start("Grep", &input);
 
-        assert_eq!(lines[0], "┌─ 🔍 Grep ─────────");
-        assert_eq!(lines[1], "│ pattern: TODO path: /src");
+        assert_eq!(lines[0], "❯ Grep");
+        assert_eq!(lines[1], "  pattern: TODO path: /src");
     }
 
-    // -- format_tool_call_start: generic --------------------------------------
+    // -- format_tool_call_start: generic -------------------------------------
 
     #[test]
     fn generic_tool_call_truncates_input() {
@@ -308,23 +302,22 @@ mod tests {
         let input = json!({"data": long_val});
         let lines = format_tool_call_start("CustomTool", &input);
 
-        assert_eq!(lines[0], "┌─ 🔧 CustomTool ──");
-        // The JSON summary on line[1] should be truncated to ~200 + "..."
+        assert_eq!(lines[0], "❯ CustomTool");
         assert!(lines[1].len() < 220);
         assert!(lines[1].contains("..."));
     }
 
-    // -- format_tool_call_start: empty input ----------------------------------
+    // -- format_tool_call_start: empty input ---------------------------------
 
     #[test]
     fn empty_input_shows_unknown_fields() {
         let input = json!({});
         let lines = format_tool_call_start("Bash", &input);
 
-        assert_eq!(lines[1], "│ $ (unknown)");
+        assert_eq!(lines[1], "  $ (unknown)");
     }
 
-    // -- format_tool_result: Bash JSON --------------------------------------
+    // -- format_tool_result: Bash JSON ---------------------------------------
 
     #[test]
     fn bash_result_parses_json_output() {
@@ -333,13 +326,12 @@ mod tests {
 
         assert!(lines[0].contains("exit: 0"));
         assert!(lines.iter().any(|l| l.contains("hello world")));
-        // All lines should have the prefix
         for line in &lines {
-            assert!(line.starts_with("  ▸ "));
+            assert!(line.starts_with("  ⎿ "));
         }
     }
 
-    // -- format_tool_result: Bash plain text ----------------------------------
+    // -- format_tool_result: Bash plain text ---------------------------------
 
     #[test]
     fn bash_result_falls_back_to_plain_text() {
@@ -347,38 +339,35 @@ mod tests {
         let lines = format_tool_result("Bash", output);
 
         assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0], "  ▸ some plain output");
+        assert_eq!(lines[0], "  ⎿ some plain output");
     }
 
-    // -- format_tool_result: Read truncation ----------------------------------
+    // -- format_tool_result: FileRead truncation -----------------------------
 
     #[test]
     fn read_result_truncates_long_content() {
-        // Generate content exceeding READ_DISPLAY_MAX_LINES (80)
         let long_content: String = (0..200).map(|i| format!("line {i}\n")).collect();
-        let lines = format_tool_result("Read", &long_content);
+        let lines = format_tool_result("FileRead", &long_content);
 
-        // Should be truncated — fewer lines than original
         assert!(lines.len() < 200);
-        // Last line should be the truncation message
         let last = lines.last().unwrap();
         assert!(last.contains("truncated"));
     }
 
-    // -- format_tool_result: Write / Edit -------------------------------------
+    // -- format_tool_result: FileWrite / FileEdit ----------------------------
 
     #[test]
     fn write_result_shows_confirmation() {
-        let lines = format_tool_result("Write", "ok");
+        let lines = format_tool_result("FileWrite", "ok");
         assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains("✔ wrote file"));
+        assert!(lines[0].contains("wrote file"));
     }
 
     #[test]
     fn edit_result_shows_confirmation() {
-        let lines = format_tool_result("Edit", "ok");
+        let lines = format_tool_result("FileEdit", "ok");
         assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains("✔ edited file"));
+        assert!(lines[0].contains("edited file"));
     }
 
     // -- format_tool_result: generic truncation -------------------------------
