@@ -140,6 +140,30 @@ impl McpClient {
         Ok(McpToolResult { content, is_error })
     }
 
+    /// Read a resource from the MCP server by URI.
+    pub fn read_resource(&mut self, uri: &str) -> Result<String, String> {
+        let response = self.request("resources/read", json!({"uri": uri}))?;
+        let contents = response
+            .get("contents")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| {
+                        item.get("text")
+                            .and_then(Value::as_str)
+                            .or_else(|| item.get("blob").and_then(Value::as_str))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
+        if contents.is_empty() {
+            Err(format!("Resource '{uri}' returned empty content"))
+        } else {
+            Ok(contents)
+        }
+    }
+
     fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let request = JsonRpcRequest {

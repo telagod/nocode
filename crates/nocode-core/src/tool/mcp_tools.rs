@@ -74,17 +74,12 @@ impl Tool for ReadMcpResourceTool {
         let Some(uri) = input["uri"].as_str() else {
             return ToolOutput::error("Missing required parameter: uri");
         };
-        // MCP resource reading requires an active client connection
         let mgr = crate::mcp::manager::global_mcp_manager();
-        let guard = mgr.lock().unwrap();
-        let servers = guard.list_servers();
-        if !servers.iter().any(|(name, _, _)| *name == server) {
-            return ToolOutput::error(format!("MCP server '{server}' not found"));
+        let mut guard = mgr.lock().unwrap();
+        match guard.read_resource(server, uri) {
+            Ok(content) => ToolOutput::success(content),
+            Err(e) => ToolOutput::error(e),
         }
-        // Resource reading would go through McpClient — stub for now
-        ToolOutput::success(format!(
-            "Resource {uri} from server {server} (resource reading requires active MCP connection)"
-        ))
     }
 }
 

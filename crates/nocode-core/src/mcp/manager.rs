@@ -254,6 +254,25 @@ impl McpManager {
             .collect()
     }
 
+    /// Read a resource from a connected MCP server.
+    pub fn read_resource(&mut self, server: &str, uri: &str) -> Result<String, String> {
+        let entry = self
+            .servers
+            .get_mut(server)
+            .ok_or_else(|| format!("MCP server '{server}' not registered"))?;
+        if entry.phase != McpPhase::Connected {
+            return Err(format!(
+                "MCP server '{server}' is not connected ({:?})",
+                entry.phase
+            ));
+        }
+        let client = entry
+            .client
+            .as_mut()
+            .ok_or_else(|| format!("MCP server '{server}' has no active client"))?;
+        client.read_resource(uri)
+    }
+
     /// Connect all registered servers.
     pub fn connect_all(&mut self) -> Vec<(String, Result<(), String>)> {
         let names: Vec<String> = self.servers.keys().cloned().collect();
