@@ -128,3 +128,48 @@ impl Tool for CronListTool {
         ToolOutput::success(serde_json::to_string(&list).unwrap_or_default())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn cron_create_and_list() {
+        let create = CronCreateTool;
+        let result = create.execute(&json!({"schedule": "*/5 * * * *", "command": "echo hi"}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("cron-"));
+
+        let list = CronListTool;
+        let result = list.execute(&json!({}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("echo hi"));
+    }
+
+    #[test]
+    fn cron_delete() {
+        let create = CronCreateTool;
+        let r = create.execute(&json!({"schedule": "0 * * * *", "command": "test"}));
+        let v: serde_json::Value = serde_json::from_str(&r.content).unwrap();
+        let id = v["id"].as_str().unwrap();
+
+        let delete = CronDeleteTool;
+        let result = delete.execute(&json!({"id": id}));
+        assert!(!result.is_error);
+    }
+
+    #[test]
+    fn cron_delete_nonexistent() {
+        let delete = CronDeleteTool;
+        let result = delete.execute(&json!({"id": "cron-99999"}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn cron_create_missing_params() {
+        let tool = CronCreateTool;
+        assert!(tool.execute(&json!({})).is_error);
+        assert!(tool.execute(&json!({"schedule": "* * * * *"})).is_error);
+    }
+}

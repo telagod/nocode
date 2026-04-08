@@ -175,3 +175,52 @@ fn which_exists(cmd: &str) -> bool {
         .output()
         .is_ok_and(|o| o.status.success())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn grep_finds_pattern() {
+        let path = "/tmp/nocode_grep_unit.txt";
+        std::fs::write(path, "hello world\nfoo bar\nhello again\n").unwrap();
+        let tool = GrepTool;
+        let result =
+            tool.execute(&json!({"pattern": "hello", "path": path, "output_mode": "content"}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("hello"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn grep_no_matches() {
+        let path = "/tmp/nocode_grep_nomatch.txt";
+        std::fs::write(path, "hello world\n").unwrap();
+        let tool = GrepTool;
+        let result = tool.execute(&json!({"pattern": "zzzzz", "path": path}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("No matches"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn grep_missing_pattern() {
+        let tool = GrepTool;
+        let result = tool.execute(&json!({}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn grep_case_insensitive() {
+        let path = "/tmp/nocode_grep_ci.txt";
+        std::fs::write(path, "Hello World\n").unwrap();
+        let tool = GrepTool;
+        let result = tool.execute(
+            &json!({"pattern": "hello", "path": path, "-i": true, "output_mode": "content"}),
+        );
+        assert!(!result.is_error);
+        assert!(result.content.contains("Hello"));
+        let _ = std::fs::remove_file(path);
+    }
+}
