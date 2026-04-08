@@ -247,6 +247,48 @@ impl<'a> ToolExecutor<'a> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ToolRunner bridge — connects DI layer to ToolExecutor
+// ---------------------------------------------------------------------------
+
+use crate::query::deps::ToolRunner;
+use crate::provider::types::ToolDefinition;
+
+/// Default production implementation of ToolRunner, backed by ToolExecutor.
+pub struct DefaultToolExecutor<'a> {
+    executor: ToolExecutor<'a>,
+}
+
+impl<'a> DefaultToolExecutor<'a> {
+    pub fn new(executor: ToolExecutor<'a>) -> Self {
+        Self { executor }
+    }
+}
+
+impl ToolRunner for DefaultToolExecutor<'_> {
+    fn execute(&self, name: &str, id: &str, input: &serde_json::Value) -> crate::tool::ToolOutput {
+        let result = self.executor.execute_tool_use(id, name, input);
+        match result {
+            ContentBlock::ToolResult {
+                content, is_error, ..
+            } => {
+                if is_error {
+                    crate::tool::ToolOutput::error(content)
+                } else {
+                    crate::tool::ToolOutput::success(content)
+                }
+            }
+            _ => crate::tool::ToolOutput::error("Unexpected result type"),
+        }
+    }
+
+    fn definitions(&self) -> Vec<ToolDefinition> {
+        self.executor
+            .registry
+            .definitions()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

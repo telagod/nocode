@@ -21,3 +21,27 @@ pub trait Provider: Send + Sync {
         on_event: &mut dyn FnMut(StreamEvent),
     ) -> Result<CreateMessageResponse, ProviderError>;
 }
+
+// ---------------------------------------------------------------------------
+// CallModel bridge — connects DI layer to Provider trait
+// ---------------------------------------------------------------------------
+
+use crate::query::deps::CallModel;
+
+/// Blanket bridge: any Provider automatically implements CallModel.
+impl<T: Provider> CallModel for T {
+    fn create_message(
+        &self,
+        request: &CreateMessageRequest,
+    ) -> Result<CreateMessageResponse, ProviderError> {
+        Provider::create_message(self, request)
+    }
+
+    fn create_message_stream(
+        &self,
+        request: &CreateMessageRequest,
+        on_event: &mut dyn FnMut(StreamEvent),
+    ) -> Result<CreateMessageResponse, ProviderError> {
+        Provider::create_message_stream(self, request, on_event)
+    }
+}
