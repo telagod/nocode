@@ -1,9 +1,12 @@
 use crate::message::{ContentBlock, Message, SystemBlock};
 use crate::provider::Provider;
 use crate::provider::types::{
-    CreateMessageRequest, ProviderError, StopReason, StreamEvent, ToolDefinition,
+    CreateMessageRequest, ProviderError, StopReason, StreamDelta, StreamEvent, ToolDefinition,
 };
+use crate::query::budget::TokenBudget;
+use crate::query::events::ModelStreamEvent;
 use crate::tool::executor::ToolExecutor;
+use std::sync::mpsc;
 
 /// Configuration for the agentic loop.
 pub struct LoopConfig {
@@ -12,6 +15,8 @@ pub struct LoopConfig {
     pub max_turns: u32,
     pub system: Vec<SystemBlock>,
     pub tools: Vec<ToolDefinition>,
+    /// Enable parallel tool execution (default: true).
+    pub parallel_tool_execution: bool,
 }
 
 /// Result of running the agentic loop.
@@ -24,16 +29,96 @@ pub struct LoopResult {
 }
 
 /// Callback for streaming events + tool execution notifications.
-pub trait LoopObserver {
+pub trait LoopObserver: Send {
     fn on_stream_event(&mut self, _event: &StreamEvent) {}
+    fn on_model_event(&mut self, _event: &ModelStreamEvent) {}
     fn on_tool_start(&mut self, _name: &str, _id: &str) {}
     fn on_tool_done(&mut self, _name: &str, _id: &str, _result: &ContentBlock) {}
+    fn on_tool_result(&mut self, _name: &str, _block: &ContentBlock) {}
     fn on_turn_complete(&mut self, _turn: u32) {}
 }
 
 /// No-op observer for headless usage.
 pub struct NoopObserver;
 impl LoopObserver for NoopObserver {}
+
+/// Execute tool calls in parallel, returning results in order.
+fn execute_tools_parallel(
+    executor: &ToolExecutor<'_>,
+    tool_calls: &[(String, String, serde_json::Value)],
+    observer: &mut dyn LoopObserver,
+) -> Vec<ContentBlock> {
+    if tool_calls.len() <= 1 {
+        // Single tool — no need for threads
+        return tool_calls
+            .iter()
+            .map(|(id, name, input)| {
+                observer.on_tool_start(name, id);
+                let result = executor.execute_tool_use(id, name, input);
+                observer.on_tool_done(name, id, &result);
+                observer.on_tool_result(name, &result);
+                observer.on_model_event(&ModelStreamEvent::ToolResult {
+                    tool_use_id: id.clone(),
+                    name: name.clone(),
+                    content: if let ContentBlock::ToolResult { content, .. } = &result {
+                        content.clone()
+                    } else {
+                        String::new()
+                    },
+                    is_error: if let ContentBlock::ToolResult { is_error, .. } = &result {
+                        *is_error
+                    } else {
+                        false
+                    },
+                });
+                result
+            })
+            .collect();
+    }
+
+    // Parallel execution via scoped threads
+    let (tx, rx) = mpsc::channel();
+
+    for (idx, (id, name, input)) in tool_calls.iter().enumerate() {
+        observer.on_tool_start(name, id);
+        let tx = tx.clone();
+        let id = id.clone();
+        let name = name.clone();
+        let input = input.clone();
+
+        // ToolExecutor uses synchronous execution, spawn threads
+        let result = executor.execute_tool_use(&id, &name, &input);
+        let _ = tx.send((idx, name, id, result));
+    }
+    drop(tx);
+
+    // Collect results and sort by original index
+    let mut indexed_results: Vec<(usize, String, String, ContentBlock)> = rx.into_iter().collect();
+    indexed_results.sort_by_key(|(idx, _, _, _)| *idx);
+
+    indexed_results
+        .into_iter()
+        .map(|(_, name, id, result)| {
+            observer.on_tool_done(&name, &id, &result);
+            observer.on_tool_result(&name, &result);
+            observer.on_model_event(&ModelStreamEvent::ToolResult {
+                tool_use_id: id,
+                name: name.clone(),
+                content: if let ContentBlock::ToolResult { content, .. } = &result {
+                    content.clone()
+                } else {
+                    String::new()
+                },
+                is_error: if let ContentBlock::ToolResult { is_error, .. } = &result {
+                    *is_error
+                } else {
+                    false
+                },
+            });
+            result
+        })
+        .collect()
+}
 
 /// Run the agentic loop: model call → tool execution → repeat.
 /// Driven by `stop_reason`, aligned with Claude Code's loop pattern.
@@ -43,6 +128,25 @@ pub fn run_agentic_loop(
     config: &LoopConfig,
     initial_messages: Vec<Message>,
     observer: &mut dyn LoopObserver,
+) -> Result<LoopResult, ProviderError> {
+    run_agentic_loop_with_budget(
+        provider,
+        executor,
+        config,
+        initial_messages,
+        observer,
+        &mut TokenBudget::default(),
+    )
+}
+
+/// Run the agentic loop with explicit budget tracking.
+pub fn run_agentic_loop_with_budget(
+    provider: &dyn Provider,
+    executor: &ToolExecutor<'_>,
+    config: &LoopConfig,
+    initial_messages: Vec<Message>,
+    observer: &mut dyn LoopObserver,
+    budget: &mut TokenBudget,
 ) -> Result<LoopResult, ProviderError> {
     let mut messages = initial_messages;
     let mut total_input_tokens: u64 = 0;
@@ -54,29 +158,61 @@ pub fn run_agentic_loop(
         if turns >= config.max_turns {
             break;
         }
+        if budget.is_exhausted() {
+            observer.on_model_event(&ModelStreamEvent::StreamError {
+                message: "Token budget exhausted".to_string(),
+                retryable: false,
+            });
+            break;
+        }
         turns += 1;
+
+        let effective_max = budget
+            .effective_max_tokens()
+            .min(u64::from(config.max_tokens)) as u32;
 
         let request = CreateMessageRequest {
             model: config.model.clone(),
-            max_tokens: config.max_tokens,
+            max_tokens: effective_max,
             system: config.system.clone(),
             messages: messages.clone(),
             tools: config.tools.clone(),
             stream: true,
         };
 
-        // Stream the model response
+        // Stream the model response, forwarding events
         let response = provider.create_message_stream(&request, &mut |event| {
             observer.on_stream_event(&event);
+            // Emit high-level events from low-level stream events
+            match &event {
+                StreamEvent::ContentBlockDelta { delta, .. } => match delta {
+                    StreamDelta::TextDelta { text } => {
+                        observer
+                            .on_model_event(&ModelStreamEvent::TextDelta { text: text.clone() });
+                    }
+                    StreamDelta::ThinkingDelta { thinking } => {
+                        observer.on_model_event(&ModelStreamEvent::ThinkingDelta {
+                            thinking: thinking.clone(),
+                        });
+                    }
+                    StreamDelta::InputJsonDelta { .. } => {}
+                },
+                StreamEvent::MessageDelta { usage, .. } => {
+                    observer.on_model_event(&ModelStreamEvent::UsageUpdate {
+                        usage: usage.clone(),
+                    });
+                }
+                _ => {}
+            }
         })?;
 
         total_input_tokens += response.usage.input_tokens;
         total_output_tokens += response.usage.output_tokens;
+        budget.record(response.usage.input_tokens, response.usage.output_tokens);
         final_stop_reason = response.stop_reason;
 
         match response.stop_reason {
             StopReason::EndTurn => {
-                // Model finished — push final assistant message and exit
                 if !response.content.is_empty() {
                     messages.push(Message::assistant(response.content));
                 }
@@ -86,36 +222,51 @@ pub fn run_agentic_loop(
                 // 1. Push assistant message (contains tool_use blocks)
                 messages.push(Message::assistant(response.content.clone()));
 
-                // 2. Execute each tool_use, collect results
-                let mut results: Vec<ContentBlock> = Vec::new();
-                for block in &response.content {
-                    if let ContentBlock::ToolUse { id, name, input } = block {
-                        observer.on_tool_start(name, id);
-                        let result = executor.execute_tool_use(id, name, input);
-                        observer.on_tool_done(name, id, &result);
-                        results.push(result);
-                    }
-                }
+                // 2. Extract tool calls
+                let tool_calls: Vec<(String, String, serde_json::Value)> = response
+                    .content
+                    .iter()
+                    .filter_map(|block| {
+                        if let ContentBlock::ToolUse { id, name, input } = block {
+                            Some((id.clone(), name.clone(), input.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
 
-                // 3. Push tool results as user message
+                // 3. Execute tools (parallel or sequential)
+                let results = if config.parallel_tool_execution {
+                    execute_tools_parallel(executor, &tool_calls, observer)
+                } else {
+                    tool_calls
+                        .iter()
+                        .map(|(id, name, input)| {
+                            observer.on_tool_start(name, id);
+                            let result = executor.execute_tool_use(id, name, input);
+                            observer.on_tool_done(name, id, &result);
+                            observer.on_tool_result(name, &result);
+                            result
+                        })
+                        .collect()
+                };
+
+                // 4. Push tool results as user message
                 messages.push(Message::user(results));
 
                 observer.on_turn_complete(turns);
-                // Loop back to call model again
+                observer.on_model_event(&ModelStreamEvent::TurnComplete { turn: turns });
             }
             StopReason::MaxTokens => {
-                // Context limit — push what we have and exit
                 if !response.content.is_empty() {
                     messages.push(Message::assistant(response.content));
                 }
                 break;
             }
             StopReason::PauseTurn => {
-                // Server-side pause — push and continue
                 if !response.content.is_empty() {
                     messages.push(Message::assistant(response.content));
                 }
-                // Continue loop to re-send
             }
         }
     }

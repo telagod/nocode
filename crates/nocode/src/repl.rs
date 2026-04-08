@@ -62,6 +62,7 @@ pub fn run_repl(
             max_turns,
             system: system.to_vec(),
             tools: registry.definitions(),
+            parallel_tool_execution: true,
         };
 
         let mut observer = ReplObserver::new();

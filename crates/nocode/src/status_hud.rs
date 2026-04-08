@@ -74,6 +74,48 @@ impl StatusHud {
         self.turn_start = None;
     }
 
+    /// Get session name, if set.
+    #[must_use]
+    pub fn session_name(&self) -> Option<&str> {
+        if self.session_name.is_empty() {
+            None
+        } else {
+            Some(&self.session_name)
+        }
+    }
+
+    /// Get model name.
+    #[must_use]
+    pub fn model_name(&self) -> &str {
+        &self.model_name
+    }
+
+    /// Get cumulative input tokens.
+    #[must_use]
+    pub fn cumulative_input_tokens(&self) -> u64 {
+        self.cumulative_input_tokens
+    }
+
+    /// Get cumulative output tokens.
+    #[must_use]
+    pub fn cumulative_output_tokens(&self) -> u64 {
+        self.cumulative_output_tokens
+    }
+
+    /// Get context window percentage.
+    #[must_use]
+    pub fn context_pct(&self) -> f32 {
+        self.context_window_pct
+    }
+
+    /// Get estimated cost in USD.
+    #[must_use]
+    pub fn estimated_cost(&self) -> f64 {
+        let input_cost = self.cumulative_input_tokens as f64 * 3.0 / 1_000_000.0;
+        let output_cost = self.cumulative_output_tokens as f64 * 15.0 / 1_000_000.0;
+        self.cost_usd + input_cost + output_cost
+    }
+
     /// Milliseconds elapsed since the current turn started, if any.
     #[must_use]
     pub fn elapsed_ms(&self) -> Option<u64> {

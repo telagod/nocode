@@ -1,4 +1,6 @@
 #[allow(dead_code)]
+mod command_registry;
+#[allow(dead_code)]
 mod markdown_render;
 #[allow(dead_code, clippy::collapsible_if)]
 mod markdown_stream;

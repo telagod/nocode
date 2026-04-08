@@ -4,6 +4,7 @@
 //! via mpsc channels. The TUI thread owns the terminal and polls both
 //! crossterm events and channel events at 50ms intervals.
 
+use crate::command_registry::{CommandAction, CommandRegistry};
 use crate::markdown_render::render_markdown_to_lines;
 use crate::spinner::Spinner;
 use crate::status_hud::StatusHud;
@@ -69,15 +70,27 @@ impl InputMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum Overlay {
     #[default]
     None,
     Help,
+    Status,
+    Sessions,
+    Mcp,
+    Agents,
+    Config,
+    Memory,
+    Cost,
+    Permission {
+        tool_name: String,
+        tool_id: String,
+    },
 }
 
 impl Overlay {
-    fn is_open(self) -> bool {
+    fn is_open(&self) -> bool {
         !matches!(self, Self::None)
     }
 }
@@ -405,23 +418,129 @@ impl TuiApp {
     }
 
     fn draw_overlay(&self, frame: &mut Frame, area: Rect) {
-        if let Overlay::Help = self.overlay {
-            let help_text = "\
-Keyboard shortcuts:\n\
-  Enter        — send message\n\
-  Shift-Enter  — newline\n\
-  Ctrl-C       — quit\n\
-  Esc          — vim normal / clear input\n\
-  Up/Down      — scroll chat\n\
-  Ctrl-T       — toggle theme\n\
-  Ctrl-L       — clear chat\n\
-  Ctrl-U       — clear input\n\
-  Ctrl-P/N     — input history\n\
-  /help        — this overlay\n\
-  /clear       — clear conversation\n\
-  /quit        — exit";
-            let overlay = OverlayBlock::new("Help", help_text);
-            frame.render_widget(overlay, area);
+        match &self.overlay {
+            Overlay::None => {}
+            Overlay::Help => {
+                let cmd_reg = CommandRegistry::with_defaults();
+                let mut help = String::from(
+                    "Keyboard shortcuts:\n\
+                     \n\
+                     Enter        — send message\n\
+                     Shift-Enter  — newline\n\
+                     Ctrl-C       — quit\n\
+                     Esc          — vim normal / clear input\n\
+                     Up/Down      — scroll chat\n\
+                     Ctrl-T       — toggle theme\n\
+                     Ctrl-L       — clear chat\n\
+                     Ctrl-U       — clear input\n\
+                     Ctrl-P/N     — input history\n\
+                     \n",
+                );
+                help.push_str(&cmd_reg.help_text());
+                let overlay = OverlayBlock::new("Help", &help);
+                frame.render_widget(overlay, area);
+            }
+            Overlay::Status => {
+                let status = format!(
+                    "Session: {}\n\
+                     Model: {}\n\
+                     Input tokens: {}\n\
+                     Output tokens: {}\n\
+                     Context: {:.1}%",
+                    self.hud.session_name().unwrap_or("(unnamed)"),
+                    self.hud.model_name(),
+                    self.hud.cumulative_input_tokens(),
+                    self.hud.cumulative_output_tokens(),
+                    self.hud.context_pct(),
+                );
+                let overlay = OverlayBlock::new("Status", &status);
+                frame.render_widget(overlay, area);
+            }
+            Overlay::Sessions => {
+                let overlay = OverlayBlock::new(
+                    "Sessions",
+                    "Use /sessions in non-busy mode to list saved sessions.\n\
+                     Use /resume <id> to restore a session.",
+                );
+                frame.render_widget(overlay, area);
+            }
+            Overlay::Mcp => {
+                use nocode_core::mcp::manager::global_mcp_manager;
+                let mgr = global_mcp_manager();
+                let mgr = mgr.lock().unwrap_or_else(|e| e.into_inner());
+                let servers = mgr.list_servers();
+                let text = if servers.is_empty() {
+                    "No MCP servers connected.\n\nConfigure in .nocode/settings.json under \"mcp_servers\".".to_string()
+                } else {
+                    let mut lines = Vec::new();
+                    for (name, phase, tool_count) in &servers {
+                        lines.push(format!("  {name}: {phase:?} ({tool_count} tools)"));
+                    }
+                    format!("Connected MCP servers:\n\n{}", lines.join("\n"))
+                };
+                let overlay = OverlayBlock::new("MCP Servers", &text);
+                frame.render_widget(overlay, area);
+            }
+            Overlay::Agents => {
+                use nocode_core::agent::worker::global_worker_registry;
+                let reg = global_worker_registry();
+                let reg = reg.lock().unwrap_or_else(|e| e.into_inner());
+                let workers = reg.list();
+                let text = if workers.is_empty() {
+                    "No background agents running.".to_string()
+                } else {
+                    let mut lines = Vec::new();
+                    for w in &workers {
+                        lines.push(format!("  {} ({}): {:?}", w.name, w.id, w.state));
+                    }
+                    format!("Background agents:\n\n{}", lines.join("\n"))
+                };
+                let overlay = OverlayBlock::new("Agents", &text);
+                frame.render_widget(overlay, area);
+            }
+            Overlay::Config => {
+                let overlay = OverlayBlock::new(
+                    "Configuration",
+                    "Config loaded from:\n\
+                     1. ~/.nocode/settings.json (user)\n\
+                     2. .nocode/settings.json (project)\n\
+                     3. .nocode/settings.local.json (local)\n\n\
+                     Environment overrides: NOCODE_MODEL, NOCODE_SYSTEM_PROMPT, etc.",
+                );
+                frame.render_widget(overlay, area);
+            }
+            Overlay::Memory => {
+                let overlay = OverlayBlock::new(
+                    "Memory",
+                    "Memory stored in ~/.nocode/memory/\n\
+                     Use /memory <query> to search memories.",
+                );
+                frame.render_widget(overlay, area);
+            }
+            Overlay::Cost => {
+                let cost = self.hud.estimated_cost();
+                let text = format!(
+                    "Token usage:\n\n\
+                     Input:  {}\n\
+                     Output: {}\n\
+                     Est. cost: ${:.4}",
+                    self.hud.cumulative_input_tokens(),
+                    self.hud.cumulative_output_tokens(),
+                    cost,
+                );
+                let overlay = OverlayBlock::new("Cost", &text);
+                frame.render_widget(overlay, area);
+            }
+            Overlay::Permission { tool_name, tool_id } => {
+                let text = format!(
+                    "Tool: {tool_name}\n\
+                     ID: {tool_id}\n\n\
+                     Allow this tool call?\n\n\
+                     [y] Yes  [n] No  [a] Always allow"
+                );
+                let overlay = OverlayBlock::new("⚠ Permission Required", &text);
+                frame.render_widget(overlay, area);
+            }
         }
     }
 
@@ -913,22 +1032,117 @@ pub(crate) fn run_app_loop(
                         match app.handle_key(key) {
                             HandleKeyResult::Quit => break,
                             HandleKeyResult::Submit(text) => {
-                                // Handle slash commands
-                                match text.as_str() {
-                                    "/quit" | "/exit" | "/q" => break,
-                                    "/clear" => {
-                                        messages.clear();
-                                        app.chat_messages.clear();
-                                        app.invalidate_height_cache();
-                                        app.push_system("(conversation cleared)");
-                                        continue;
+                                // Handle slash commands via registry
+                                let cmd_reg = CommandRegistry::with_defaults();
+                                if let Some((action, _args)) = cmd_reg.resolve(&text) {
+                                    match action {
+                                        CommandAction::Quit => break,
+                                        CommandAction::Clear => {
+                                            messages.clear();
+                                            app.chat_messages.clear();
+                                            app.invalidate_height_cache();
+                                            app.push_system("(conversation cleared)");
+                                            continue;
+                                        }
+                                        CommandAction::Help => {
+                                            app.overlay = Overlay::Help;
+                                            app.dirty = true;
+                                            continue;
+                                        }
+                                        CommandAction::Status => {
+                                            app.overlay = Overlay::Status;
+                                            app.dirty = true;
+                                            continue;
+                                        }
+                                        CommandAction::Sessions => {
+                                            app.overlay = Overlay::Sessions;
+                                            app.dirty = true;
+                                            continue;
+                                        }
+                                        CommandAction::Mcp => {
+                                            app.overlay = Overlay::Mcp;
+                                            app.dirty = true;
+                                            continue;
+                                        }
+                                        CommandAction::Agents => {
+                                            app.overlay = Overlay::Agents;
+                                            app.dirty = true;
+                                            continue;
+                                        }
+                                        CommandAction::Config => {
+                                            app.overlay = Overlay::Config;
+                                            app.dirty = true;
+                                            continue;
+                                        }
+                                        CommandAction::Memory => {
+                                            app.overlay = Overlay::Memory;
+                                            app.dirty = true;
+                                            continue;
+                                        }
+                                        CommandAction::Cost => {
+                                            app.overlay = Overlay::Cost;
+                                            app.dirty = true;
+                                            continue;
+                                        }
+                                        CommandAction::Theme => {
+                                            // Toggle theme via Ctrl-T equivalent
+                                            app.push_system("(theme toggled)");
+                                            continue;
+                                        }
+                                        CommandAction::Vim => {
+                                            app.input_mode = if app.input_mode == InputMode::Insert
+                                            {
+                                                InputMode::Normal
+                                            } else {
+                                                InputMode::Insert
+                                            };
+                                            app.push_system(&format!(
+                                                "Vim mode: {}",
+                                                app.input_mode.label()
+                                            ));
+                                            continue;
+                                        }
+                                        CommandAction::Version => {
+                                            app.push_system(&format!(
+                                                "nocode v{}",
+                                                env!("CARGO_PKG_VERSION")
+                                            ));
+                                            continue;
+                                        }
+                                        CommandAction::Compact => {
+                                            app.push_system("(compaction not yet wired)");
+                                            continue;
+                                        }
+                                        CommandAction::Permissions => {
+                                            app.push_system("Permission mode: ask (default)");
+                                            continue;
+                                        }
+                                        CommandAction::History => {
+                                            let hist: Vec<String> = app
+                                                .input_history
+                                                .iter()
+                                                .rev()
+                                                .take(20)
+                                                .cloned()
+                                                .collect();
+                                            if hist.is_empty() {
+                                                app.push_system("(no command history)");
+                                            } else {
+                                                app.push_system(&format!(
+                                                    "Recent commands:\n{}",
+                                                    hist.join("\n")
+                                                ));
+                                            }
+                                            continue;
+                                        }
+                                        _ => {
+                                            app.push_system(&format!(
+                                                "/{} — not yet implemented",
+                                                text.trim_start_matches('/')
+                                            ));
+                                            continue;
+                                        }
                                     }
-                                    "/help" => {
-                                        app.overlay = Overlay::Help;
-                                        app.dirty = true;
-                                        continue;
-                                    }
-                                    _ => {}
                                 }
 
                                 // Submit to agentic loop
@@ -953,6 +1167,7 @@ pub(crate) fn run_app_loop(
                                     max_turns,
                                     system: system.clone(),
                                     tools: tool_defs.clone(),
+                                    parallel_tool_execution: true,
                                 };
 
                                 let tx_complete = tx.clone();

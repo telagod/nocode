@@ -5,6 +5,16 @@ use std::path::{Path, PathBuf};
 
 const SESSION_DIR: &str = ".nocode/sessions";
 
+/// Metadata about a saved session.
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    pub id: String,
+    pub message_count: usize,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub modified_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub first_user_message: Option<String>,
+}
+
 /// Manages transcript persistence for a session.
 pub struct SessionPersistence {
     transcript_path: PathBuf,
@@ -98,6 +108,86 @@ impl SessionPersistence {
     pub fn transcript_path(&self) -> &Path {
         &self.transcript_path
     }
+
+    /// List all sessions with metadata, sorted by most recently modified.
+    pub fn list_sessions_with_info(project_root: &str) -> Vec<SessionInfo> {
+        let dir = Path::new(project_root).join(SESSION_DIR);
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+
+        let mut sessions: Vec<SessionInfo> = entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let id = name.strip_suffix(".jsonl")?.to_string();
+                let meta = e.metadata().ok();
+                let created_at = meta
+                    .as_ref()
+                    .and_then(|m| m.created().ok())
+                    .map(chrono::DateTime::<chrono::Utc>::from);
+                let modified_at = meta
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .map(chrono::DateTime::<chrono::Utc>::from);
+
+                // Count lines and grab first user message without loading all into memory
+                let path = e.path();
+                let file = fs::File::open(&path).ok()?;
+                let reader = io::BufReader::new(file);
+                let mut count = 0usize;
+                let mut first_user: Option<String> = None;
+                for line in reader.lines() {
+                    let Ok(line) = line else { break };
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    count += 1;
+                    if first_user.is_none()
+                        && let Ok(msg) = serde_json::from_str::<Message>(&line)
+                        && msg.role == crate::message::Role::User
+                    {
+                        let text = msg.text_content();
+                        if !text.is_empty() {
+                            let preview = if text.len() > 80 {
+                                format!("{}...", &text[..77])
+                            } else {
+                                text
+                            };
+                            first_user = Some(preview);
+                        }
+                    }
+                }
+
+                Some(SessionInfo {
+                    id,
+                    message_count: count,
+                    created_at,
+                    modified_at,
+                    first_user_message: first_user,
+                })
+            })
+            .collect();
+
+        // Sort by modified_at descending (most recent first)
+        sessions.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+        sessions
+    }
+
+    /// Resume a session by loading its transcript.
+    pub fn resume(project_root: &str, session_id: &str) -> io::Result<(Self, Vec<Message>)> {
+        let dir = Path::new(project_root).join(SESSION_DIR);
+        let path = dir.join(format!("{session_id}.jsonl"));
+        let messages = Self::load_transcript(&path)?;
+        let flushed_count = messages.len();
+        Ok((
+            Self {
+                transcript_path: path,
+                flushed_count,
+            },
+            messages,
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -157,5 +247,50 @@ mod tests {
         assert_eq!(sessions.len(), 2);
         assert!(sessions.contains(&String::from("abc")));
         assert!(sessions.contains(&String::from("def")));
+    }
+
+    #[test]
+    fn list_sessions_with_info_returns_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_str().unwrap();
+        let mut sp = SessionPersistence::new(root, "info-test");
+
+        let messages = vec![
+            Message::user_text("what is rust?"),
+            Message::assistant_text("Rust is a systems programming language."),
+            Message::user_text("thanks"),
+        ];
+        sp.persist_full(&messages);
+
+        let infos = SessionPersistence::list_sessions_with_info(root);
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].id, "info-test");
+        assert_eq!(infos[0].message_count, 3);
+        assert_eq!(
+            infos[0].first_user_message.as_deref(),
+            Some("what is rust?")
+        );
+    }
+
+    #[test]
+    fn resume_loads_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_str().unwrap();
+        let mut sp = SessionPersistence::new(root, "resume-test");
+
+        let messages = vec![Message::user_text("hello"), Message::assistant_text("hi")];
+        sp.persist_full(&messages);
+
+        let (mut resumed, loaded) = SessionPersistence::resume(root, "resume-test").unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].text_content(), "hello");
+
+        // Can continue appending after resume
+        let mut all = loaded;
+        all.push(Message::user_text("more"));
+        resumed.flush_incremental(&all);
+
+        let reloaded = SessionPersistence::load_transcript(resumed.transcript_path()).unwrap();
+        assert_eq!(reloaded.len(), 3);
     }
 }
