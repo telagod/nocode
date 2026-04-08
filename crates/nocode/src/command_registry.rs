@@ -41,6 +41,7 @@ pub enum CommandAction {
     McpAdd,
     McpRemove,
     McpRestart,
+    Insights,
 }
 
 /// A registered slash command.
@@ -293,6 +294,13 @@ impl CommandRegistry {
                 summary: "Restart an MCP server connection",
                 argument_hint: Some("<name>"),
                 action: CommandAction::McpRestart,
+            },
+            CommandEntry {
+                name: "insights",
+                aliases: &[],
+                summary: "Show session insights and statistics",
+                argument_hint: None,
+                action: CommandAction::Insights,
             },
         ];
 

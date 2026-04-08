@@ -183,6 +183,10 @@ pub(crate) fn handle_slash_command(
             cmd_mcp_restart(app, args.as_deref());
             SlashResult::Handled
         }
+        CommandAction::Insights => {
+            cmd_insights(app, messages);
+            SlashResult::Handled
+        }
     }
 }
 
@@ -424,7 +428,7 @@ fn cmd_review(app: &mut TuiApp, args: Option<&str>) {
 
 fn cmd_skills(app: &mut TuiApp) {
     let registry = crate::command_registry::CommandRegistry::with_defaults();
-    let mut lines = vec!["Available skills and commands:".to_string(), String::new()];
+    let mut lines = vec!["Slash commands:".to_string(), String::new()];
     for cmd in registry.all_commands() {
         let mut line = format!("  /{:<16}", cmd.name);
         line.push_str(cmd.summary);
@@ -435,7 +439,23 @@ fn cmd_skills(app: &mut TuiApp) {
         lines.push(line);
     }
     lines.push(String::new());
-    lines.push(format!("Total: {} commands", registry.all_commands().len()));
+
+    // Discovered skill files
+    let skills = nocode_core::tool::skill::list_skills();
+    if !skills.is_empty() {
+        lines.push("User skills:".to_string());
+        lines.push(String::new());
+        for (name, path) in &skills {
+            lines.push(format!("  {name:<20} {}", path.display()));
+        }
+        lines.push(String::new());
+    }
+
+    lines.push(format!(
+        "Total: {} commands, {} skills",
+        registry.all_commands().len(),
+        skills.len()
+    ));
     app.push_system(&lines.join("\n"));
 }
 
@@ -604,4 +624,67 @@ fn cmd_mcp_restart(app: &mut TuiApp, args: Option<&str>) {
         Ok(()) => app.push_system(&format!("MCP server '{name}' restarted")),
         Err(e) => app.push_error(&format!("MCP restart failed: {e}")),
     }
+}
+
+fn cmd_insights(app: &mut TuiApp, messages: &[Message]) {
+    use std::collections::HashMap;
+
+    let total_msgs = messages.len();
+    let user_msgs = messages
+        .iter()
+        .filter(|m| m.role == nocode_core::message::Role::User)
+        .count();
+    let assistant_msgs = total_msgs - user_msgs;
+
+    // Token estimates
+    let mut total_chars: usize = 0;
+    let mut tool_calls: usize = 0;
+    let mut tool_freq: HashMap<String, usize> = HashMap::new();
+
+    for msg in messages {
+        for block in &msg.content {
+            match block {
+                nocode_core::message::ContentBlock::Text { text } => {
+                    total_chars += text.len();
+                }
+                nocode_core::message::ContentBlock::ToolUse { name, .. } => {
+                    tool_calls += 1;
+                    *tool_freq.entry(name.clone()).or_insert(0) += 1;
+                }
+                nocode_core::message::ContentBlock::ToolResult { content, .. } => {
+                    total_chars += content.len();
+                }
+                nocode_core::message::ContentBlock::Thinking { thinking } => {
+                    total_chars += thinking.len();
+                }
+            }
+        }
+    }
+
+    let est_tokens = total_chars / 4;
+
+    // Top 5 tools
+    let mut top_tools: Vec<(String, usize)> = tool_freq.into_iter().collect();
+    top_tools.sort_by(|a, b| b.1.cmp(&a.1));
+    top_tools.truncate(5);
+
+    let mut lines = vec![
+        "Session Insights:".to_string(),
+        String::new(),
+        format!("  Messages:     {total_msgs} ({user_msgs} user, {assistant_msgs} assistant)"),
+        format!("  Est. tokens:  ~{est_tokens}"),
+        format!("  Tool calls:   {tool_calls}"),
+        format!("  Cost:         ${:.4}", app.hud.estimated_cost()),
+        format!("  Context:      {:.1}%", app.hud.context_pct()),
+    ];
+
+    if !top_tools.is_empty() {
+        lines.push(String::new());
+        lines.push("  Top tools:".to_string());
+        for (name, count) in &top_tools {
+            lines.push(format!("    {name:<20} {count}x"));
+        }
+    }
+
+    app.push_system(&lines.join("\n"));
 }

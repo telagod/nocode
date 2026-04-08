@@ -104,7 +104,7 @@
 | /resume, /rewind | ✅ | ✅ /resume | 完成 |
 | /export, /copy | ✅ | ✅ /export | 完成 |
 | /env, /keybindings | ✅ | ✅ 环境变量 + 快捷键列表 | 完成 |
-| /bughunter, /security-review | ✅ | ❌ | — |
+| /bughunter, /security-review | ✅ | ✅ 安全审查 + bug 扫描 | 完成 |
 | /free | ✅ | 🚫 不迁 | 设计决策 |
 | **合计** | **~103** | **~57** | **55%** |
 
@@ -125,7 +125,7 @@
 | 虚拟滚动 | ✅ | ✅ height cache + sticky scroll | 完成 |
 | 代码高亮 | ✅ | ✅ syntect + pulldown-cmark | 完成 |
 | Diff 视图 | ✅ | ✅ unified diff + TUI 着色 | 完成 |
-| 搜索 (GlobalSearch, QuickOpen) | ✅ | ❌ | — |
+| 搜索 (GlobalSearch, QuickOpen) | ✅ | ✅ Ctrl-F 聊天搜索 | 完成 |
 | 主题系统 | ✅ | ✅ dark/light + Ctrl-T toggle | 完成 |
 | Vim 模式 | ✅ | ✅ h/j/k/l/w/b/x/0/$/I/A | 完成 |
 | 输入历史 | ✅ | ✅ | 完成 |
@@ -214,7 +214,7 @@
 | MCP tool execution | ✅ | ✅ call_tool() + mcp: 分发 | 完成 |
 | MCP auth (OAuth) | ✅ 2,465 LOC | ❌ | — |
 | MCP resource listing/reading | ✅ | ✅ list_resources + read_resource | 完成 |
-| MCP server management | ✅ 12 components | ❌ | — |
+| MCP server management | ✅ 12 components | ✅ /mcp-add /mcp-remove /mcp-restart | 完成 |
 | MCP elicitation | ✅ 1,168 LOC | ❌ | — |
 | In-process transport | ✅ | ❌ | — |
 | VS Code MCP | ✅ | ❌ | — |
