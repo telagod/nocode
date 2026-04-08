@@ -1,52 +1,51 @@
 # nocode DESIGN
 
-> Last updated: 2026-04-06 (post v0.2)
+> Last updated: 2026-04-08 (v2 — Claude Code strict alignment)
 
 ## Design Goals
 
-- Rebuild the execution kernel of `redcode` (TS/Bun) in Rust as `nocode`.
-- Ship a free, open, provider-agnostic AI coding assistant — no vendor lock-in.
-- Keep it compilable, testable, observable, and continuously splittable from day one.
-- Use explicit checklists to manage migration scope.
+- Rust reimplementation of Claude Code's execution kernel.
+- 21 tools strict parity with Claude Code sdk-tools.d.ts.
+- Free, open, provider-agnostic AI coding assistant — no vendor lock-in.
+- Compilable, testable, observable from day one.
 
 ## Non-Goals
 
-- Pixel-perfect parity with TS Ink UI.
+- Pixel-perfect parity with Claude Code's Ink/React UI.
 - Embedded proxy / `/free` route.
-- Plugin marketplace, voice, bundled builtins (deferred to post-v1).
-- Cross-machine bridge/daemon production readiness (deferred to v0.3+).
-
-## Why Not a Direct Rewrite
-
-The TS codebase (507K LOC, 1,910 files) has deep coupling between `main.tsx`, Ink renderer, bridge, feature flags, and platform services. A direct port would be dragged down by `/free`, flags, plugins, voice, and other sidelines.
-
-nocode's approach:
-1. Rebuild the kernel first
-2. Add a minimal standalone interaction shell
-3. Decide which `redcode` capabilities to migrate vs. cut
+- Plugin marketplace, voice (deferred).
 
 ## Current Architecture
 
 ```
-nocode (CLI/TUI shell — crates/nocode, ~8,000 LOC)
-  main.rs        — entry point, provider detection, bootstrap config
-  repl.rs        — REPL session, ~40 slash commands, task management
-  tui.rs         — 4-pane TUI (crossterm), async streaming, overlays
-  claudemd.rs    — CLAUDE.md discovery and loading
-  task_panel.rs  — task filtering and rendering
+nocode (CLI/TUI shell — crates/nocode, 15 modules)
+  main.rs           — entry point, 9 run modes, provider detection
+  repl.rs           — REPL session, 23 slash commands, session persistence
+  tui_app.rs        — 4-pane TUI, async streaming, ❯/⎿/∴/✖ visual language
+  tui_theme.rs      — dark/light theme system
+  tui_input.rs      — multi-line input, vim mode
+  tui_permission.rs — permission overlay (y/n/a)
+  tui_widgets.rs    — WelcomeBanner, StatusBar, ChatMessage, InputBox
+  command_registry.rs — 23 slash commands with aliases
+  tool_render.rs    — Claude Code visual tool display
+  markdown_render.rs — Markdown rendering with syntect
 
-nocode-core (library — crates/nocode-core, ~29,600 LOC)
-  provider.rs          — ModelProvider (5 variants), ApiFormat, request/response/streaming
-  provider_transport.rs — HTTP client, SSE parsing, retry/backoff, per-provider auth
-  query_engine/        — conversation lifecycle, tool schema gen, runtime loop
-  query_loop.rs        — turn state machine, budget, stop hooks
-  tool_execution/      — 10 tools + MCP dispatch
-  tool_registry.rs     — registration, PermissionRule engine
-  task_runtime.rs      — shell/agent/dream/daemon supervisor
-  bridge_runtime.rs    — local/remote bridge, permission callbacks
-  mcp_client.rs        — MCP JSON-RPC client over stdio
-  session_persistence.rs — JSONL persistence
-  budget.rs / query_config.rs / query_deps.rs — budget, config, DI
+nocode-core (library — crates/nocode-core, 65+ modules)
+  provider/         — Claude (2024-06-01) / OpenAI / Gemini / Custom / Mock
+  provider/transport.rs — HTTP client, SSE, retry/backoff, status codes
+  query/loop.rs     — agentic loop (stop_reason driven, auto-compaction, recovery)
+  query/budget.rs   — token budget, diminishing returns
+  query/events.rs   — ModelStreamEvent for TUI/REPL
+  tool/             — 21 tools (Claude Code parity) + extra modules
+  tool/executor.rs  — 9-stage pipeline (validate→trust→hooks→permission→sandbox→execute)
+  tool/bash_validation.rs — 6 submodules (read_only, destructive, mode, sed, path, semantics)
+  session/          — JSONL persistence, compaction, fork/branch/resume
+  config/           — 3-tier settings merge (user→project→local) + env overrides
+  prompt/           — system prompt assembly, CLAUDE.md discovery, FNV dedup
+  agent/            — WorkerRegistry, TaskCoordinator, background execution
+  mcp/              — McpClient (JSON-RPC stdio), McpManager (11-phase lifecycle)
+  recovery.rs       — 7 failure scenarios → RecoveryRecipe
+  storage/          — rusqlite + memory CRUD
 ```
 
 ## Provider Architecture (post v0.2)
