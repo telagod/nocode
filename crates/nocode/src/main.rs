@@ -24,10 +24,9 @@ mod tui_theme;
 #[allow(dead_code)]
 mod tui_widgets;
 
-use nocode_core::config::claude_md;
 use nocode_core::config::settings::Settings;
 use nocode_core::message::Message;
-use nocode_core::prompt::system;
+use nocode_core::prompt::assembly::{self, TruncationBudget};
 use nocode_core::provider::Provider;
 use nocode_core::provider::claude::ClaudeProvider;
 use nocode_core::provider::gemini::GeminiProvider;
@@ -62,9 +61,7 @@ fn main() {
     let max_turns = settings.max_turns.unwrap_or(10);
     let max_tokens = settings.max_tokens.unwrap_or(16384);
 
-    let claude_md_contents = claude_md::discover_claude_md(&cwd);
-    let claude_md_prompt = claude_md::format_claude_md_prompt(&claude_md_contents);
-    let system_blocks = system::assemble_system_prompt(&cwd, claude_md_prompt.as_deref(), None);
+    let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
 
     let registry = ToolRegistry::with_defaults(&cwd);
     let provider_box = build_provider(&provider_type, &settings);
@@ -248,7 +245,7 @@ fn run_status(cwd: &str, provider: &ModelProvider, model: &str, settings: &Setti
         println!("  {tier}: {mark}");
     }
     println!();
-    let md_files = claude_md::discover_claude_md(cwd);
+    let md_files = assembly::discover_claude_md(cwd);
     println!("CLAUDE.md files: {}", md_files.len());
     let sessions = nocode_core::session::persistence::SessionPersistence::list_sessions(cwd);
     println!("Saved sessions: {}", sessions.len());

@@ -1034,7 +1034,7 @@ pub(crate) fn run_app_loop(
                             HandleKeyResult::Submit(text) => {
                                 // Handle slash commands via registry
                                 let cmd_reg = CommandRegistry::with_defaults();
-                                if let Some((action, _args)) = cmd_reg.resolve(&text) {
+                                if let Some((action, args)) = cmd_reg.resolve(&text) {
                                     match action {
                                         CommandAction::Quit => break,
                                         CommandAction::Clear => {
@@ -1055,8 +1055,71 @@ pub(crate) fn run_app_loop(
                                             continue;
                                         }
                                         CommandAction::Sessions => {
-                                            app.overlay = Overlay::Sessions;
-                                            app.dirty = true;
+                                            use nocode_core::session::persistence::SessionPersistence;
+                                            let cwd = std::env::current_dir()
+                                                .map(|p| p.to_string_lossy().into_owned())
+                                                .unwrap_or_default();
+                                            let infos =
+                                                SessionPersistence::list_sessions_with_info(&cwd);
+                                            if infos.is_empty() {
+                                                app.push_system("No saved sessions.");
+                                            } else {
+                                                let mut lines = vec!["Saved sessions:".to_string()];
+                                                for info in infos.iter().take(20) {
+                                                    let preview = info
+                                                        .first_user_message
+                                                        .as_deref()
+                                                        .unwrap_or("(empty)");
+                                                    lines.push(format!(
+                                                        "  {} ({} msgs) — {}",
+                                                        info.id, info.message_count, preview
+                                                    ));
+                                                }
+                                                lines.push(String::new());
+                                                lines.push(
+                                                    "Use /resume <id> to restore.".to_string(),
+                                                );
+                                                app.push_system(&lines.join("\n"));
+                                            }
+                                            continue;
+                                        }
+                                        CommandAction::Resume => {
+                                            use nocode_core::session::persistence::SessionPersistence;
+                                            let cwd = std::env::current_dir()
+                                                .map(|p| p.to_string_lossy().into_owned())
+                                                .unwrap_or_default();
+                                            if let Some(session_id) = args {
+                                                match SessionPersistence::resume(&cwd, &session_id)
+                                                {
+                                                    Ok((_persistence, loaded)) => {
+                                                        messages = loaded;
+                                                        app.chat_messages.clear();
+                                                        app.invalidate_height_cache();
+                                                        // Replay messages into TUI
+                                                        for msg in &messages {
+                                                            match msg.role {
+                                                                nocode_core::message::Role::User => {
+                                                                    app.push_user_message(&msg.text_content());
+                                                                }
+                                                                nocode_core::message::Role::Assistant => {
+                                                                    let text = msg.text_content();
+                                                                    if !text.is_empty() {
+                                                                        app.update_streaming_assistant(&text);
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        app.push_system(&format!("Resumed session '{session_id}' ({} messages)", messages.len()));
+                                                    }
+                                                    Err(e) => {
+                                                        app.push_error(&format!(
+                                                            "Failed to resume: {e}"
+                                                        ));
+                                                    }
+                                                }
+                                            } else {
+                                                app.push_system("Usage: /resume <session_id>");
+                                            }
                                             continue;
                                         }
                                         CommandAction::Mcp => {
