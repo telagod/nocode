@@ -163,3 +163,46 @@ impl Tool for ExitWorktreeTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enter_plan_mode_succeeds() {
+        let tool = EnterPlanModeTool;
+        let result = tool.execute(&json!({}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("plan mode"));
+    }
+
+    #[test]
+    fn exit_plan_mode_no_prompts() {
+        let tool = ExitPlanModeTool;
+        let result = tool.execute(&json!({}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("Exited plan mode"));
+    }
+
+    #[test]
+    fn exit_plan_mode_with_allowed_prompts() {
+        let tool = ExitPlanModeTool;
+        let result = tool.execute(&json!({
+            "allowedPrompts": [
+                {"tool": "Bash", "prompt": "run tests"},
+                {"tool": "Bash", "prompt": "install dependencies"}
+            ]
+        }));
+        assert!(!result.is_error);
+        assert!(result.content.contains("Bash: run tests"));
+        assert!(result.content.contains("Bash: install dependencies"));
+    }
+
+    #[test]
+    fn exit_worktree_missing_path() {
+        let tool = ExitWorktreeTool;
+        let result = tool.execute(&json!({}));
+        assert!(result.is_error);
+        assert!(result.content.contains("path"));
+    }
+}

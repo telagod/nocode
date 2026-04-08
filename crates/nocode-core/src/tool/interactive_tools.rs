@@ -49,8 +49,10 @@ impl Tool for AskUserQuestionTool {
         })
     }
     fn execute(&self, input: &Value) -> ToolOutput {
-        // In non-interactive mode, return the questions for the caller to handle
         let questions = &input["questions"];
+        if questions.is_null() || !questions.is_array() {
+            return ToolOutput::error("Missing required parameter: questions");
+        }
         ToolOutput::success(format!(
             "Questions pending user response: {}",
             serde_json::to_string_pretty(questions).unwrap_or_default()
@@ -290,5 +292,67 @@ impl Tool for NotebookEditTool {
             },
             Err(e) => ToolOutput::error(format!("Failed to serialize notebook: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ask_user_question_missing_questions() {
+        let tool = AskUserQuestionTool;
+        let result = tool.execute(&json!({}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn ask_user_question_returns_questions() {
+        let tool = AskUserQuestionTool;
+        let result = tool.execute(&json!({
+            "questions": [{"question": "Which?", "header": "Choice", "options": [
+                {"label": "A", "description": "Option A"},
+                {"label": "B", "description": "Option B"}
+            ]}]
+        }));
+        assert!(!result.is_error);
+        assert!(result.content.contains("Which?"));
+    }
+
+    #[test]
+    fn config_list_returns_model() {
+        let tool = ConfigTool;
+        let result = tool.execute(&json!({"action": "list"}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("model"));
+    }
+
+    #[test]
+    fn config_get_known_key() {
+        let tool = ConfigTool;
+        let result = tool.execute(&json!({"action": "get", "key": "model"}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("model"));
+    }
+
+    #[test]
+    fn config_get_unknown_key() {
+        let tool = ConfigTool;
+        let result = tool.execute(&json!({"action": "get", "key": "nonexistent_xyz"}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn notebook_edit_missing_path() {
+        let tool = NotebookEditTool;
+        let result = tool.execute(&json!({"new_source": "print('hi')"}));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn notebook_edit_missing_source() {
+        let tool = NotebookEditTool;
+        let result = tool.execute(&json!({"notebook_path": "/tmp/test.ipynb"}));
+        assert!(result.is_error);
     }
 }
