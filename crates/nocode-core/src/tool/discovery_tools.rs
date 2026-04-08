@@ -56,3 +56,38 @@ impl Tool for LspTool {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn tool_search_succeeds() {
+        let tool = ToolSearchTool;
+        let result = tool.execute(&json!({"query": "Bash"}));
+        assert!(!result.is_error);
+        assert!(result.content.contains("Bash"));
+    }
+
+    #[test]
+    fn tool_search_missing_query() {
+        let tool = ToolSearchTool;
+        assert!(tool.execute(&json!({})).is_error);
+    }
+
+    #[test]
+    fn lsp_returns_error_no_server() {
+        let tool = LspTool;
+        let result = tool.execute(&json!({"action": "hover", "file_path": "/tmp/test.rs"}));
+        assert!(result.is_error);
+        assert!(result.content.contains("no language server"));
+    }
+
+    #[test]
+    fn lsp_missing_action() {
+        let tool = LspTool;
+        let result = tool.execute(&json!({"file_path": "/tmp/test.rs"}));
+        assert!(result.is_error);
+    }
+}
