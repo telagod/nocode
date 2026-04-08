@@ -12,13 +12,13 @@ struct CronEntry {
     command: String,
 }
 
-struct CronRegistry {
+pub struct CronRegistry {
     entries: HashMap<String, CronEntry>,
     next_id: u64,
 }
 
 impl CronRegistry {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
             next_id: 1,
@@ -26,9 +26,15 @@ impl CronRegistry {
     }
 }
 
+impl Default for CronRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static GLOBAL_CRON: OnceLock<Arc<Mutex<CronRegistry>>> = OnceLock::new();
 
-fn global_cron() -> &'static Arc<Mutex<CronRegistry>> {
+pub fn global_cron_registry() -> &'static Arc<Mutex<CronRegistry>> {
     GLOBAL_CRON.get_or_init(|| Arc::new(Mutex::new(CronRegistry::new())))
 }
 
@@ -54,7 +60,7 @@ impl Tool for CronCreateTool {
         let Some(command) = input["command"].as_str() else {
             return ToolOutput::error("Missing: command");
         };
-        let reg = global_cron();
+        let reg = global_cron_registry();
         let mut guard = reg.lock().unwrap();
         let id = format!("cron-{}", guard.next_id);
         guard.next_id += 1;
@@ -86,7 +92,7 @@ impl Tool for CronDeleteTool {
         let Some(id) = input["id"].as_str() else {
             return ToolOutput::error("Missing: id");
         };
-        let reg = global_cron();
+        let reg = global_cron_registry();
         let mut guard = reg.lock().unwrap();
         match guard.entries.remove(id) {
             Some(_) => ToolOutput::success(format!("Cron {id} deleted")),
@@ -108,7 +114,7 @@ impl Tool for CronListTool {
         json!({"type":"object","properties":{}})
     }
     fn execute(&self, _input: &Value) -> ToolOutput {
-        let reg = global_cron();
+        let reg = global_cron_registry();
         let guard = reg.lock().unwrap();
         let list: Vec<Value> = guard
             .entries

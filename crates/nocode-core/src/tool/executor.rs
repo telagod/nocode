@@ -251,8 +251,8 @@ impl<'a> ToolExecutor<'a> {
 // ToolRunner bridge — connects DI layer to ToolExecutor
 // ---------------------------------------------------------------------------
 
-use crate::query::deps::ToolRunner;
 use crate::provider::types::ToolDefinition;
+use crate::query::deps::ToolRunner;
 
 /// Default production implementation of ToolRunner, backed by ToolExecutor.
 pub struct DefaultToolExecutor<'a> {
@@ -283,9 +283,7 @@ impl ToolRunner for DefaultToolExecutor<'_> {
     }
 
     fn definitions(&self) -> Vec<ToolDefinition> {
-        self.executor
-            .registry
-            .definitions()
+        self.executor.registry.definitions()
     }
 }
 
