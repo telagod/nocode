@@ -126,8 +126,13 @@ impl<'a> ToolExecutor<'a> {
             return ContentBlock::tool_error(id, format!("Bash validation: {e}"));
         }
 
-        // 7. Sandbox enforcement
-        if let Some(ref sandbox) = self.sandbox
+        // 7. Sandbox enforcement (skip if dangerouslyDisableSandbox is set)
+        let sandbox_bypassed = name == "Bash"
+            && input["dangerouslyDisableSandbox"]
+                .as_bool()
+                .unwrap_or(false);
+        if !sandbox_bypassed
+            && let Some(ref sandbox) = self.sandbox
             && sandbox.enabled
             && let Some(violation) = self.check_sandbox(name, input, sandbox)
         {
