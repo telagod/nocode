@@ -2,14 +2,27 @@
 
 use crate::message::Message;
 use chrono::Local;
+use serde::{Deserialize, Serialize};
 
 /// Session state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SessionState {
     Active,
     Suspended,
     Completed,
     Forked,
+}
+
+/// Serializable session metadata (without messages — those live in JSONL).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMeta {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub state: SessionState,
+    pub created_at: String,
+    pub updated_at: String,
+    pub model: String,
+    pub message_count: usize,
 }
 
 /// A session with lifecycle control.
@@ -89,6 +102,59 @@ impl Session {
     pub fn message_count(&self) -> usize {
         self.messages.len()
     }
+
+    /// Convert to serializable metadata (without messages).
+    pub fn to_meta(&self) -> SessionMeta {
+        SessionMeta {
+            id: self.id.clone(),
+            parent_id: self.parent_id.clone(),
+            state: self.state,
+            created_at: self.created_at.clone(),
+            updated_at: self.updated_at.clone(),
+            model: self.model.clone(),
+            message_count: self.messages.len(),
+        }
+    }
+
+    /// Persist session metadata to a JSON file.
+    pub fn persist_meta(&self, project_root: &str) -> Result<(), String> {
+        let dir = format!("{project_root}/.nocode/sessions");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create sessions dir: {e}"))?;
+        let path = format!("{dir}/{}.meta.json", self.id);
+        let json = serde_json::to_string_pretty(&self.to_meta())
+            .map_err(|e| format!("Failed to serialize session meta: {e}"))?;
+        std::fs::write(&path, json).map_err(|e| format!("Failed to write session meta: {e}"))?;
+        Ok(())
+    }
+
+    /// Load session metadata from a JSON file (without messages).
+    pub fn load_meta(project_root: &str, session_id: &str) -> Result<SessionMeta, String> {
+        let path = format!("{project_root}/.nocode/sessions/{session_id}.meta.json");
+        let json = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read session meta: {e}"))?;
+        serde_json::from_str(&json).map_err(|e| format!("Failed to parse session meta: {e}"))
+    }
+
+    /// List all session metadata files in the project.
+    pub fn list_meta(project_root: &str) -> Vec<SessionMeta> {
+        let dir = format!("{project_root}/.nocode/sessions");
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+        let mut metas = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json")
+                && path.to_string_lossy().contains(".meta.")
+                && let Ok(json) = std::fs::read_to_string(&path)
+                && let Ok(meta) = serde_json::from_str::<SessionMeta>(&json)
+            {
+                metas.push(meta);
+            }
+        }
+        metas.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        metas
+    }
 }
 
 #[cfg(test)]
@@ -142,5 +208,52 @@ mod tests {
         assert_eq!(s.message_count(), 0);
         s.push_message(Message::user_text("hello"));
         assert_eq!(s.message_count(), 1);
+    }
+
+    #[test]
+    fn meta_roundtrip() {
+        let dir = std::env::temp_dir().join("nocode_session_meta_test");
+        let _ = std::fs::create_dir_all(dir.join(".nocode/sessions"));
+        let root = dir.to_string_lossy().to_string();
+
+        let mut s = Session::new("meta-test-1", "opus");
+        s.push_message(Message::user_text("hello"));
+        s.suspend();
+        s.persist_meta(&root).unwrap();
+
+        let loaded = Session::load_meta(&root, "meta-test-1").unwrap();
+        assert_eq!(loaded.id, "meta-test-1");
+        assert_eq!(loaded.state, SessionState::Suspended);
+        assert_eq!(loaded.model, "opus");
+        assert_eq!(loaded.message_count, 1);
+        assert!(loaded.parent_id.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_meta_finds_sessions() {
+        let dir = std::env::temp_dir().join("nocode_session_list_test");
+        let _ = std::fs::create_dir_all(dir.join(".nocode/sessions"));
+        let root = dir.to_string_lossy().to_string();
+
+        let s1 = Session::new("list-1", "sonnet");
+        s1.persist_meta(&root).unwrap();
+        let s2 = Session::new("list-2", "opus");
+        s2.persist_meta(&root).unwrap();
+
+        let metas = Session::list_meta(&root);
+        assert_eq!(metas.len(), 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn to_meta_captures_fork_parent() {
+        let parent = Session::new("fork-parent", "sonnet");
+        let child = parent.fork("fork-child");
+        let meta = child.to_meta();
+        assert_eq!(meta.parent_id.as_deref(), Some("fork-parent"));
+        assert_eq!(meta.state, SessionState::Active);
     }
 }
