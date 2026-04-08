@@ -47,6 +47,7 @@ enum TuiEvent {
         content: String,
         is_error: bool,
     },
+    MessagesUpdated(Vec<Message>),
     Complete(Result<LoopResult, String>, ToolRegistry),
 }
 
@@ -896,6 +897,10 @@ impl LoopObserver for ChannelObserver {
             is_error,
         });
     }
+
+    fn on_messages_updated(&mut self, messages: &[Message]) {
+        let _ = self.tx.send(TuiEvent::MessagesUpdated(messages.to_vec()));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -960,6 +965,18 @@ pub(crate) fn run_app_loop(
                         app.push_tool_done(&name, &content, is_error);
                         // Model will be called again — show spinner
                         app.thinking_spinner = Some(Spinner::new("Thinking..."));
+                    }
+                    Ok(TuiEvent::MessagesUpdated(updated_msgs)) => {
+                        // Incremental session persistence
+                        use nocode_core::session::persistence::SessionPersistence;
+                        let cwd = std::env::current_dir()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        let session_id = app.hud.session_id.clone();
+                        if !session_id.is_empty() {
+                            let mut persistence = SessionPersistence::new(&cwd, &session_id);
+                            persistence.flush_incremental(&updated_msgs);
+                        }
                     }
                     Ok(TuiEvent::Complete(result, returned_registry)) => {
                         app.thinking_spinner = None;
