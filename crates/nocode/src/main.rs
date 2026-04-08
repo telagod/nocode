@@ -16,7 +16,13 @@ mod tool_truncate;
 mod tui;
 mod tui_app;
 #[allow(dead_code)]
+mod tui_commands;
+#[allow(dead_code)]
+mod tui_events;
+#[allow(dead_code)]
 mod tui_input;
+#[allow(dead_code)]
+mod tui_overlays;
 #[allow(dead_code)]
 mod tui_permission;
 #[allow(dead_code)]

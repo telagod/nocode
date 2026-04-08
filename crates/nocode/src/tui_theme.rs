@@ -34,6 +34,7 @@ pub struct Theme {
     // Message backgrounds
     pub user_msg_bg: Color,
     pub assistant_msg_bg: Color,
+    pub tool_msg_bg: Color,
     pub error_msg_bg: Color,
 
     // Status bar
@@ -85,6 +86,7 @@ impl Theme {
 
             user_msg_bg: Color::Rgb(20, 30, 20),
             assistant_msg_bg: Color::Reset,
+            tool_msg_bg: Color::Rgb(25, 25, 15),
             error_msg_bg: Color::Rgb(40, 15, 15),
 
             status_bar_bg: Color::Rgb(30, 30, 40),
@@ -131,6 +133,7 @@ impl Theme {
 
             user_msg_bg: Color::Rgb(230, 245, 230),
             assistant_msg_bg: Color::Reset,
+            tool_msg_bg: Color::Rgb(245, 242, 225),
             error_msg_bg: Color::Rgb(255, 230, 230),
 
             status_bar_bg: Color::Rgb(230, 230, 240),

@@ -4,52 +4,32 @@
 //! via mpsc channels. The TUI thread owns the terminal and polls both
 //! crossterm events and channel events at 50ms intervals.
 
-use crate::command_registry::{CommandAction, CommandRegistry};
+use crate::command_registry::CommandRegistry;
 use crate::markdown_render::render_markdown_to_lines;
 use crate::spinner::Spinner;
 use crate::status_hud::StatusHud;
+use crate::tui_commands::{SlashResult, handle_slash_command};
+use crate::tui_events::{ChannelObserver, TuiEvent};
 use crate::tui_widgets::{
-    ChatMessage, ChatMessageKind, HintsBar, InputBox, OverlayBlock, StatusBar, WelcomeBanner,
-    WelcomeBannerInfo,
+    ChatMessage, ChatMessageKind, HintsBar, InputBox, StatusBar, WelcomeBanner, WelcomeBannerInfo,
 };
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use nocode_core::message::{ContentBlock, Message, SystemBlock};
+use nocode_core::message::{Message, SystemBlock};
 use nocode_core::provider::Provider;
-use nocode_core::provider::types::{StreamDelta, StreamEvent};
-use nocode_core::query::r#loop::{self, LoopConfig, LoopObserver, LoopResult};
+use nocode_core::query::r#loop::{self, LoopConfig};
 use nocode_core::tool::ToolRegistry;
 use nocode_core::tool::executor::ToolExecutor;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::widgets::{Block, Borders};
 use std::io;
+use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
 use unicode_width::UnicodeWidthChar;
 
 const LOG_LIMIT: usize = 256;
-
-// ---------------------------------------------------------------------------
-// TUI ↔ agentic loop bridge events
-// ---------------------------------------------------------------------------
-
-use std::sync::Arc;
-
-enum TuiEvent {
-    TextDelta(String),
-    ThinkingDelta(String),
-    ToolStart {
-        name: String,
-    },
-    ToolDone {
-        name: String,
-        content: String,
-        is_error: bool,
-    },
-    MessagesUpdated(Vec<Message>),
-    Complete(Result<LoopResult, String>, ToolRegistry),
-}
 
 // ---------------------------------------------------------------------------
 // Vim input mode
@@ -88,6 +68,7 @@ pub(crate) enum Overlay {
         tool_name: String,
         tool_id: String,
     },
+    Errors(Vec<String>),
 }
 
 impl Overlay {
@@ -101,27 +82,31 @@ impl Overlay {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct TuiApp {
-    chat_messages: Vec<ChatMessage>,
-    input: String,
-    cursor_pos: usize,
-    chat_scroll: u16,
-    overlay: Overlay,
-    thinking_spinner: Option<Spinner>,
-    dirty: bool,
+    pub(crate) chat_messages: Vec<ChatMessage>,
+    pub(crate) input: String,
+    pub(crate) cursor_pos: usize,
+    pub(crate) chat_scroll: u16,
+    pub(crate) overlay: Overlay,
+    pub(crate) thinking_spinner: Option<Spinner>,
+    pub(crate) dirty: bool,
     height_cache: Vec<u16>,
     height_cache_width: u16,
-    sticky_scroll: bool,
-    unseen_count: usize,
-    show_banner: bool,
+    pub(crate) sticky_scroll: bool,
+    pub(crate) unseen_count: usize,
+    pub(crate) show_banner: bool,
     banner_info: WelcomeBannerInfo,
-    streaming_text: String,
-    streaming_thinking: String,
-    input_history: Vec<String>,
-    history_index: Option<usize>,
-    saved_input: String,
-    input_mode: InputMode,
-    vim_pending: Option<char>,
-    hud: StatusHud,
+    pub(crate) streaming_text: String,
+    pub(crate) streaming_thinking: String,
+    pub(crate) input_history: Vec<String>,
+    pub(crate) history_index: Option<usize>,
+    pub(crate) saved_input: String,
+    pub(crate) input_mode: InputMode,
+    pub(crate) vim_pending: Option<char>,
+    pub(crate) hud: StatusHud,
+    pub(crate) error_log: Vec<String>,
+    /// Channel to send permission decisions back to the executor thread.
+    pub(crate) permission_tx:
+        Option<std::sync::mpsc::Sender<nocode_core::tool::permission::PermissionDecision>>,
 }
 
 impl TuiApp {
@@ -148,6 +133,8 @@ impl TuiApp {
             input_mode: InputMode::Insert,
             vim_pending: None,
             hud: StatusHud::new(model, ""),
+            error_log: Vec::new(),
+            permission_tx: None,
         }
     }
 
@@ -185,6 +172,7 @@ impl TuiApp {
     }
 
     pub fn push_error(&mut self, text: &str) {
+        self.error_log.push(text.to_string());
         self.chat_messages
             .push(ChatMessage::plain(ChatMessageKind::Error, text));
         self.on_message_added();
@@ -258,7 +246,7 @@ impl TuiApp {
 
     // -- height cache --
 
-    fn invalidate_height_cache(&mut self) {
+    pub(crate) fn invalidate_height_cache(&mut self) {
         self.height_cache.clear();
         self.height_cache_width = 0;
     }
@@ -379,10 +367,11 @@ impl TuiApp {
         let scroll = self.chat_scroll.min(max_scroll);
         let scroll_from_top = max_scroll.saturating_sub(scroll);
 
+        let theme = crate::tui_theme::default_theme();
+
         let mut accumulated: u16 = 0;
         let mut first_visible_skip: u16 = 0;
-        let mut visible_lines: Vec<ratatui::text::Line<'_>> = Vec::new();
-        let mut rows_collected: u16 = 0;
+        let mut y_offset: u16 = 0;
 
         for (i, msg) in self.chat_messages.iter().enumerate() {
             let h = self.height_cache.get(i).copied().unwrap_or(1);
@@ -393,9 +382,18 @@ impl TuiApp {
                 continue;
             }
 
-            if rows_collected == 0 {
+            if y_offset == 0 && accumulated < scroll_from_top {
                 first_visible_skip = scroll_from_top.saturating_sub(accumulated);
             }
+
+            // Pick background color by message kind
+            let bg = match msg.kind {
+                ChatMessageKind::User => theme.user_msg_bg,
+                ChatMessageKind::Assistant => theme.assistant_msg_bg,
+                ChatMessageKind::Tool => theme.tool_msg_bg,
+                ChatMessageKind::Error => theme.error_msg_bg,
+                _ => ratatui::style::Color::Reset,
+            };
 
             let rlines = msg.to_ratatui_lines();
             for line in rlines {
@@ -403,148 +401,44 @@ impl TuiApp {
                     first_visible_skip -= 1;
                     continue;
                 }
-                visible_lines.push(line);
-                rows_collected += 1;
-                if rows_collected >= visible {
+
+                // Render background fill for this line
+                if bg != ratatui::style::Color::Reset {
+                    let line_rect = Rect {
+                        x: inner.x,
+                        y: inner.y + y_offset,
+                        width: inner.width,
+                        height: 1,
+                    };
+                    let bg_block = Block::default().style(ratatui::style::Style::default().bg(bg));
+                    frame.render_widget(bg_block, line_rect);
+                }
+
+                // Render the text line
+                let line_rect = Rect {
+                    x: inner.x,
+                    y: inner.y + y_offset,
+                    width: inner.width,
+                    height: 1,
+                };
+                let para = ratatui::widgets::Paragraph::new(vec![line]);
+                frame.render_widget(para, line_rect);
+
+                y_offset += 1;
+                if y_offset >= visible {
                     break;
                 }
             }
 
             accumulated = msg_end;
-            if rows_collected >= visible {
+            if y_offset >= visible {
                 break;
             }
         }
-
-        let paragraph = ratatui::widgets::Paragraph::new(visible_lines);
-        frame.render_widget(paragraph, inner);
     }
 
     fn draw_overlay(&self, frame: &mut Frame, area: Rect) {
-        match &self.overlay {
-            Overlay::None => {}
-            Overlay::Help => {
-                let cmd_reg = CommandRegistry::with_defaults();
-                let mut help = String::from(
-                    "Keyboard shortcuts:\n\
-                     \n\
-                     Enter        — send message\n\
-                     Shift-Enter  — newline\n\
-                     Ctrl-C       — quit\n\
-                     Esc          — vim normal / clear input\n\
-                     Up/Down      — scroll chat\n\
-                     Ctrl-T       — toggle theme\n\
-                     Ctrl-L       — clear chat\n\
-                     Ctrl-U       — clear input\n\
-                     Ctrl-P/N     — input history\n\
-                     \n",
-                );
-                help.push_str(&cmd_reg.help_text());
-                let overlay = OverlayBlock::new("Help", &help);
-                frame.render_widget(overlay, area);
-            }
-            Overlay::Status => {
-                let status = format!(
-                    "Session: {}\n\
-                     Model: {}\n\
-                     Input tokens: {}\n\
-                     Output tokens: {}\n\
-                     Context: {:.1}%",
-                    self.hud.session_name().unwrap_or("(unnamed)"),
-                    self.hud.model_name(),
-                    self.hud.cumulative_input_tokens(),
-                    self.hud.cumulative_output_tokens(),
-                    self.hud.context_pct(),
-                );
-                let overlay = OverlayBlock::new("Status", &status);
-                frame.render_widget(overlay, area);
-            }
-            Overlay::Sessions => {
-                let overlay = OverlayBlock::new(
-                    "Sessions",
-                    "Use /sessions in non-busy mode to list saved sessions.\n\
-                     Use /resume <id> to restore a session.",
-                );
-                frame.render_widget(overlay, area);
-            }
-            Overlay::Mcp => {
-                use nocode_core::mcp::manager::global_mcp_manager;
-                let mgr = global_mcp_manager();
-                let mgr = mgr.lock().unwrap_or_else(|e| e.into_inner());
-                let servers = mgr.list_servers();
-                let text = if servers.is_empty() {
-                    "No MCP servers connected.\n\nConfigure in .nocode/settings.json under \"mcp_servers\".".to_string()
-                } else {
-                    let mut lines = Vec::new();
-                    for (name, phase, tool_count) in &servers {
-                        lines.push(format!("  {name}: {phase:?} ({tool_count} tools)"));
-                    }
-                    format!("Connected MCP servers:\n\n{}", lines.join("\n"))
-                };
-                let overlay = OverlayBlock::new("MCP Servers", &text);
-                frame.render_widget(overlay, area);
-            }
-            Overlay::Agents => {
-                use nocode_core::agent::worker::global_worker_registry;
-                let reg = global_worker_registry();
-                let reg = reg.lock().unwrap_or_else(|e| e.into_inner());
-                let workers = reg.list();
-                let text = if workers.is_empty() {
-                    "No background agents running.".to_string()
-                } else {
-                    let mut lines = Vec::new();
-                    for w in &workers {
-                        lines.push(format!("  {} ({}): {:?}", w.name, w.id, w.state));
-                    }
-                    format!("Background agents:\n\n{}", lines.join("\n"))
-                };
-                let overlay = OverlayBlock::new("Agents", &text);
-                frame.render_widget(overlay, area);
-            }
-            Overlay::Config => {
-                let overlay = OverlayBlock::new(
-                    "Configuration",
-                    "Config loaded from:\n\
-                     1. ~/.nocode/settings.json (user)\n\
-                     2. .nocode/settings.json (project)\n\
-                     3. .nocode/settings.local.json (local)\n\n\
-                     Environment overrides: NOCODE_MODEL, NOCODE_SYSTEM_PROMPT, etc.",
-                );
-                frame.render_widget(overlay, area);
-            }
-            Overlay::Memory => {
-                let overlay = OverlayBlock::new(
-                    "Memory",
-                    "Memory stored in ~/.nocode/memory/\n\
-                     Use /memory <query> to search memories.",
-                );
-                frame.render_widget(overlay, area);
-            }
-            Overlay::Cost => {
-                let cost = self.hud.estimated_cost();
-                let text = format!(
-                    "Token usage:\n\n\
-                     Input:  {}\n\
-                     Output: {}\n\
-                     Est. cost: ${:.4}",
-                    self.hud.cumulative_input_tokens(),
-                    self.hud.cumulative_output_tokens(),
-                    cost,
-                );
-                let overlay = OverlayBlock::new("Cost", &text);
-                frame.render_widget(overlay, area);
-            }
-            Overlay::Permission { tool_name, tool_id } => {
-                let text = format!(
-                    "Tool: {tool_name}\n\
-                     ID: {tool_id}\n\n\
-                     Allow this tool call?\n\n\
-                     [y] Yes  [n] No  [a] Always allow"
-                );
-                let overlay = OverlayBlock::new("⚠ Permission Required", &text);
-                frame.render_widget(overlay, area);
-            }
-        }
+        crate::tui_overlays::draw_overlay(&self.overlay, &self.hud, frame, area);
     }
 
     // -- key handling --
@@ -559,8 +453,31 @@ impl TuiApp {
             return HandleKeyResult::Quit;
         }
 
-        // Overlay open — Esc closes it, consume everything else
+        // Overlay open — handle keys
         if self.overlay.is_open() {
+            // Permission overlay: y/n/a to respond
+            if matches!(self.overlay, Overlay::Permission { .. }) {
+                use nocode_core::tool::permission::PermissionDecision;
+                let decision = match key.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => Some(PermissionDecision::Allow),
+                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                        Some(PermissionDecision::Deny)
+                    }
+                    KeyCode::Char('a') | KeyCode::Char('A') => {
+                        Some(PermissionDecision::AlwaysAllow)
+                    }
+                    _ => None,
+                };
+                if let Some(d) = decision {
+                    if let Some(tx) = self.permission_tx.take() {
+                        let _ = tx.send(d);
+                    }
+                    self.overlay = Overlay::None;
+                    self.dirty = true;
+                }
+                return HandleKeyResult::Continue;
+            }
+            // Other overlays: Esc closes
             if key.code == KeyCode::Esc {
                 self.overlay = Overlay::None;
                 self.dirty = true;
@@ -856,54 +773,6 @@ pub(crate) enum HandleKeyResult {
 }
 
 // ---------------------------------------------------------------------------
-// Channel-based LoopObserver for background thread
-// ---------------------------------------------------------------------------
-
-struct ChannelObserver {
-    tx: mpsc::Sender<TuiEvent>,
-}
-
-impl LoopObserver for ChannelObserver {
-    fn on_stream_event(&mut self, event: &StreamEvent) {
-        if let StreamEvent::ContentBlockDelta { delta, .. } = event {
-            match delta {
-                StreamDelta::TextDelta { text } => {
-                    let _ = self.tx.send(TuiEvent::TextDelta(text.clone()));
-                }
-                StreamDelta::ThinkingDelta { thinking } => {
-                    let _ = self.tx.send(TuiEvent::ThinkingDelta(thinking.clone()));
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn on_tool_start(&mut self, name: &str, _id: &str) {
-        let _ = self.tx.send(TuiEvent::ToolStart {
-            name: name.to_string(),
-        });
-    }
-
-    fn on_tool_done(&mut self, name: &str, _id: &str, result: &ContentBlock) {
-        let (content, is_error) = match result {
-            ContentBlock::ToolResult {
-                content, is_error, ..
-            } => (content.clone(), *is_error),
-            _ => (String::new(), false),
-        };
-        let _ = self.tx.send(TuiEvent::ToolDone {
-            name: name.to_string(),
-            content,
-            is_error,
-        });
-    }
-
-    fn on_messages_updated(&mut self, messages: &[Message]) {
-        let _ = self.tx.send(TuiEvent::MessagesUpdated(messages.to_vec()));
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Main event loop
 // ---------------------------------------------------------------------------
 
@@ -968,6 +837,29 @@ pub(crate) fn run_app_loop(
                         app.thinking_spinner = None;
                         app.push_tool_start(&name);
                     }
+                    Ok(TuiEvent::InputJsonDelta { name, partial_json }) => {
+                        // Update last tool message with streaming args
+                        if let Some(last) = app.chat_messages.last_mut()
+                            && last.kind == ChatMessageKind::Tool
+                        {
+                            let preview = if partial_json.len() > 120 {
+                                format!("{}...", &partial_json[..120])
+                            } else {
+                                partial_json
+                            };
+                            let label = if name.is_empty() { "tool" } else { &name };
+                            last.lines = vec![{
+                                let mut rl = crate::markdown_render::RenderedLine::new();
+                                rl.push(crate::markdown_render::LineSegment::new(
+                                    format!("\u{276F} {label} {preview}"),
+                                    crossterm::style::Color::DarkGrey,
+                                ));
+                                rl
+                            }];
+                            app.invalidate_height_cache();
+                            app.dirty = true;
+                        }
+                    }
                     Ok(TuiEvent::ToolDone {
                         name,
                         content,
@@ -976,6 +868,15 @@ pub(crate) fn run_app_loop(
                         app.push_tool_done(&name, &content, is_error);
                         // Model will be called again — show spinner
                         app.thinking_spinner = Some(Spinner::new("Thinking..."));
+                    }
+                    Ok(TuiEvent::PermissionRequest {
+                        tool_name,
+                        tool_id,
+                        response_tx,
+                    }) => {
+                        app.permission_tx = Some(response_tx);
+                        app.overlay = Overlay::Permission { tool_name, tool_id };
+                        app.dirty = true;
                     }
                     Ok(TuiEvent::MessagesUpdated(updated_msgs)) => {
                         // Incremental session persistence
@@ -1065,232 +966,15 @@ pub(crate) fn run_app_loop(
                                 // Handle slash commands via registry
                                 let cmd_reg = CommandRegistry::with_defaults();
                                 if let Some((action, args)) = cmd_reg.resolve(&text) {
-                                    match action {
-                                        CommandAction::Quit => break,
-                                        CommandAction::Clear => {
-                                            messages.clear();
-                                            app.chat_messages.clear();
-                                            app.invalidate_height_cache();
-                                            app.push_system("(conversation cleared)");
-                                            continue;
-                                        }
-                                        CommandAction::Help => {
-                                            app.overlay = Overlay::Help;
-                                            app.dirty = true;
-                                            continue;
-                                        }
-                                        CommandAction::Status => {
-                                            app.overlay = Overlay::Status;
-                                            app.dirty = true;
-                                            continue;
-                                        }
-                                        CommandAction::Sessions => {
-                                            use nocode_core::session::persistence::SessionPersistence;
-                                            let cwd = std::env::current_dir()
-                                                .map(|p| p.to_string_lossy().into_owned())
-                                                .unwrap_or_default();
-                                            let infos =
-                                                SessionPersistence::list_sessions_with_info(&cwd);
-                                            if infos.is_empty() {
-                                                app.push_system("No saved sessions.");
-                                            } else {
-                                                let mut lines = vec!["Saved sessions:".to_string()];
-                                                for info in infos.iter().take(20) {
-                                                    let preview = info
-                                                        .first_user_message
-                                                        .as_deref()
-                                                        .unwrap_or("(empty)");
-                                                    lines.push(format!(
-                                                        "  {} ({} msgs) — {}",
-                                                        info.id, info.message_count, preview
-                                                    ));
-                                                }
-                                                lines.push(String::new());
-                                                lines.push(
-                                                    "Use /resume <id> to restore.".to_string(),
-                                                );
-                                                app.push_system(&lines.join("\n"));
-                                            }
-                                            continue;
-                                        }
-                                        CommandAction::Resume => {
-                                            use nocode_core::session::persistence::SessionPersistence;
-                                            let cwd = std::env::current_dir()
-                                                .map(|p| p.to_string_lossy().into_owned())
-                                                .unwrap_or_default();
-                                            if let Some(session_id) = args {
-                                                match SessionPersistence::resume(&cwd, &session_id)
-                                                {
-                                                    Ok((_persistence, loaded)) => {
-                                                        messages = loaded;
-                                                        app.chat_messages.clear();
-                                                        app.invalidate_height_cache();
-                                                        // Replay messages into TUI
-                                                        for msg in &messages {
-                                                            match msg.role {
-                                                                nocode_core::message::Role::User => {
-                                                                    app.push_user_message(&msg.text_content());
-                                                                }
-                                                                nocode_core::message::Role::Assistant => {
-                                                                    let text = msg.text_content();
-                                                                    if !text.is_empty() {
-                                                                        app.update_streaming_assistant(&text);
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                        app.push_system(&format!("Resumed session '{session_id}' ({} messages)", messages.len()));
-                                                    }
-                                                    Err(e) => {
-                                                        app.push_error(&format!(
-                                                            "Failed to resume: {e}"
-                                                        ));
-                                                    }
-                                                }
-                                            } else {
-                                                app.push_system("Usage: /resume <session_id>");
-                                            }
-                                            continue;
-                                        }
-                                        CommandAction::Mcp => {
-                                            app.overlay = Overlay::Mcp;
-                                            app.dirty = true;
-                                            continue;
-                                        }
-                                        CommandAction::Agents => {
-                                            app.overlay = Overlay::Agents;
-                                            app.dirty = true;
-                                            continue;
-                                        }
-                                        CommandAction::Config => {
-                                            app.overlay = Overlay::Config;
-                                            app.dirty = true;
-                                            continue;
-                                        }
-                                        CommandAction::Memory => {
-                                            app.overlay = Overlay::Memory;
-                                            app.dirty = true;
-                                            continue;
-                                        }
-                                        CommandAction::Cost => {
-                                            app.overlay = Overlay::Cost;
-                                            app.dirty = true;
-                                            continue;
-                                        }
-                                        CommandAction::Theme => {
-                                            let variant = crate::tui_theme::toggle_theme();
-                                            app.push_system(&format!("Theme: {variant:?}"));
-                                            app.invalidate_height_cache();
-                                            continue;
-                                        }
-                                        CommandAction::Vim => {
-                                            app.input_mode = if app.input_mode == InputMode::Insert
-                                            {
-                                                InputMode::Normal
-                                            } else {
-                                                InputMode::Insert
-                                            };
-                                            app.push_system(&format!(
-                                                "Vim mode: {}",
-                                                app.input_mode.label()
-                                            ));
-                                            continue;
-                                        }
-                                        CommandAction::Version => {
-                                            app.push_system(&format!(
-                                                "nocode v{}",
-                                                env!("CARGO_PKG_VERSION")
-                                            ));
-                                            continue;
-                                        }
-                                        CommandAction::Compact => {
-                                            use nocode_core::session::compaction::{
-                                                Compactor, TailCompactor,
-                                            };
-                                            let compactor = TailCompactor::new(10);
-                                            let result = compactor.compact(&messages);
-                                            if result.compacted_count > 0 {
-                                                messages = result.messages;
-                                                app.push_system(&format!(
-                                                    "Compacted {} messages, ~{} tokens saved",
-                                                    result.compacted_count, result.tokens_saved
-                                                ));
-                                            } else {
-                                                app.push_system(
-                                                    "Nothing to compact (conversation too short)",
-                                                );
-                                            }
-                                            continue;
-                                        }
-                                        CommandAction::Permissions => {
-                                            app.push_system("Permission mode: ask (default)");
-                                            continue;
-                                        }
-                                        CommandAction::History => {
-                                            let hist: Vec<String> = app
-                                                .input_history
-                                                .iter()
-                                                .rev()
-                                                .take(20)
-                                                .cloned()
-                                                .collect();
-                                            if hist.is_empty() {
-                                                app.push_system("(no command history)");
-                                            } else {
-                                                app.push_system(&format!(
-                                                    "Recent commands:\n{}",
-                                                    hist.join("\n")
-                                                ));
-                                            }
-                                            continue;
-                                        }
-                                        CommandAction::Model => {
-                                            if let Some(new_model) = args {
-                                                app.hud.model_name = new_model.clone();
-                                                app.push_system(&format!(
-                                                    "Model switched to: {new_model}"
-                                                ));
-                                            } else {
-                                                app.push_system(&format!(
-                                                    "Current model: {}",
-                                                    app.hud.model_name()
-                                                ));
-                                            }
-                                            continue;
-                                        }
-                                        CommandAction::Export => {
-                                            tui_cmd_export(args.as_deref(), &messages, &mut app);
-                                            continue;
-                                        }
-                                        CommandAction::Bug => {
-                                            app.push_system(&format!(
-                                                "Report bugs at: https://github.com/anthropics/nocode/issues/new\n\
-                                                 Version: nocode v{}\n\
-                                                 OS: {} ({})",
-                                                env!("CARGO_PKG_VERSION"),
-                                                std::env::consts::OS,
-                                                std::env::consts::ARCH,
-                                            ));
-                                            continue;
-                                        }
-                                        CommandAction::Doctor => {
-                                            tui_cmd_doctor(&mut app, model);
-                                            continue;
-                                        }
-                                        CommandAction::Init => {
-                                            tui_cmd_init(&mut app);
-                                            continue;
-                                        }
-                                        CommandAction::Login => {
-                                            app.push_system(
-                                                "Configure API keys via environment variables:\n\n\
-                                                 \x20 export ANTHROPIC_API_KEY=sk-ant-...\n\
-                                                 \x20 export OPENAI_API_KEY=sk-...\n\
-                                                 \x20 export GEMINI_API_KEY=AI...\n\n\
-                                                 Or add to ~/.nocode/settings.json",
-                                            );
-                                            continue;
-                                        }
+                                    match handle_slash_command(
+                                        action,
+                                        args,
+                                        &mut app,
+                                        &mut messages,
+                                        model,
+                                    ) {
+                                        SlashResult::Quit => break,
+                                        SlashResult::Handled => continue,
                                     }
                                 }
 
@@ -1320,8 +1004,12 @@ pub(crate) fn run_app_loop(
                                 };
 
                                 let tx_complete = tx.clone();
+                                let tx_perm = tx.clone();
                                 std::thread::spawn(move || {
-                                    let executor = ToolExecutor::new(&r);
+                                    let perm_bridge =
+                                        crate::tui_events::TuiEventPermissionBridge::new(tx_perm);
+                                    let executor =
+                                        ToolExecutor::new(&r).with_prompter(&perm_bridge);
                                     let mut observer = ChannelObserver { tx };
                                     let result = r#loop::run_agentic_loop(
                                         p.as_ref(),
@@ -1405,116 +1093,4 @@ fn prev_word_boundary(s: &str, pos: usize) -> usize {
         p -= 1;
     }
     p
-}
-
-// ---------------------------------------------------------------------------
-// TUI slash command helpers
-// ---------------------------------------------------------------------------
-
-fn tui_cmd_export(path: Option<&str>, messages: &[Message], app: &mut TuiApp) {
-    if messages.is_empty() {
-        app.push_system("Nothing to export — conversation is empty.");
-        return;
-    }
-    let out_path = path.unwrap_or("conversation.md");
-    let mut content = String::new();
-    for msg in messages {
-        let role = match msg.role {
-            nocode_core::message::Role::User => "## User",
-            nocode_core::message::Role::Assistant => "## Assistant",
-        };
-        content.push_str(role);
-        content.push_str("\n\n");
-        content.push_str(&msg.text_content());
-        content.push_str("\n\n");
-    }
-    match std::fs::write(out_path, &content) {
-        Ok(()) => app.push_system(&format!(
-            "Exported {} messages to {out_path}",
-            messages.len()
-        )),
-        Err(e) => app.push_error(&format!("Export failed: {e}")),
-    }
-}
-
-fn tui_cmd_doctor(app: &mut TuiApp, model: &str) {
-    let mut lines = Vec::new();
-    lines.push(format!("nocode v{}", env!("CARGO_PKG_VERSION")));
-    lines.push(format!(
-        "OS: {} ({})",
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    ));
-    lines.push(format!("Model: {model}"));
-    lines.push(String::new());
-
-    let keys = [
-        ("ANTHROPIC_API_KEY", "Claude"),
-        ("OPENAI_API_KEY", "OpenAI"),
-        ("GEMINI_API_KEY", "Gemini"),
-    ];
-    lines.push("API keys:".to_string());
-    for (var, name) in &keys {
-        let status = if std::env::var(var).is_ok() {
-            "set"
-        } else {
-            "not set"
-        };
-        lines.push(format!("  {name}: {status}"));
-    }
-    lines.push(String::new());
-
-    let cwd = std::env::current_dir()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let home = std::env::var("HOME").unwrap_or_default();
-    let paths = [
-        (format!("{home}/.nocode/settings.json"), "User"),
-        (format!("{cwd}/.nocode/settings.json"), "Project"),
-        (format!("{cwd}/.nocode/settings.local.json"), "Local"),
-    ];
-    lines.push("Settings:".to_string());
-    for (path, tier) in &paths {
-        let mark = if std::path::Path::new(path).exists() {
-            "found"
-        } else {
-            "not found"
-        };
-        lines.push(format!("  {tier}: {mark}"));
-    }
-    lines.push(String::new());
-
-    let md_files = nocode_core::prompt::assembly::discover_claude_md(&cwd);
-    lines.push(format!("CLAUDE.md files: {}", md_files.len()));
-    let sessions = nocode_core::session::persistence::SessionPersistence::list_sessions(&cwd);
-    lines.push(format!("Saved sessions: {}", sessions.len()));
-    lines.push(String::new());
-    lines.push("All checks passed.".to_string());
-
-    app.push_system(&lines.join("\n"));
-}
-
-fn tui_cmd_init(app: &mut TuiApp) {
-    let cwd = std::env::current_dir()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let claude_md_path = format!("{cwd}/CLAUDE.md");
-    if std::path::Path::new(&claude_md_path).exists() {
-        app.push_system(&format!("CLAUDE.md already exists at {claude_md_path}"));
-        return;
-    }
-    let template = "# CLAUDE.md\n\n\
-        This file provides guidance to AI coding assistants working with this codebase.\n\n\
-        ## Project Overview\n\n\
-        <!-- Describe your project here -->\n\n\
-        ## Build & Test\n\n\
-        ```bash\n\
-        # Add your build/test commands here\n\
-        ```\n\n\
-        ## Key Conventions\n\n\
-        <!-- Add coding conventions, architecture notes, etc. -->\n";
-    match std::fs::write(&claude_md_path, template) {
-        Ok(()) => app.push_system(&format!("Created {claude_md_path}")),
-        Err(e) => app.push_error(&format!("Failed to create CLAUDE.md: {e}")),
-    }
 }
