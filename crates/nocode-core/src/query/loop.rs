@@ -5,6 +5,7 @@ use crate::provider::types::{
 };
 use crate::query::budget::TokenBudget;
 use crate::query::events::ModelStreamEvent;
+use crate::recovery::{self, RecoveryAction, RecoveryRecipe};
 use crate::session::compaction::{Compactor, TailCompactor};
 use crate::tool::executor::ToolExecutor;
 use std::sync::mpsc;
@@ -203,10 +204,9 @@ pub fn run_agentic_loop_with_budget(
             stream: true,
         };
 
-        // Stream the model response, forwarding events
-        let response = provider.create_message_stream(&request, &mut |event| {
+        // Stream the model response, forwarding events — with recovery
+        let stream_result = provider.create_message_stream(&request, &mut |event| {
             observer.on_stream_event(&event);
-            // Emit high-level events from low-level stream events
             match &event {
                 StreamEvent::ContentBlockDelta { delta, .. } => match delta {
                     StreamDelta::TextDelta { text } => {
@@ -227,7 +227,68 @@ pub fn run_agentic_loop_with_budget(
                 }
                 _ => {}
             }
-        })?;
+        });
+
+        let response = match stream_result {
+            Ok(r) => r,
+            Err(e) => {
+                let scenario = recovery::classify_error(e.status_code, &e.message);
+                let recipe = RecoveryRecipe::for_scenario(scenario);
+
+                let mut recovered = false;
+                for action in &recipe.actions {
+                    match action {
+                        RecoveryAction::Retry { delay_ms } => {
+                            observer.on_model_event(&ModelStreamEvent::StreamError {
+                                message: format!("Retrying after {delay_ms}ms: {}", e.message),
+                                retryable: true,
+                            });
+                            std::thread::sleep(std::time::Duration::from_millis(*delay_ms));
+                            recovered = true;
+                            break;
+                        }
+                        RecoveryAction::RetryWithBackoff { base_ms, .. } => {
+                            let delay = base_ms * 2u64.pow(turns.min(4));
+                            observer.on_model_event(&ModelStreamEvent::StreamError {
+                                message: format!("Backoff {delay}ms: {}", e.message),
+                                retryable: true,
+                            });
+                            std::thread::sleep(std::time::Duration::from_millis(delay));
+                            recovered = true;
+                            break;
+                        }
+                        RecoveryAction::CompactAndRetry => {
+                            let compactor = TailCompactor::new(10);
+                            let result = compactor.compact(&messages);
+                            if result.compacted_count > 0 {
+                                messages = result.messages;
+                                observer.on_model_event(&ModelStreamEvent::StreamError {
+                                    message: format!(
+                                        "Compacted {} messages, retrying",
+                                        result.compacted_count
+                                    ),
+                                    retryable: true,
+                                });
+                                recovered = true;
+                                break;
+                            }
+                        }
+                        RecoveryAction::Abort { reason } => {
+                            return Err(ProviderError::non_retryable(format!(
+                                "{reason}: {}",
+                                e.message
+                            )));
+                        }
+                        _ => {}
+                    }
+                }
+
+                if recovered {
+                    continue; // retry the loop iteration
+                }
+                return Err(e);
+            }
+        };
 
         total_input_tokens += response.usage.input_tokens;
         total_output_tokens += response.usage.output_tokens;

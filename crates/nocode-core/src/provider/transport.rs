@@ -55,17 +55,23 @@ impl HttpTransport {
         if status.is_success() {
             Ok(text)
         } else if status.as_u16() == 429 {
-            Err(ProviderError::retryable(format!(
-                "Rate limited (429): {text}"
-            )))
+            Err(ProviderError::with_status(
+                format!("Rate limited (429): {text}"),
+                true,
+                429,
+            ))
         } else if status.is_server_error() {
-            Err(ProviderError::retryable(format!(
-                "Server error ({status}): {text}"
-            )))
+            Err(ProviderError::with_status(
+                format!("Server error ({status}): {text}"),
+                true,
+                status.as_u16(),
+            ))
         } else {
-            Err(ProviderError::non_retryable(format!(
-                "API error ({status}): {text}"
-            )))
+            Err(ProviderError::with_status(
+                format!("API error ({status}): {text}"),
+                false,
+                status.as_u16(),
+            ))
         }
     }
 
@@ -95,9 +101,17 @@ impl HttpTransport {
         if !status.is_success() {
             let text = resp.text().unwrap_or_default();
             return Err(if status.as_u16() == 429 || status.is_server_error() {
-                ProviderError::retryable(format!("API error ({status}): {text}"))
+                ProviderError::with_status(
+                    format!("API error ({status}): {text}"),
+                    true,
+                    status.as_u16(),
+                )
             } else {
-                ProviderError::non_retryable(format!("API error ({status}): {text}"))
+                ProviderError::with_status(
+                    format!("API error ({status}): {text}"),
+                    false,
+                    status.as_u16(),
+                )
             });
         }
 

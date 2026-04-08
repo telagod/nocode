@@ -147,6 +147,7 @@ pub enum StreamDelta {
 pub struct ProviderError {
     pub message: String,
     pub retryable: bool,
+    pub status_code: Option<u16>,
 }
 
 impl ProviderError {
@@ -154,6 +155,15 @@ impl ProviderError {
         Self {
             message: message.into(),
             retryable,
+            status_code: None,
+        }
+    }
+
+    pub fn with_status(message: impl Into<String>, retryable: bool, status: u16) -> Self {
+        Self {
+            message: message.into(),
+            retryable,
+            status_code: Some(status),
         }
     }
 
