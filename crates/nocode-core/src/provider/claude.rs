@@ -1,11 +1,10 @@
 use crate::message::ContentBlock;
 use crate::provider::Provider;
-use crate::provider::transport::{HttpTransport, with_retry};
+use crate::provider::transport::{HttpTransport, SseReader, with_retry};
 use crate::provider::types::{
     CreateMessageRequest, CreateMessageResponse, ProviderError, StopReason, StreamDelta,
     StreamEvent, Usage,
 };
-use std::io::BufRead;
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2024-06-01";
@@ -66,11 +65,12 @@ impl Provider for ClaudeProvider {
 
 /// Parse an SSE stream from the Claude Messages API into events,
 /// accumulating the final `CreateMessageResponse`.
+/// Uses `SseReader` for unified SSE parsing with stall detection.
 pub(crate) fn parse_sse_stream(
     reader: impl std::io::Read,
     on_event: &mut dyn FnMut(StreamEvent),
 ) -> Result<CreateMessageResponse, ProviderError> {
-    let buf = std::io::BufReader::new(reader);
+    let mut sse = SseReader::new(reader);
 
     let mut response_id = String::new();
     let mut model = String::new();
@@ -82,27 +82,13 @@ pub(crate) fn parse_sse_stream(
     let mut tool_input_bufs: std::collections::HashMap<u32, String> =
         std::collections::HashMap::new();
 
-    let mut event_type = String::new();
-
-    for line in buf.lines() {
-        let line = line.map_err(|e| ProviderError::retryable(format!("Stream read error: {e}")))?;
-
-        if line.starts_with("event: ") {
-            event_type = line.strip_prefix("event: ").unwrap_or("").to_string();
-            continue;
-        }
-
-        if !line.starts_with("data: ") {
-            continue;
-        }
-
-        let data = &line[6..];
-        let json: serde_json::Value = match serde_json::from_str(data) {
+    while let Some(frame) = sse.next_frame()? {
+        let json: serde_json::Value = match serde_json::from_str(&frame.data) {
             Ok(v) => v,
             Err(_) => continue,
         };
 
-        match event_type.as_str() {
+        match frame.event_type.as_str() {
             "message_start" => {
                 if let Some(msg) = json.get("message") {
                     response_id = msg["id"].as_str().unwrap_or_default().to_string();
@@ -133,7 +119,6 @@ pub(crate) fn parse_sse_stream(
                     _ => continue,
                 };
 
-                // Ensure content_blocks vec is large enough
                 while content_blocks.len() <= index as usize {
                     content_blocks.push(ContentBlock::text(""));
                 }
@@ -152,7 +137,6 @@ pub(crate) fn parse_sse_stream(
                 let stream_delta = match delta_type {
                     "text_delta" => {
                         let text = delta["text"].as_str().unwrap_or("").to_string();
-                        // Accumulate text
                         if let Some(ContentBlock::Text { text: t }) =
                             content_blocks.get_mut(index as usize)
                         {
@@ -162,7 +146,6 @@ pub(crate) fn parse_sse_stream(
                     }
                     "input_json_delta" => {
                         let partial = delta["partial_json"].as_str().unwrap_or("").to_string();
-                        // Accumulate tool input JSON
                         if let Some(buf) = tool_input_bufs.get_mut(&index) {
                             buf.push_str(&partial);
                         }
@@ -190,7 +173,6 @@ pub(crate) fn parse_sse_stream(
             "content_block_stop" => {
                 let index = json["index"].as_u64().unwrap_or(0) as u32;
 
-                // Finalize tool_use input from accumulated JSON
                 if let Some(json_buf) = tool_input_bufs.remove(&index)
                     && let Some(ContentBlock::ToolUse { input, .. }) =
                         content_blocks.get_mut(index as usize)

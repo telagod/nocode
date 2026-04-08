@@ -5,10 +5,16 @@
 //! - GET /v1/sessions — list sessions
 //! - POST /v1/sessions/:id/resume — resume a session
 
+use crate::message::SystemBlock;
+use crate::provider::Provider;
+use crate::query::r#loop::{self, LoopConfig, NoopObserver};
 use crate::session::control::Session;
 use crate::session::registry::global_session_registry;
+use crate::tool::ToolRegistry;
+use crate::tool::executor::ToolExecutor;
 use std::io::{BufRead, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
 
 /// Bridge service configuration.
 pub struct BridgeConfig {
@@ -29,6 +35,16 @@ impl Default for BridgeConfig {
             connection_timeout_secs: 90,
         }
     }
+}
+
+/// Runtime context for bridge query execution.
+pub struct BridgeRuntime {
+    pub provider: Arc<dyn Provider>,
+    pub registry: ToolRegistry,
+    pub system: Vec<SystemBlock>,
+    pub model: String,
+    pub max_tokens: u32,
+    pub max_turns: u32,
 }
 
 /// Tracks a connected client session.
@@ -248,6 +264,7 @@ fn handle_request(
     config: &BridgeConfig,
     project_root: &str,
     connections: &mut ConnectionRegistry,
+    runtime: Option<&BridgeRuntime>,
 ) {
     if !check_auth(req, &config.auth_token) {
         send_error(stream, 401, "Unauthorized");
@@ -258,7 +275,7 @@ fn handle_request(
     connections.sweep_timeouts(config.connection_timeout_secs);
 
     match (req.method.as_str(), req.path.as_str()) {
-        ("POST", "/v1/query") => handle_query(stream, req, project_root),
+        ("POST", "/v1/query") => handle_query(stream, req, runtime),
         ("GET", "/v1/sessions") => handle_list_sessions(stream, project_root),
         ("GET", "/v1/health") => {
             let body = serde_json::json!({
@@ -310,8 +327,8 @@ fn handle_request(
     }
 }
 
-/// POST /v1/query — execute a single-turn query.
-fn handle_query(stream: &mut TcpStream, req: &HttpRequest, _project_root: &str) {
+/// POST /v1/query — execute a single-turn query via agentic loop.
+fn handle_query(stream: &mut TcpStream, req: &HttpRequest, runtime: Option<&BridgeRuntime>) {
     let body: serde_json::Value = match serde_json::from_str(&req.body) {
         Ok(v) => v,
         Err(e) => {
@@ -326,14 +343,70 @@ fn handle_query(stream: &mut TcpStream, req: &HttpRequest, _project_root: &str) 
         return;
     }
 
-    // Return acknowledgment — actual execution requires provider wiring
-    let response = serde_json::json!({
-        "status": "received",
-        "prompt": prompt,
-        "model": body["model"].as_str().unwrap_or("default"),
-        "message": "Query received. Bridge execution requires provider configuration."
-    });
-    send_ok(stream, &response.to_string());
+    let Some(rt) = runtime else {
+        // No runtime configured — return acknowledgment only
+        let response = serde_json::json!({
+            "status": "received",
+            "prompt": prompt,
+            "message": "No provider configured. Bridge running in stub mode."
+        });
+        send_ok(stream, &response.to_string());
+        return;
+    };
+
+    let model_override = body["model"].as_str().unwrap_or(&rt.model);
+    let messages = vec![crate::message::Message::user_text(prompt)];
+    let tool_defs = rt.registry.definitions();
+
+    let cfg = LoopConfig {
+        model: model_override.to_string(),
+        max_tokens: rt.max_tokens,
+        max_turns: rt.max_turns,
+        system: rt.system.clone(),
+        tools: tool_defs,
+        parallel_tool_execution: true,
+    };
+
+    let executor = ToolExecutor::new(&rt.registry);
+    let mut observer = NoopObserver;
+
+    match r#loop::run_agentic_loop(
+        rt.provider.as_ref(),
+        &executor,
+        &cfg,
+        messages,
+        &mut observer,
+    ) {
+        Ok(result) => {
+            let text: String = result
+                .messages
+                .iter()
+                .filter(|m| m.role == crate::message::Role::Assistant)
+                .flat_map(|m| &m.content)
+                .filter_map(|b| {
+                    if let crate::message::ContentBlock::Text { text } = b {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("");
+
+            let response = serde_json::json!({
+                "text": text,
+                "model": model_override,
+                "input_tokens": result.total_input_tokens,
+                "output_tokens": result.total_output_tokens,
+                "turns": result.turns,
+                "stop_reason": format!("{:?}", result.stop_reason),
+            });
+            send_ok(stream, &response.to_string());
+        }
+        Err(e) => {
+            send_error(stream, 500, &format!("Query execution failed: {e}"));
+        }
+    }
 }
 
 /// GET /v1/sessions — list all sessions.
@@ -389,7 +462,11 @@ fn handle_get_session(stream: &mut TcpStream, id: &str, project_root: &str) {
 }
 
 /// Start the bridge HTTP server. Blocks until shutdown.
-pub fn run_bridge_server(config: BridgeConfig, project_root: &str) -> Result<(), String> {
+pub fn run_bridge_server(
+    config: BridgeConfig,
+    project_root: &str,
+    runtime: Option<BridgeRuntime>,
+) -> Result<(), String> {
     let listener = TcpListener::bind(&config.bind_addr)
         .map_err(|e| format!("Failed to bind {}: {e}", config.bind_addr))?;
 
@@ -407,7 +484,14 @@ pub fn run_bridge_server(config: BridgeConfig, project_root: &str) -> Result<(),
         };
 
         if let Some(req) = parse_request(&mut stream) {
-            handle_request(&mut stream, &req, &config, project_root, &mut connections);
+            handle_request(
+                &mut stream,
+                &req,
+                &config,
+                project_root,
+                &mut connections,
+                runtime.as_ref(),
+            );
         } else {
             send_error(&mut stream, 400, "Malformed request");
         }
@@ -430,7 +514,7 @@ mod tests {
             for mut stream in listener.incoming().take(max_conns).flatten() {
                 let config = BridgeConfig::default();
                 if let Some(req) = parse_request(&mut stream) {
-                    handle_request(&mut stream, &req, &config, "/tmp", &mut connections);
+                    handle_request(&mut stream, &req, &config, "/tmp", &mut connections, None);
                 }
             }
         });
