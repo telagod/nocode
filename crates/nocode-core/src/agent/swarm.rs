@@ -205,6 +205,109 @@ impl SwarmCoordinator {
     }
 }
 
+// ---------------------------------------------------------------------------
+// TeamMemory — shared memory across agents in a swarm
+// ---------------------------------------------------------------------------
+
+/// A single shared memory entry visible to all agents in a team.
+#[derive(Debug, Clone)]
+pub struct TeamMemoryEntry {
+    pub key: String,
+    pub value: String,
+    pub author: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+/// Thread-safe shared memory for swarm agents.
+/// All agents can read/write; keyed by string, last-write-wins.
+#[derive(Debug, Default)]
+pub struct TeamMemory {
+    entries: HashMap<String, TeamMemoryEntry>,
+}
+
+impl TeamMemory {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Write a key-value pair. Overwrites if key exists.
+    pub fn set(&mut self, key: &str, value: &str, author: &str) {
+        self.entries.insert(
+            key.to_string(),
+            TeamMemoryEntry {
+                key: key.to_string(),
+                value: value.to_string(),
+                author: author.to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        );
+    }
+
+    /// Read a value by key.
+    pub fn get(&self, key: &str) -> Option<&TeamMemoryEntry> {
+        self.entries.get(key)
+    }
+
+    /// Remove a key.
+    pub fn remove(&mut self, key: &str) -> bool {
+        self.entries.remove(key).is_some()
+    }
+
+    /// List all keys.
+    pub fn keys(&self) -> Vec<&str> {
+        self.entries.keys().map(String::as_str).collect()
+    }
+
+    /// List all entries.
+    pub fn entries(&self) -> Vec<&TeamMemoryEntry> {
+        self.entries.values().collect()
+    }
+
+    /// Search entries by keyword in key or value.
+    pub fn search(&self, query: &str) -> Vec<&TeamMemoryEntry> {
+        let q = query.to_lowercase();
+        self.entries
+            .values()
+            .filter(|e| e.key.to_lowercase().contains(&q) || e.value.to_lowercase().contains(&q))
+            .collect()
+    }
+
+    /// Get entries written by a specific agent.
+    pub fn by_author(&self, author: &str) -> Vec<&TeamMemoryEntry> {
+        self.entries
+            .values()
+            .filter(|e| e.author == author)
+            .collect()
+    }
+
+    /// Number of entries.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Check if empty.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Format all entries for inclusion in an agent's context.
+    pub fn format_for_prompt(&self) -> String {
+        if self.entries.is_empty() {
+            return String::new();
+        }
+        let mut out = String::from("# Team Shared Memory\n\n");
+        let mut sorted: Vec<_> = self.entries.values().collect();
+        sorted.sort_by_key(|e| &e.key);
+        for entry in sorted {
+            out.push_str(&format!(
+                "- **{}** (by {}): {}\n",
+                entry.key, entry.author, entry.value
+            ));
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,5 +387,76 @@ mod tests {
         swarm
             .add_subtask("w2", "task 2", vec!["f.rs".into()])
             .unwrap();
+    }
+
+    // --- TeamMemory ---
+
+    #[test]
+    fn team_memory_set_and_get() {
+        let mut tm = TeamMemory::new();
+        tm.set("api_url", "https://example.com", "agent-1");
+        let entry = tm.get("api_url").unwrap();
+        assert_eq!(entry.value, "https://example.com");
+        assert_eq!(entry.author, "agent-1");
+    }
+
+    #[test]
+    fn team_memory_overwrite() {
+        let mut tm = TeamMemory::new();
+        tm.set("key", "v1", "a1");
+        tm.set("key", "v2", "a2");
+        assert_eq!(tm.get("key").unwrap().value, "v2");
+        assert_eq!(tm.get("key").unwrap().author, "a2");
+        assert_eq!(tm.len(), 1);
+    }
+
+    #[test]
+    fn team_memory_remove() {
+        let mut tm = TeamMemory::new();
+        tm.set("temp", "data", "a1");
+        assert!(tm.remove("temp"));
+        assert!(tm.get("temp").is_none());
+        assert!(!tm.remove("nonexistent"));
+    }
+
+    #[test]
+    fn team_memory_search() {
+        let mut tm = TeamMemory::new();
+        tm.set("db_host", "postgres://localhost", "a1");
+        tm.set("api_key", "sk-xxx", "a2");
+        let results = tm.search("postgres");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].key, "db_host");
+    }
+
+    #[test]
+    fn team_memory_by_author() {
+        let mut tm = TeamMemory::new();
+        tm.set("k1", "v1", "agent-1");
+        tm.set("k2", "v2", "agent-2");
+        tm.set("k3", "v3", "agent-1");
+        let a1 = tm.by_author("agent-1");
+        assert_eq!(a1.len(), 2);
+    }
+
+    #[test]
+    fn team_memory_format_for_prompt() {
+        let mut tm = TeamMemory::new();
+        assert!(tm.format_for_prompt().is_empty());
+        tm.set("finding", "SQLi in /api/login", "scanner");
+        let prompt = tm.format_for_prompt();
+        assert!(prompt.contains("Team Shared Memory"));
+        assert!(prompt.contains("finding"));
+        assert!(prompt.contains("SQLi"));
+    }
+
+    #[test]
+    fn team_memory_keys_and_entries() {
+        let mut tm = TeamMemory::new();
+        tm.set("a", "1", "x");
+        tm.set("b", "2", "y");
+        assert_eq!(tm.keys().len(), 2);
+        assert_eq!(tm.entries().len(), 2);
+        assert!(!tm.is_empty());
     }
 }

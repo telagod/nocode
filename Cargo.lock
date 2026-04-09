@@ -166,6 +166,7 @@ checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
 dependencies = [
  "iana-time-zone",
  "num-traits",
+ "serde",
  "windows-link",
 ]
 
@@ -1098,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "nocode"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "crossterm",
  "nocode-core",
@@ -1113,7 +1114,7 @@ dependencies = [
 
 [[package]]
 name = "nocode-core"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "base64",
  "chrono",

@@ -268,6 +268,103 @@ impl PluginRuntime {
             ))
         }
     }
+
+    /// Install a plugin from a local path (copies directory into plugins_dir).
+    pub fn install_from_path(&self, source_path: &str) -> Result<String, String> {
+        let source = std::path::Path::new(source_path);
+        if !source.exists() {
+            return Err(format!("Source path '{source_path}' does not exist"));
+        }
+
+        // Read manifest from source
+        let manifest_path = if source.is_dir() {
+            source.join("manifest.json")
+        } else {
+            return Err("Source must be a directory containing manifest.json".to_string());
+        };
+
+        if !manifest_path.exists() {
+            return Err(format!("No manifest.json found in '{source_path}'"));
+        }
+
+        let raw = std::fs::read_to_string(&manifest_path)
+            .map_err(|e| format!("read manifest: {e}"))?;
+        let manifest: PluginManifest =
+            serde_json::from_str(&raw).map_err(|e| format!("parse manifest: {e}"))?;
+
+        let dest = std::path::Path::new(&self.plugins_dir).join(&manifest.name);
+        if dest.exists() {
+            return Err(format!(
+                "Plugin '{}' already installed at {}",
+                manifest.name,
+                dest.display()
+            ));
+        }
+
+        // Copy directory
+        copy_dir_recursive(source, &dest)?;
+
+        Ok(format!(
+            "{} v{} installed to {}",
+            manifest.name,
+            manifest.version,
+            dest.display()
+        ))
+    }
+
+    /// Uninstall a plugin by name (removes its directory).
+    pub fn uninstall(&self, name: &str) -> Result<String, String> {
+        let dest = std::path::Path::new(&self.plugins_dir).join(name);
+        if !dest.exists() {
+            return Err(format!("Plugin '{name}' not found in {}", self.plugins_dir));
+        }
+        std::fs::remove_dir_all(&dest)
+            .map_err(|e| format!("Failed to remove plugin '{name}': {e}"))?;
+        Ok(format!("Plugin '{name}' uninstalled"))
+    }
+
+    /// List installed plugins with details.
+    pub fn list_installed(&self) -> Vec<PluginInfo> {
+        self.discover()
+            .into_iter()
+            .map(|(dir, manifest)| PluginInfo {
+                name: manifest.name,
+                version: manifest.version,
+                description: manifest.description,
+                tool_count: manifest.tools.len(),
+                path: dir,
+            })
+            .collect()
+    }
+}
+
+/// Summary info for a discovered plugin.
+#[derive(Debug, Clone)]
+pub struct PluginInfo {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub tool_count: usize,
+    pub path: String,
+}
+
+/// Recursively copy a directory.
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| format!("mkdir {}: {e}", dst.display()))?;
+    let entries =
+        std::fs::read_dir(src).map_err(|e| format!("read_dir {}: {e}", src.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("dir entry: {e}"))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)
+                .map_err(|e| format!("copy {}: {e}", src_path.display()))?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -425,5 +522,68 @@ mod tests {
         let rt = PluginRuntime::new(tmp.to_str().unwrap());
         assert!(rt.execute("ghost", "").is_err());
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn install_from_path_and_uninstall() {
+        let tmp = std::env::temp_dir().join(format!("nocode_plug6_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let source = tmp.join("source-plugin");
+        let plugins_dir = tmp.join("plugins");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        std::fs::write(
+            source.join("manifest.json"),
+            r#"{"name":"installable","version":"1.0","command":"echo ok"}"#,
+        ).unwrap();
+        std::fs::write(source.join("extra.txt"), "data").unwrap();
+
+        let rt = PluginRuntime::new(plugins_dir.to_str().unwrap());
+        let msg = rt.install_from_path(source.to_str().unwrap()).unwrap();
+        assert!(msg.contains("installable"));
+
+        // Verify installed
+        let found = rt.discover();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].1.name, "installable");
+
+        // Duplicate install fails
+        assert!(rt.install_from_path(source.to_str().unwrap()).is_err());
+
+        // Uninstall
+        let msg = rt.uninstall("installable").unwrap();
+        assert!(msg.contains("uninstalled"));
+        assert!(rt.discover().is_empty());
+
+        // Uninstall nonexistent
+        assert!(rt.uninstall("ghost").is_err());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn list_installed_details() {
+        let tmp = std::env::temp_dir().join(format!("nocode_plug7_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let plugin_dir = tmp.join("my-plug");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(
+            plugin_dir.join("manifest.json"),
+            r#"{"name":"my-plug","version":"2.0","description":"A plugin","tools":["t1","t2"]}"#,
+        ).unwrap();
+        let rt = PluginRuntime::new(tmp.to_str().unwrap());
+        let list = rt.list_installed();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "my-plug");
+        assert_eq!(list[0].version, "2.0");
+        assert_eq!(list[0].tool_count, 2);
+        assert_eq!(list[0].description, "A plugin");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn install_from_nonexistent_path() {
+        let rt = PluginRuntime::new("/tmp/nocode_plug_nowhere");
+        assert!(rt.install_from_path("/tmp/nocode_does_not_exist_xyz").is_err());
     }
 }

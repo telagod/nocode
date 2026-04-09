@@ -1,6 +1,6 @@
 {
   "name": "@telagod/nocode-linux-x64",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "description": "nocode platform binary for Linux x64",
   "os": ["linux"],
   "cpu": ["x64"],

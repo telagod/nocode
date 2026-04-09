@@ -1,7 +1,7 @@
 # nocode vs Claude Code 功能对齐清单
 
-> 更新时间：2026-04-09（v0.2.12 — Phase 3-8 完成，Plugin/Skill/Swarm/Insights/Search/Credentials/Onboarding）
-> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (94 .rs files, 558 tests)
+> 更新时间：2026-04-09（v0.2.13 — Phase 9-10 完成，Classifier/PermissionRules/RemoteDaemon/McpTransport/DreamTrigger/PluginCLI/Telemetry/WsBridge/FeatureFlags/UpdateChecker）
+> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (101 .rs files, 662 tests)
 
 ## 图例
 
@@ -150,10 +150,10 @@
 | Task 持久化 (跨 session) | ✅ | ✅ JSONL persist/load | 完成 |
 | Task resume / 恢复 | ✅ | ✅ load_from_file | 完成 |
 | Task 审计链 | ✅ | ✅ TaskEvent lifecycle recording | 完成 |
-| Remote daemon | ✅ | ❌ | — |
+| Remote daemon | ✅ | ✅ RemoteDaemon HTTP client | 完成 |
 | Agent swarm (21 files) | ✅ | ✅ SwarmCoordinator + FileOwnership | 完成 |
 | Inter-agent messaging | ✅ | ✅ WorkerRegistry inbox | 完成 |
-| Agent creation wizard | ✅ | ❌ | — |
+| Agent creation wizard | ✅ | ✅ /agent-create 交互式 | 完成 |
 | Scheduled tasks / Cron | ✅ | ✅ CronSchedule + tick executor | 完成 |
 
 ---
@@ -166,7 +166,7 @@
 | Remote bridge (HTTP) | ✅ | ✅ /v1/query + agentic loop | 完成 |
 | Session registry | ✅ | ✅ SessionRegistry + meta.json | 完成 |
 | Session resume | ✅ | ✅ JSONL + meta.json | 完成 |
-| WebSocket 长连接 | ✅ | ❌ | — |
+| WebSocket 长连接 | ✅ | ✅ WsMessage + WsConnectionRegistry | 完成 |
 | Reconnect / heartbeat | ✅ | ✅ ConnectionRegistry + timeout sweep | 完成 |
 | Permission callback | ✅ | ✅ wire 已通 | 完成 |
 | Bridge event streaming | ✅ | ✅ BridgeEventWire | 完成 |
@@ -184,7 +184,7 @@
 | Resume snapshot | ✅ | ✅ | 完成 |
 | Task record persistence | ✅ | ✅ persist_task_record | 完成 |
 | Secure storage | ✅ | ✅ CredentialStore XOR+base64 加密 | 完成 |
-| Settings sync | ✅ | ❌ | — |
+| Settings sync | ✅ | 🔶 telemetry_enabled in settings, feature flags file | 部分 |
 
 ---
 
@@ -198,9 +198,9 @@
 | 9 条预设安全规则 | — | ✅ rm -rf, mkfs, dd, shutdown 等 | nocode 独有 |
 | Bash 只读验证 | ✅ 1,990 LOC | ✅ is_write_command + ReadOnly mode | 完成 |
 | PowerShell 路径验证 | ✅ 2,049 LOC | ❌ | — |
-| Permission rules UI | ✅ 1,178 LOC | ❌ | — |
+| Permission rules UI | ✅ 1,178 LOC | ✅ PermissionRuleStore + /permissions-add/remove | 完成 |
 | Auto-approve / deny | ✅ | ✅ bridge 层 | 完成 |
-| Classifier approvals | ✅ | ❌ | — |
+| Classifier approvals | ✅ | ✅ ToolClassifier + ToolRiskLevel + ClassifierApproval | 完成 |
 | TUI permission overlay | ❌ | ✅ F3 approve/deny | nocode 独有 |
 
 ---
@@ -215,8 +215,8 @@
 | MCP auth (OAuth) | ✅ 2,465 LOC | ❌ | — |
 | MCP resource listing/reading | ✅ | ✅ list_resources + read_resource | 完成 |
 | MCP server management | ✅ 12 components | ✅ /mcp-add /mcp-remove /mcp-restart | 完成 |
-| MCP elicitation | ✅ 1,168 LOC | ❌ | — |
-| In-process transport | ✅ | ❌ | — |
+| MCP elicitation | ✅ 1,168 LOC | ✅ ElicitationRequest/Response + Handler trait | 完成 |
+| In-process transport | ✅ | ✅ McpTransport trait + InProcessTransport | 完成 |
 | VS Code MCP | ✅ | ❌ | — |
 
 ---
@@ -226,10 +226,10 @@
 | 能力 | redcode | nocode | 状态 |
 |------|---------|--------|------|
 | Plugin manifest discovery | ✅ | ✅ manifest.json 骨架 | 完成 |
-| Plugin 安装/管理 | ✅ 44 files | ❌ | — |
+| Plugin 安装/管理 | ✅ 44 files | ✅ install_from_path/uninstall/list_installed + CLI | 完成 |
 | Plugin execution runtime | ✅ | ✅ PluginRuntime (discover/load/execute) | 完成 |
 | Skill 系统 | ✅ | ✅ SkillTool + list_skills discovery | 完成 |
-| Plugin CLI commands | ✅ | 🔶 /plugin list | 骨架 |
+| Plugin CLI commands | ✅ | ✅ /plugin-install /plugin-remove /plugin-list | 完成 |
 
 ---
 
@@ -262,10 +262,10 @@
 
 | 能力 | redcode | nocode | 状态 |
 |------|---------|--------|------|
-| Feature flags | ✅ 88 flags | ❌ | — |
+| Feature flags | ✅ 88 flags | ✅ FeatureFlagStore (8 flags, file + env override) | 完成 |
 | Datadog integration | ✅ | ❌ | — |
-| Event logging | ✅ | ❌ | — |
-| Metrics opt-out | ✅ | ❌ | — |
+| Event logging | ✅ | ✅ EventLogger JSONL + opt-in | 完成 |
+| Metrics opt-out | ✅ | ✅ /telemetry + feature flag + settings | 完成 |
 
 ---
 
@@ -277,9 +277,9 @@
 | CLAUDE.md 读取 | ✅ | ✅ discover + format | 完成 |
 | Session memory | ✅ | ✅ SessionMemory (save/load/search/prompt) | 完成 |
 | Memory extraction | ✅ | ✅ MemoryExtractor 模式匹配 | 完成 |
-| Auto-dream consolidation | ✅ | ❌ | — |
+| Auto-dream consolidation | ✅ | ✅ DreamConsolidator + DreamTrigger (idle/session-end) | 完成 |
 | Context collapse | ✅ | ✅ ContextCollapser (auto-trigger + stats) | 完成 |
-| Team memory sync | ✅ | ❌ | — |
+| Team memory sync | ✅ | ✅ TeamMemory (shared KV store for swarm agents) | 完成 |
 
 ---
 
@@ -290,7 +290,7 @@
 | CI pipeline | ✅ | ✅ GitHub Actions | 完成 |
 | install.sh | ✅ | ✅ | 完成 |
 | /doctor 诊断 | ✅ | ✅ | 完成 |
-| Auto-updater | ✅ | ❌ | — |
+| Auto-updater | ✅ | ✅ UpdateChecker (GitHub releases + cache + semver) | 完成 |
 | Native installer | ✅ | ❌ | — |
 | Build variants | ✅ | ❌ | — |
 | 灰度 / 回滚 | ✅ | ❌ | — |
@@ -341,8 +341,8 @@
 | Providers | 1 (Claude) | 5 (Claude/OpenAI/Gemini/Custom/Mock) | 超集 |
 | Run modes | ~5 | 9 | 超集 |
 | Slash commands | ~20 | 28 | 超集 |
-| Tests | — | 558 | — |
-| Modules | — | 94 .rs | — |
+| Tests | — | 662 | — |
+| Modules | — | 101 .rs | — |
 
 ### 与 v0.1 对比的进展
 

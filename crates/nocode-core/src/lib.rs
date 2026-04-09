@@ -9,4 +9,7 @@ pub mod query;
 pub mod recovery;
 pub mod session;
 pub mod storage;
+pub mod telemetry;
 pub mod tool;
+pub mod update_checker;
+pub mod ws_bridge;

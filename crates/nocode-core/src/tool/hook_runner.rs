@@ -48,13 +48,22 @@ impl HookRunner {
     }
 
     /// Run pre_tool_use hooks. Returns Err(HookResult) if any hook denies.
-    pub fn run_pre_tool_use(&self, tool_name: &str) -> Result<Vec<HookResult>, HookResult> {
+    /// `tool_input` is the JSON input passed to the tool (exposed as `NOCODE_TOOL_INPUT`).
+    pub fn run_pre_tool_use(
+        &self,
+        tool_name: &str,
+        tool_input: Option<&str>,
+    ) -> Result<Vec<HookResult>, HookResult> {
+        let mut extra_env = Vec::new();
+        if let Some(input) = tool_input {
+            extra_env.push(("NOCODE_TOOL_INPUT", input));
+        }
         let mut results = Vec::new();
         for hook in &self.pre_tool_use {
             if !matches_filter(hook, tool_name) {
                 continue;
             }
-            let result = execute_hook(hook, tool_name);
+            let result = execute_hook(hook, tool_name, &extra_env);
             if !result.allowed() {
                 return Err(result);
             }
@@ -64,11 +73,16 @@ impl HookRunner {
     }
 
     /// Run post_tool_use hooks (informational — cannot deny).
-    pub fn run_post_tool_use(&self, tool_name: &str) -> Vec<HookResult> {
+    /// `tool_output` is the tool result content (exposed as `NOCODE_TOOL_OUTPUT`).
+    pub fn run_post_tool_use(&self, tool_name: &str, tool_output: Option<&str>) -> Vec<HookResult> {
+        let mut extra_env = Vec::new();
+        if let Some(output) = tool_output {
+            extra_env.push(("NOCODE_TOOL_OUTPUT", output));
+        }
         self.post_tool_use
             .iter()
             .filter(|h| matches_filter(h, tool_name))
-            .map(|h| execute_hook(h, tool_name))
+            .map(|h| execute_hook(h, tool_name, &extra_env))
             .collect()
     }
 
@@ -76,7 +90,7 @@ impl HookRunner {
     pub fn run_on_submit(&self) -> Vec<HookResult> {
         self.on_submit
             .iter()
-            .map(|h| execute_hook(h, "submit"))
+            .map(|h| execute_hook(h, "submit", &[]))
             .collect()
     }
 
@@ -96,16 +110,27 @@ fn matches_filter(hook: &HookEntry, tool_name: &str) -> bool {
     }
 }
 
-fn execute_hook(hook: &HookEntry, tool_name: &str) -> HookResult {
+fn execute_hook(hook: &HookEntry, tool_name: &str, extra_env: &[(&str, &str)]) -> HookResult {
     let timeout = Duration::from_millis(hook.timeout_ms.unwrap_or(10_000));
 
-    let child = Command::new("sh")
-        .arg("-c")
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
         .arg(&hook.command)
         .env("NOCODE_TOOL_NAME", tool_name)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn();
+        .stderr(std::process::Stdio::piped());
+
+    // Extra env vars (NOCODE_TOOL_INPUT / NOCODE_TOOL_OUTPUT)
+    for (key, val) in extra_env {
+        cmd.env(key, val);
+    }
+
+    // User-defined env from HookEntry
+    for (key, val) in &hook.env {
+        cmd.env(key, val);
+    }
+
+    let child = cmd.spawn();
 
     let mut child = match child {
         Ok(c) => c,
@@ -196,8 +221,8 @@ mod tests {
     #[test]
     fn empty_runner_allows_all() {
         let runner = HookRunner::empty();
-        assert!(runner.run_pre_tool_use("Bash").is_ok());
-        assert!(runner.run_post_tool_use("Bash").is_empty());
+        assert!(runner.run_pre_tool_use("Bash", None).is_ok());
+        assert!(runner.run_post_tool_use("Bash", None).is_empty());
     }
 
     #[test]
@@ -207,11 +232,12 @@ mod tests {
                 command: "true".to_string(),
                 tool_filter: None,
                 timeout_ms: None,
+                env: Default::default(),
             }],
             Vec::new(),
             Vec::new(),
         );
-        let result = runner.run_pre_tool_use("Bash");
+        let result = runner.run_pre_tool_use("Bash", None);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 1);
     }
@@ -223,11 +249,12 @@ mod tests {
                 command: "false".to_string(),
                 tool_filter: None,
                 timeout_ms: None,
+                env: Default::default(),
             }],
             Vec::new(),
             Vec::new(),
         );
-        let result = runner.run_pre_tool_use("Bash");
+        let result = runner.run_pre_tool_use("Bash", None);
         assert!(result.is_err());
         assert!(!result.unwrap_err().allowed());
     }
@@ -239,14 +266,15 @@ mod tests {
                 command: "false".to_string(),
                 tool_filter: Some("Write".to_string()),
                 timeout_ms: None,
+                env: Default::default(),
             }],
             Vec::new(),
             Vec::new(),
         );
         // Should not match Bash — so no hooks run, allowed
-        assert!(runner.run_pre_tool_use("Bash").is_ok());
+        assert!(runner.run_pre_tool_use("Bash", None).is_ok());
         // Should match Write — hook fails, denied
-        assert!(runner.run_pre_tool_use("Write").is_err());
+        assert!(runner.run_pre_tool_use("Write", None).is_err());
     }
 
     #[test]
@@ -256,12 +284,13 @@ mod tests {
                 command: "true".to_string(),
                 tool_filter: Some("*".to_string()),
                 timeout_ms: None,
+                env: Default::default(),
             }],
             Vec::new(),
             Vec::new(),
         );
-        assert!(runner.run_pre_tool_use("Bash").is_ok());
-        assert!(runner.run_pre_tool_use("Read").is_ok());
+        assert!(runner.run_pre_tool_use("Bash", None).is_ok());
+        assert!(runner.run_pre_tool_use("Read", None).is_ok());
     }
 
     #[test]
@@ -272,10 +301,11 @@ mod tests {
                 command: "echo post".to_string(),
                 tool_filter: None,
                 timeout_ms: None,
+                env: Default::default(),
             }],
             Vec::new(),
         );
-        let results = runner.run_post_tool_use("Bash");
+        let results = runner.run_post_tool_use("Bash", None);
         assert_eq!(results.len(), 1);
         assert!(results[0].stdout.contains("post"));
     }
@@ -289,10 +319,63 @@ mod tests {
                 command: "echo submitted".to_string(),
                 tool_filter: None,
                 timeout_ms: None,
+                env: Default::default(),
             }],
         );
         let results = runner.run_on_submit();
         assert_eq!(results.len(), 1);
         assert!(results[0].stdout.contains("submitted"));
+    }
+
+    #[test]
+    fn pre_hook_receives_tool_input() {
+        let runner = HookRunner::new(
+            vec![HookEntry {
+                command: "echo $NOCODE_TOOL_INPUT".to_string(),
+                tool_filter: None,
+                timeout_ms: None,
+                env: Default::default(),
+            }],
+            Vec::new(),
+            Vec::new(),
+        );
+        let result = runner
+            .run_pre_tool_use("Bash", Some(r#"{"command":"ls"}"#))
+            .unwrap();
+        assert!(result[0].stdout.contains(r#"{"command":"ls"}"#));
+    }
+
+    #[test]
+    fn post_hook_receives_tool_output() {
+        let runner = HookRunner::new(
+            Vec::new(),
+            vec![HookEntry {
+                command: "echo $NOCODE_TOOL_OUTPUT".to_string(),
+                tool_filter: None,
+                timeout_ms: None,
+                env: Default::default(),
+            }],
+            Vec::new(),
+        );
+        let results = runner.run_post_tool_use("Bash", Some("file1.rs\nfile2.rs"));
+        assert!(results[0].stdout.contains("file1.rs"));
+    }
+
+    #[test]
+    fn hook_entry_custom_env() {
+        let mut env = std::collections::HashMap::new();
+        env.insert("MY_VAR".to_string(), "hello_world".to_string());
+        let runner = HookRunner::new(
+            vec![HookEntry {
+                command: "echo $MY_VAR".to_string(),
+                tool_filter: None,
+                timeout_ms: None,
+                env,
+            }],
+            Vec::new(),
+            Vec::new(),
+        );
+        let result = runner.run_pre_tool_use("Bash", None).unwrap();
+        assert!(result[0].stdout.contains("hello_world"));
     }
 }

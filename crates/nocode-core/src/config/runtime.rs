@@ -34,6 +34,9 @@ pub struct HookEntry {
     pub tool_filter: Option<String>,
     #[serde(default)]
     pub timeout_ms: Option<u64>,
+    /// Extra environment variables passed to the hook process.
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
 }
 
 /// Sandbox configuration.

@@ -32,6 +32,9 @@ pub struct Settings {
     /// Sandbox — replaced wholesale by later tier.
     #[serde(default)]
     pub sandbox: Option<SandboxConfig>,
+    /// Telemetry opt-in/out (default: not set → use feature flag).
+    #[serde(default)]
+    pub telemetry_enabled: Option<bool>,
 }
 
 impl Settings {
@@ -68,6 +71,9 @@ impl Settings {
         if other.sandbox.is_some() {
             self.sandbox = other.sandbox;
         }
+
+        // Scalars: last wins
+        self.telemetry_enabled = other.telemetry_enabled.or(self.telemetry_enabled);
 
         self
     }

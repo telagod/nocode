@@ -42,6 +42,14 @@ pub enum CommandAction {
     McpRemove,
     McpRestart,
     Insights,
+    AgentCreate,
+    FeatureFlags,
+    PermissionsAdd,
+    PermissionsRemove,
+    PluginInstall,
+    PluginRemove,
+    PluginList,
+    Telemetry,
 }
 
 /// A registered slash command.
@@ -301,6 +309,62 @@ impl CommandRegistry {
                 summary: "Show session insights and statistics",
                 argument_hint: None,
                 action: CommandAction::Insights,
+            },
+            CommandEntry {
+                name: "agent-create",
+                aliases: &["agent-new"],
+                summary: "Create a new background agent worker",
+                argument_hint: Some("<name> <prompt>"),
+                action: CommandAction::AgentCreate,
+            },
+            CommandEntry {
+                name: "feature-flags",
+                aliases: &["ff", "flags"],
+                summary: "List or toggle feature flags",
+                argument_hint: Some("[flag_name] [on|off]"),
+                action: CommandAction::FeatureFlags,
+            },
+            CommandEntry {
+                name: "permissions-add",
+                aliases: &["perm-add"],
+                summary: "Add a permission rule for a tool",
+                argument_hint: Some("<tool> <allow|deny> [pattern]"),
+                action: CommandAction::PermissionsAdd,
+            },
+            CommandEntry {
+                name: "permissions-remove",
+                aliases: &["perm-rm"],
+                summary: "Remove a permission rule",
+                argument_hint: Some("<tool> [pattern]"),
+                action: CommandAction::PermissionsRemove,
+            },
+            CommandEntry {
+                name: "plugin-install",
+                aliases: &["plugin-add"],
+                summary: "Install a plugin from a local path",
+                argument_hint: Some("<path>"),
+                action: CommandAction::PluginInstall,
+            },
+            CommandEntry {
+                name: "plugin-remove",
+                aliases: &["plugin-rm"],
+                summary: "Uninstall a plugin by name",
+                argument_hint: Some("<name>"),
+                action: CommandAction::PluginRemove,
+            },
+            CommandEntry {
+                name: "plugin-list",
+                aliases: &["plugins"],
+                summary: "List installed plugins with details",
+                argument_hint: None,
+                action: CommandAction::PluginList,
+            },
+            CommandEntry {
+                name: "telemetry",
+                aliases: &["telem"],
+                summary: "Show or toggle telemetry opt-in/out",
+                argument_hint: Some("[on|off|status]"),
+                action: CommandAction::Telemetry,
             },
         ];
 

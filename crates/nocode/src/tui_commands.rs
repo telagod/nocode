@@ -187,6 +187,38 @@ pub(crate) fn handle_slash_command(
             cmd_insights(app, messages);
             SlashResult::Handled
         }
+        CommandAction::AgentCreate => {
+            cmd_agent_create(app, args.as_deref());
+            SlashResult::Handled
+        }
+        CommandAction::FeatureFlags => {
+            cmd_feature_flags(app, args.as_deref());
+            SlashResult::Handled
+        }
+        CommandAction::PermissionsAdd => {
+            cmd_permissions_add(app, args.as_deref());
+            SlashResult::Handled
+        }
+        CommandAction::PermissionsRemove => {
+            cmd_permissions_remove(app, args.as_deref());
+            SlashResult::Handled
+        }
+        CommandAction::PluginInstall => {
+            cmd_plugin_install(app, args.as_deref());
+            SlashResult::Handled
+        }
+        CommandAction::PluginRemove => {
+            cmd_plugin_remove(app, args.as_deref());
+            SlashResult::Handled
+        }
+        CommandAction::PluginList => {
+            cmd_plugin_list(app);
+            SlashResult::Handled
+        }
+        CommandAction::Telemetry => {
+            cmd_telemetry(app, args.as_deref());
+            SlashResult::Handled
+        }
     }
 }
 
@@ -687,4 +719,300 @@ fn cmd_insights(app: &mut TuiApp, messages: &[Message]) {
     }
 
     app.push_system(&lines.join("\n"));
+}
+
+fn cmd_agent_create(app: &mut TuiApp, args: Option<&str>) {
+    let Some(args) = args else {
+        app.push_system(
+            "Usage: /agent-create <name> <prompt>\n\n\
+             Example: /agent-create explorer Find all TODO comments in the codebase",
+        );
+        return;
+    };
+
+    let (name, prompt) = match args.find(' ') {
+        Some(pos) => (&args[..pos], args[pos + 1..].trim()),
+        None => {
+            app.push_system("Usage: /agent-create <name> <prompt>");
+            return;
+        }
+    };
+
+    if prompt.is_empty() {
+        app.push_system("Usage: /agent-create <name> <prompt>");
+        return;
+    }
+
+    let registry = nocode_core::agent::worker::global_worker_registry();
+    let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+
+    if guard.find_by_name(name).is_some() {
+        app.push_error(&format!("Agent '{name}' already exists"));
+        return;
+    }
+
+    let id = guard.register(name, prompt);
+    guard.set_state(&id, nocode_core::agent::worker::WorkerState::ReadyForPrompt);
+
+    app.push_system(&format!(
+        "Agent created:\n\
+         \x20 ID:     {id}\n\
+         \x20 Name:   {name}\n\
+         \x20 Prompt: {}\n\
+         \x20 State:  ReadyForPrompt\n\n\
+         Use /agents to see all workers.",
+        if prompt.len() > 80 {
+            format!("{}...", &prompt[..80])
+        } else {
+            prompt.to_string()
+        }
+    ));
+}
+
+fn cmd_feature_flags(app: &mut TuiApp, args: Option<&str>) {
+    let store = nocode_core::config::feature_flags::global_feature_flags();
+    let mut guard = store.lock().unwrap_or_else(|e| e.into_inner());
+
+    match args {
+        None => {
+            let flags = guard.list();
+            let mut lines = vec!["Feature flags:".to_string(), String::new()];
+            for (flag, enabled, source) in &flags {
+                let status = if *enabled { "ON " } else { "OFF" };
+                lines.push(format!("  {:<20} {status}  ({source})", flag.name()));
+            }
+            lines.push(String::new());
+            lines.push("Usage: /feature-flags <name> on|off".to_string());
+            app.push_system(&lines.join("\n"));
+        }
+        Some(args) => {
+            let parts: Vec<&str> = args.splitn(2, ' ').collect();
+            let flag_name = parts[0];
+            let Some(flag) = nocode_core::config::feature_flags::FeatureFlag::parse(flag_name)
+            else {
+                app.push_error(&format!("Unknown flag: {flag_name}"));
+                return;
+            };
+
+            if parts.len() < 2 {
+                let enabled = guard.is_enabled(flag);
+                let status = if enabled { "ON" } else { "OFF" };
+                app.push_system(&format!("{flag_name}: {status}"));
+                return;
+            }
+
+            let action = parts[1].trim();
+            let enabled = match action {
+                "on" | "true" | "1" | "enable" => true,
+                "off" | "false" | "0" | "disable" => false,
+                "reset" => {
+                    match guard.reset(flag) {
+                        Ok(()) => app.push_system(&format!("{flag_name}: reset to default")),
+                        Err(e) => app.push_error(&format!("Failed to reset: {e}")),
+                    }
+                    return;
+                }
+                _ => {
+                    app.push_error(&format!("Invalid action: {action} (use on/off/reset)"));
+                    return;
+                }
+            };
+
+            match guard.set(flag, enabled) {
+                Ok(()) => {
+                    let status = if enabled { "ON" } else { "OFF" };
+                    app.push_system(&format!("{flag_name}: {status}"));
+                }
+                Err(e) => app.push_error(&format!("Failed to set flag: {e}")),
+            }
+        }
+    }
+}
+
+fn cmd_permissions_add(app: &mut TuiApp, args: Option<&str>) {
+    let Some(args) = args else {
+        // No args — list current rules
+        let store = nocode_core::tool::permission::global_permission_rules();
+        let guard = store.lock().unwrap_or_else(|e| e.into_inner());
+        let rules = guard.list();
+        if rules.is_empty() {
+            app.push_system(
+                "No permission rules configured.\n\n\
+                 Usage: /permissions-add <tool> <allow|deny> [pattern]\n\
+                 Example: /permissions-add Bash deny docker\n\
+                 Example: /permissions-add FileWrite allow",
+            );
+        } else {
+            let mut lines = vec!["Permission rules:".to_string(), String::new()];
+            for rule in rules {
+                let pattern = rule
+                    .argument_pattern
+                    .as_deref()
+                    .unwrap_or("(any)");
+                lines.push(format!(
+                    "  {:<16} {:?}  pattern: {}",
+                    rule.tool_name, rule.action, pattern
+                ));
+            }
+            lines.push(String::new());
+            lines.push("Usage: /permissions-add <tool> <allow|deny> [pattern]".to_string());
+            app.push_system(&lines.join("\n"));
+        }
+        return;
+    };
+
+    let parts: Vec<&str> = args.splitn(3, ' ').collect();
+    if parts.len() < 2 {
+        app.push_system("Usage: /permissions-add <tool> <allow|deny> [pattern]");
+        return;
+    }
+
+    let tool_name = parts[0];
+    let action = match parts[1] {
+        "allow" => nocode_core::tool::permission::RuleAction::Allow,
+        "deny" => nocode_core::tool::permission::RuleAction::Deny,
+        "ask" => nocode_core::tool::permission::RuleAction::AlwaysAsk,
+        other => {
+            app.push_error(&format!("Invalid action: {other} (use allow/deny/ask)"));
+            return;
+        }
+    };
+    let pattern = parts.get(2).map(|s| s.to_string());
+
+    let store = nocode_core::tool::permission::global_permission_rules();
+    let mut guard = store.lock().unwrap_or_else(|e| e.into_inner());
+    match guard.add(nocode_core::tool::permission::PermissionRule {
+        tool_name: tool_name.to_string(),
+        action,
+        argument_pattern: pattern.clone(),
+    }) {
+        Ok(()) => {
+            let pat = pattern.as_deref().unwrap_or("(any)");
+            app.push_system(&format!("Rule added: {tool_name} → {action:?} (pattern: {pat})"));
+        }
+        Err(e) => app.push_error(&format!("Failed to add rule: {e}")),
+    }
+}
+
+fn cmd_permissions_remove(app: &mut TuiApp, args: Option<&str>) {
+    let Some(args) = args else {
+        app.push_system("Usage: /permissions-remove <tool> [pattern]");
+        return;
+    };
+
+    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+    let tool_name = parts[0];
+    let pattern = parts.get(1).copied();
+
+    let store = nocode_core::tool::permission::global_permission_rules();
+    let mut guard = store.lock().unwrap_or_else(|e| e.into_inner());
+    match guard.remove(tool_name, pattern) {
+        Ok(true) => app.push_system(&format!("Rule removed for '{tool_name}'")),
+        Ok(false) => app.push_system(&format!("No rule found for '{tool_name}'")),
+        Err(e) => app.push_error(&format!("Failed to remove rule: {e}")),
+    }
+}
+
+fn cmd_plugin_install(app: &mut TuiApp, args: Option<&str>) {
+    let Some(path) = args else {
+        app.push_system("Usage: /plugin-install <path>");
+        return;
+    };
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let plugins_dir = nocode_core::tool::plugin_registry::PluginRuntime::default_dir(&cwd);
+    let rt = nocode_core::tool::plugin_registry::PluginRuntime::new(&plugins_dir);
+    match rt.install_from_path(path.trim()) {
+        Ok(msg) => app.push_system(&msg),
+        Err(e) => app.push_error(&format!("Install failed: {e}")),
+    }
+}
+
+fn cmd_plugin_remove(app: &mut TuiApp, args: Option<&str>) {
+    let Some(name) = args else {
+        app.push_system("Usage: /plugin-remove <name>");
+        return;
+    };
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let plugins_dir = nocode_core::tool::plugin_registry::PluginRuntime::default_dir(&cwd);
+    let rt = nocode_core::tool::plugin_registry::PluginRuntime::new(&plugins_dir);
+    match rt.uninstall(name.trim()) {
+        Ok(msg) => app.push_system(&msg),
+        Err(e) => app.push_error(&format!("Uninstall failed: {e}")),
+    }
+}
+
+fn cmd_plugin_list(app: &mut TuiApp) {
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let plugins_dir = nocode_core::tool::plugin_registry::PluginRuntime::default_dir(&cwd);
+    let rt = nocode_core::tool::plugin_registry::PluginRuntime::new(&plugins_dir);
+    let plugins = rt.list_installed();
+    if plugins.is_empty() {
+        app.push_system(&format!(
+            "No plugins installed.\n\nPlugins directory: {plugins_dir}\n\
+             Usage: /plugin-install <path>"
+        ));
+        return;
+    }
+    let mut lines = vec!["Installed plugins:".to_string(), String::new()];
+    for p in &plugins {
+        lines.push(format!(
+            "  {:<20} v{:<8} {} ({} tools)",
+            p.name, p.version, p.description, p.tool_count
+        ));
+    }
+    lines.push(String::new());
+    lines.push(format!("Total: {} plugins", plugins.len()));
+    app.push_system(&lines.join("\n"));
+}
+
+fn cmd_telemetry(app: &mut TuiApp, args: Option<&str>) {
+    let ff_store = nocode_core::config::feature_flags::global_feature_flags();
+    let mut ff_guard = ff_store.lock().unwrap_or_else(|e| e.into_inner());
+
+    let logger = nocode_core::telemetry::global_event_logger();
+    let mut log_guard = logger.lock().unwrap_or_else(|e| e.into_inner());
+
+    match args.map(str::trim) {
+        None | Some("status") | Some("") => {
+            let ff_enabled = ff_guard.is_enabled(
+                nocode_core::config::feature_flags::FeatureFlag::Telemetry,
+            );
+            let logger_enabled = log_guard.is_enabled();
+            let events = log_guard.event_count();
+            app.push_system(&format!(
+                "Telemetry:\n\n\
+                 \x20 Feature flag:  {}\n\
+                 \x20 Logger active: {}\n\
+                 \x20 Events logged: {events}\n\n\
+                 Usage: /telemetry on|off",
+                if ff_enabled { "ON" } else { "OFF" },
+                if logger_enabled { "ON" } else { "OFF" },
+            ));
+        }
+        Some("on" | "true" | "1" | "enable") => {
+            let _ = ff_guard.set(
+                nocode_core::config::feature_flags::FeatureFlag::Telemetry,
+                true,
+            );
+            log_guard.set_enabled(true);
+            app.push_system("Telemetry: ON (events will be logged)");
+        }
+        Some("off" | "false" | "0" | "disable") => {
+            let _ = ff_guard.set(
+                nocode_core::config::feature_flags::FeatureFlag::Telemetry,
+                false,
+            );
+            log_guard.set_enabled(false);
+            app.push_system("Telemetry: OFF (event logging disabled)");
+        }
+        Some(other) => {
+            app.push_error(&format!("Invalid option: {other} (use on/off/status)"));
+        }
+    }
 }

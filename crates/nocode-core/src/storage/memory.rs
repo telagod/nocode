@@ -156,7 +156,7 @@ impl MemoryIndex {
 // ---------------------------------------------------------------------------
 
 pub struct MemoryStore {
-    base_dir: PathBuf,
+    pub(crate) base_dir: PathBuf,
 }
 
 impl MemoryStore {
@@ -595,6 +595,147 @@ impl MemoryExtractor {
     }
 }
 
+// ---------------------------------------------------------------------------
+// DreamConsolidator — automatic memory cleanup and consolidation
+// ---------------------------------------------------------------------------
+
+/// Report from a consolidation run.
+#[derive(Debug, Clone, Default)]
+pub struct ConsolidationReport {
+    /// Number of memories scanned.
+    pub scanned: usize,
+    /// Number of duplicate memories merged.
+    pub merged: usize,
+    /// Number of stale project memories removed.
+    pub expired: usize,
+    /// Number of memories remaining after consolidation.
+    pub remaining: usize,
+}
+
+/// Consolidates memories: merges duplicates, removes stale project entries.
+pub struct DreamConsolidator {
+    store: MemoryStore,
+    /// Max age in days for project memories before they're considered stale.
+    project_max_age_days: u64,
+}
+
+impl DreamConsolidator {
+    pub fn new(base_dir: &str, project_max_age_days: u64) -> Self {
+        Self {
+            store: MemoryStore::new(base_dir),
+            project_max_age_days,
+        }
+    }
+
+    /// Run consolidation: merge similar memories, expire old project memories.
+    pub fn consolidate(&self) -> Result<ConsolidationReport, String> {
+        let entries = self.store.list()?;
+        let mut report = ConsolidationReport {
+            scanned: entries.len(),
+            ..Default::default()
+        };
+
+        // 1. Find and merge duplicates (same type + similar name)
+        let mut seen: std::collections::HashMap<(String, String), MemoryEntry> =
+            std::collections::HashMap::new();
+        let mut to_delete: Vec<String> = Vec::new();
+
+        for entry in &entries {
+            let key = (entry.memory_type.as_str().to_string(), normalize_name(&entry.name));
+            if let Some(existing) = seen.get(&key) {
+                // Merge: keep the longer content, delete the shorter
+                if entry.content.len() > existing.content.len() {
+                    to_delete.push(existing.file_name.clone());
+                    seen.insert(key, entry.clone());
+                } else {
+                    to_delete.push(entry.file_name.clone());
+                }
+                report.merged += 1;
+            } else {
+                seen.insert(key, entry.clone());
+            }
+        }
+
+        // 2. Expire old project memories
+        let _now = chrono::Utc::now().timestamp();
+        let max_age_secs = (self.project_max_age_days * 86400) as i64;
+
+        for entry in &entries {
+            if entry.memory_type != MemoryType::Project {
+                continue;
+            }
+            if to_delete.contains(&entry.file_name) {
+                continue;
+            }
+            // Check file modification time as proxy for age
+            let path = std::path::Path::new(self.store.base_dir.as_path()).join(&entry.file_name);
+            if let Ok(meta) = std::fs::metadata(&path)
+                && let Ok(modified) = meta.modified()
+                && let Ok(age) = modified.elapsed()
+            {
+                let age_secs = age.as_secs() as i64;
+                if age_secs > max_age_secs {
+                    to_delete.push(entry.file_name.clone());
+                    report.expired += 1;
+                }
+            }
+        }
+
+        // 3. Execute deletions
+        for file_name in &to_delete {
+            let _ = self.store.delete(file_name);
+            let _ = self.store.remove_from_index(file_name);
+        }
+
+        // Recount remaining
+        report.remaining = self.store.list().unwrap_or_default().len();
+        Ok(report)
+    }
+
+    /// Quick check: how many memories exist.
+    pub fn memory_count(&self) -> usize {
+        self.store.list().unwrap_or_default().len()
+    }
+
+    /// Check if consolidation is recommended (>20 memories or any project memories older than threshold).
+    pub fn should_consolidate(&self) -> bool {
+        let entries = match self.store.list() {
+            Ok(e) => e,
+            Err(_) => return false,
+        };
+        if entries.len() > 20 {
+            return true;
+        }
+        // Check for old project memories
+        let max_age_secs = (self.project_max_age_days * 86400) as i64;
+        for entry in &entries {
+            if entry.memory_type != MemoryType::Project {
+                continue;
+            }
+            let path = std::path::Path::new(self.store.base_dir.as_path()).join(&entry.file_name);
+            if let Ok(meta) = std::fs::metadata(&path)
+                && let Ok(modified) = meta.modified()
+                && let Ok(age) = modified.elapsed()
+            {
+                let _ = max_age_secs;
+                if age.as_secs() as i64 > max_age_secs {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+/// Normalize a memory name for dedup comparison.
+fn normalize_name(name: &str) -> String {
+    name.to_lowercase()
+        .replace(['-', ' '], "_")
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_')
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -884,5 +1025,118 @@ mod tests {
         let candidates = MemoryExtractor::extract(&msgs);
         // Same text → same name → deduplicated
         assert_eq!(candidates.len(), 1);
+    }
+
+    // --- DreamConsolidator ---
+
+    #[test]
+    fn normalize_name_works() {
+        assert_eq!(super::normalize_name("User-Role"), "user_role");
+        assert_eq!(super::normalize_name("my test NAME"), "my_test_name");
+        assert_eq!(super::normalize_name("a!b@c#d"), "abcd");
+    }
+
+    #[test]
+    fn consolidator_empty_dir() {
+        let tmp = std::env::temp_dir().join(format!("nocode_dream1_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let c = DreamConsolidator::new(tmp.to_str().unwrap(), 30);
+        let report = c.consolidate().unwrap();
+        assert_eq!(report.scanned, 0);
+        assert_eq!(report.merged, 0);
+        assert_eq!(report.expired, 0);
+        assert_eq!(report.remaining, 0);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn consolidator_merges_duplicates() {
+        let tmp = std::env::temp_dir().join(format!("nocode_dream2_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let store = MemoryStore::new(tmp.to_str().unwrap());
+        // Two feedback memories with similar normalized names
+        store.save(&MemoryEntry {
+            name: "feedback_testing".to_string(),
+            description: "no mocks v1".to_string(),
+            memory_type: MemoryType::Feedback,
+            content: "short".to_string(),
+            file_name: "feedback_testing_1.md".to_string(),
+        }).unwrap();
+        store.save(&MemoryEntry {
+            name: "feedback_testing".to_string(),
+            description: "no mocks v2".to_string(),
+            memory_type: MemoryType::Feedback,
+            content: "longer content wins the merge".to_string(),
+            file_name: "feedback_testing_2.md".to_string(),
+        }).unwrap();
+
+        let c = DreamConsolidator::new(tmp.to_str().unwrap(), 30);
+        let report = c.consolidate().unwrap();
+        assert_eq!(report.scanned, 2);
+        assert_eq!(report.merged, 1);
+        assert_eq!(report.remaining, 1);
+        // The longer one survives
+        let remaining = store.list().unwrap();
+        assert!(remaining[0].content.contains("longer"));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn consolidator_no_false_merges() {
+        let tmp = std::env::temp_dir().join(format!("nocode_dream3_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let store = MemoryStore::new(tmp.to_str().unwrap());
+        store.save(&MemoryEntry {
+            name: "user_role".to_string(),
+            description: "pentester".to_string(),
+            memory_type: MemoryType::User,
+            content: "Senior pentester.".to_string(),
+            file_name: "user_role.md".to_string(),
+        }).unwrap();
+        store.save(&MemoryEntry {
+            name: "feedback_testing".to_string(),
+            description: "no mocks".to_string(),
+            memory_type: MemoryType::Feedback,
+            content: "Use real database.".to_string(),
+            file_name: "feedback_testing.md".to_string(),
+        }).unwrap();
+
+        let c = DreamConsolidator::new(tmp.to_str().unwrap(), 30);
+        let report = c.consolidate().unwrap();
+        assert_eq!(report.scanned, 2);
+        assert_eq!(report.merged, 0);
+        assert_eq!(report.remaining, 2);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn consolidator_should_consolidate_threshold() {
+        let tmp = std::env::temp_dir().join(format!("nocode_dream4_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let store = MemoryStore::new(tmp.to_str().unwrap());
+        // Create 21 memories to trigger threshold
+        for i in 0..21 {
+            store.save(&MemoryEntry {
+                name: format!("mem_{i}"),
+                description: format!("desc {i}"),
+                memory_type: MemoryType::User,
+                content: format!("content {i}"),
+                file_name: format!("mem_{i}.md"),
+            }).unwrap();
+        }
+        let c = DreamConsolidator::new(tmp.to_str().unwrap(), 30);
+        assert!(c.should_consolidate());
+        assert_eq!(c.memory_count(), 21);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn consolidator_report_default() {
+        let report = ConsolidationReport::default();
+        assert_eq!(report.scanned, 0);
+        assert_eq!(report.merged, 0);
+        assert_eq!(report.expired, 0);
+        assert_eq!(report.remaining, 0);
     }
 }

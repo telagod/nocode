@@ -102,7 +102,7 @@ impl<'a> ToolExecutor<'a> {
 
         // 4. PreToolUse hooks
         if let Some(runner) = self.hook_runner
-            && let Err(hook_result) = runner.run_pre_tool_use(name)
+            && let Err(hook_result) = runner.run_pre_tool_use(name, Some(&input.to_string()))
         {
             return ContentBlock::tool_error(
                 id,
@@ -144,7 +144,7 @@ impl<'a> ToolExecutor<'a> {
 
         // 9. PostToolUse hooks (informational)
         if let Some(runner) = self.hook_runner {
-            let _ = runner.run_post_tool_use(name);
+            let _ = runner.run_post_tool_use(name, Some(&output.content));
         }
 
         if output.is_error {
@@ -431,6 +431,7 @@ mod tests {
                 command: "false".to_string(),
                 tool_filter: None,
                 timeout_ms: None,
+                env: Default::default(),
             }],
             Vec::new(),
             Vec::new(),
