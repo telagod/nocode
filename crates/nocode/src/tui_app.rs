@@ -920,6 +920,32 @@ pub(crate) fn run_app_loop(
     );
     app.hud.session_id = session_id;
 
+    // Auto-update check (non-blocking, cached)
+    {
+        let ff = nocode_core::config::feature_flags::global_feature_flags();
+        let ff_guard = ff.lock().unwrap_or_else(|e| e.into_inner());
+        if ff_guard.is_enabled(nocode_core::config::feature_flags::FeatureFlag::AutoUpdate) {
+            drop(ff_guard);
+            let home = std::env::var("HOME").unwrap_or_default();
+            let cache_path = format!("{home}/.nocode/update_cache.json");
+            let checker = nocode_core::update_checker::UpdateChecker::new(
+                env!("CARGO_PKG_VERSION"),
+                &cache_path,
+                "telagod/nocode",
+            );
+            if let nocode_core::update_checker::UpdateStatus::UpdateAvailable {
+                current,
+                latest,
+                download_url,
+            } = checker.check_cached_only()
+            {
+                app.push_system(&format!(
+                    "Update available: {current} → {latest}\n  {download_url}"
+                ));
+            }
+        }
+    }
+
     let mut event_rx: Option<mpsc::Receiver<TuiEvent>> = None;
     let mut is_busy = false;
 

@@ -1,4 +1,5 @@
 pub mod claude;
+pub mod foundry;
 pub mod gemini;
 pub mod openai;
 pub mod pricing;

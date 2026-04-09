@@ -219,6 +219,14 @@ pub(crate) fn handle_slash_command(
             cmd_telemetry(app, args.as_deref());
             SlashResult::Handled
         }
+        CommandAction::Ide => {
+            cmd_ide(app, args.as_deref());
+            SlashResult::Handled
+        }
+        CommandAction::Voice => {
+            cmd_voice(app, args.as_deref());
+            SlashResult::Handled
+        }
     }
 }
 
@@ -1013,6 +1021,91 @@ fn cmd_telemetry(app: &mut TuiApp, args: Option<&str>) {
         }
         Some(other) => {
             app.push_error(&format!("Invalid option: {other} (use on/off/status)"));
+        }
+    }
+}
+
+fn cmd_ide(app: &mut TuiApp, args: Option<&str>) {
+    match args.map(str::trim) {
+        None | Some("status") | Some("") => {
+            app.push_system(
+                "IDE Server:\n\n\
+                 \x20 Status:  not running\n\
+                 \x20 Mode:    --ide-server\n\
+                 \x20 Port:    3002 (default)\n\n\
+                 The IDE server provides a JSON-RPC interface for VS Code / JetBrains integration.\n\
+                 Start with: nocode --ide-server\n\n\
+                 Usage: /ide start|stop|status",
+            );
+        }
+        Some("start") => {
+            app.push_system(
+                "IDE server must be started from the command line:\n\
+                 \x20 nocode --ide-server\n\n\
+                 This runs a dedicated JSON-RPC server for IDE integration.",
+            );
+        }
+        Some("stop") => {
+            app.push_system("IDE server is not running from within TUI.");
+        }
+        Some(other) => {
+            app.push_error(&format!("Invalid option: {other} (use start/stop/status)"));
+        }
+    }
+}
+
+fn cmd_voice(app: &mut TuiApp, args: Option<&str>) {
+    match args.map(str::trim) {
+        None | Some("status") | Some("") => {
+            // Check for common voice input tools
+            let has_sox = std::process::Command::new("which")
+                .arg("sox")
+                .output()
+                .is_ok_and(|o| o.status.success());
+            let has_arecord = std::process::Command::new("which")
+                .arg("arecord")
+                .output()
+                .is_ok_and(|o| o.status.success());
+
+            let backend = if has_sox {
+                "sox (rec)"
+            } else if has_arecord {
+                "arecord (ALSA)"
+            } else {
+                "none detected"
+            };
+
+            app.push_system(&format!(
+                "Voice Input:\n\n\
+                 \x20 Status:    not active\n\
+                 \x20 Backend:   {backend}\n\
+                 \x20 Required:  sox or arecord + whisper API\n\n\
+                 Voice input captures audio, transcribes via Whisper, and sends as text.\n\n\
+                 Usage: /voice start|stop|status"
+            ));
+        }
+        Some("start") => {
+            let has_sox = std::process::Command::new("which")
+                .arg("sox")
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if !has_sox {
+                app.push_error(
+                    "Voice input requires 'sox' to be installed.\n\
+                     Install: sudo apt install sox (Linux) / brew install sox (macOS)",
+                );
+                return;
+            }
+            app.push_system(
+                "Voice input: recording not yet implemented.\n\
+                 This is a placeholder for future Whisper API integration.",
+            );
+        }
+        Some("stop") => {
+            app.push_system("Voice input is not active.");
+        }
+        Some(other) => {
+            app.push_error(&format!("Invalid option: {other} (use start/stop/status)"));
         }
     }
 }

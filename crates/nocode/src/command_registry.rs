@@ -50,6 +50,8 @@ pub enum CommandAction {
     PluginRemove,
     PluginList,
     Telemetry,
+    Ide,
+    Voice,
 }
 
 /// A registered slash command.
@@ -365,6 +367,20 @@ impl CommandRegistry {
                 summary: "Show or toggle telemetry opt-in/out",
                 argument_hint: Some("[on|off|status]"),
                 action: CommandAction::Telemetry,
+            },
+            CommandEntry {
+                name: "ide",
+                aliases: &[],
+                summary: "Show IDE server status or start/stop",
+                argument_hint: Some("[start|stop|status]"),
+                action: CommandAction::Ide,
+            },
+            CommandEntry {
+                name: "voice",
+                aliases: &[],
+                summary: "Voice input mode (requires system microphone)",
+                argument_hint: Some("[start|stop|status]"),
+                action: CommandAction::Voice,
             },
         ];
 

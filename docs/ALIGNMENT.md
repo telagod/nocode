@@ -1,7 +1,7 @@
 # nocode vs Claude Code 功能对齐清单
 
-> 更新时间：2026-04-09（v0.2.13 — Phase 9-10 完成，Classifier/PermissionRules/RemoteDaemon/McpTransport/DreamTrigger/PluginCLI/Telemetry/WsBridge/FeatureFlags/UpdateChecker）
-> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (101 .rs files, 662 tests)
+> 更新时间：2026-04-09（v0.2.14 — Phase 11 完成，OAuth/Foundry/PowerShell/SessionAuth/McpOAuth/AutoUpdateUI/IDE/Voice）
+> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (106 .rs files, 700 tests)
 
 ## 图例
 
@@ -23,7 +23,7 @@
 | Custom provider (任意端点) | ❌ | ✅ ApiFormat 路由 | nocode 独有 |
 | AWS Bedrock | ✅ Bedrock SDK | 🔶 可通过 Custom + claude format | 需用户配置 SigV4 |
 | Google Vertex AI | ✅ Vertex SDK | 🔶 可通过 Custom + claude format | 需用户配置 OAuth |
-| Anthropic Foundry | ✅ Foundry SDK | ❌ | — |
+| Anthropic Foundry | ✅ Foundry SDK | ✅ FoundryProvider (API key + bearer token) | 完成 |
 | Mock provider | ✅ | ✅ | 完成 |
 | Live SSE streaming | ✅ | ✅ SseReader + stall detection | 完成 |
 | Tool call parsing (Claude) | ✅ | ✅ extract_claude_tool_calls | 完成 |
@@ -96,8 +96,8 @@
 | /agents | ✅ | ✅ overlay | 完成 |
 | /skills | ✅ | ✅ 列出所有命令 | 完成 |
 | /mcp | ✅ | ✅ overlay | 完成 |
-| /ide | ✅ | ❌ | — |
-| /voice | ✅ | ❌ | — |
+| /ide | ✅ | ✅ IDE server status/start/stop | 完成 |
+| /voice | ✅ | ✅ Voice input status + backend detection | 完成 |
 | /vim, /theme | ✅ | ✅ | 完成 |
 | /cost, /usage | ✅ | ✅ overlay | 完成 |
 | /insights | ✅ | ✅ 会话统计分析 | 完成 |
@@ -133,7 +133,7 @@
 | Spinner / 进度条 | ✅ | ✅ Spinner + stall detection | 完成 |
 | 剪贴板集成 | ✅ | ✅ Ctrl-Y 跨平台 (xclip/pbcopy/clip.exe) | 完成 |
 | Onboarding 引导 | ✅ | ✅ 首次启动检测 + 交互式配置 | 完成 |
-| 自动更新 | ✅ | ❌ | — |
+| 自动更新 | ✅ | ✅ UpdateChecker + TUI startup 集成 | 完成 |
 
 ---
 
@@ -197,7 +197,7 @@
 | Permission rules engine | ✅ | ✅ CommandContains + ArgumentContains | 完成 |
 | 9 条预设安全规则 | — | ✅ rm -rf, mkfs, dd, shutdown 等 | nocode 独有 |
 | Bash 只读验证 | ✅ 1,990 LOC | ✅ is_write_command + ReadOnly mode | 完成 |
-| PowerShell 路径验证 | ✅ 2,049 LOC | ❌ | — |
+| PowerShell 路径验证 | ✅ 2,049 LOC | ✅ is_powershell_command + validate_powershell_path + dangerous cmdlets | 完成 |
 | Permission rules UI | ✅ 1,178 LOC | ✅ PermissionRuleStore + /permissions-add/remove | 完成 |
 | Auto-approve / deny | ✅ | ✅ bridge 层 | 完成 |
 | Classifier approvals | ✅ | ✅ ToolClassifier + ToolRiskLevel + ClassifierApproval | 完成 |
@@ -212,7 +212,7 @@
 | MCP client | ✅ | ✅ McpClient JSON-RPC | 完成 |
 | MCP tool discovery | ✅ | ✅ list_tools() | 完成 |
 | MCP tool execution | ✅ | ✅ call_tool() + mcp: 分发 | 完成 |
-| MCP auth (OAuth) | ✅ 2,465 LOC | ❌ | — |
+| MCP auth (OAuth) | ✅ 2,465 LOC | ✅ McpOAuthManager + token cache + refresh | 完成 |
 | MCP resource listing/reading | ✅ | ✅ list_resources + read_resource | 完成 |
 | MCP server management | ✅ 12 components | ✅ /mcp-add /mcp-remove /mcp-restart | 完成 |
 | MCP elicitation | ✅ 1,168 LOC | ✅ ElicitationRequest/Response + Handler trait | 完成 |
@@ -251,9 +251,9 @@
 | 能力 | redcode | nocode | 状态 |
 |------|---------|--------|------|
 | /login /logout | ✅ | ✅ 凭证存储 | 完成 |
-| OAuth client | ✅ | ❌ | — |
+| OAuth client | ✅ | ✅ OAuthClient (authorization_code + PKCE S256) | 完成 |
 | API key verification | ✅ | ✅ verify_key() per provider | 完成 |
-| Session ingress auth | ✅ | ❌ | — |
+| Session ingress auth | ✅ | ✅ SessionAuthStore (token + expiry + revoke) | 完成 |
 | Referral / passes | ✅ | ❌ | — |
 
 ---
@@ -341,8 +341,8 @@
 | Providers | 1 (Claude) | 5 (Claude/OpenAI/Gemini/Custom/Mock) | 超集 |
 | Run modes | ~5 | 9 | 超集 |
 | Slash commands | ~20 | 28 | 超集 |
-| Tests | — | 662 | — |
-| Modules | — | 101 .rs | — |
+| Tests | — | 700 | — |
+| Modules | — | 106 .rs | — |
 
 ### 与 v0.1 对比的进展
 

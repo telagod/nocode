@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod auth;
 pub mod bridge;
 pub mod config;
 pub mod mcp;
