@@ -2,6 +2,7 @@ pub mod agent;
 pub mod auth;
 pub mod bridge;
 pub mod config;
+pub mod ide_server;
 pub mod mcp;
 pub mod message;
 pub mod prompt;

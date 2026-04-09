@@ -3,4 +3,5 @@ pub mod client;
 pub mod elicitation;
 pub mod manager;
 pub mod oauth;
+pub mod server;
 pub mod transport;

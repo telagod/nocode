@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = ["full"]
+full = ["tui", "nocode-core/full"]
+minimal = ["nocode-core/minimal"]
+tui = []
+
 [dependencies]
 crossterm = "0.28"
 nocode-core = { path = "../nocode-core" }

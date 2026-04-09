@@ -1,6 +1,6 @@
 {
   "name": "@telagod/nocode-linux-arm64",
-  "version": "0.2.14",
+  "version": "0.2.15",
   "description": "nocode platform binary for Linux ARM64",
   "os": ["linux"],
   "cpu": ["arm64"],

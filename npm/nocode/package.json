@@ -1,6 +1,6 @@
 {
   "name": "@telagod/nocode",
-  "version": "0.2.14",
+  "version": "0.2.15",
   "description": "Terminal-native AI coding assistant built in Rust",
   "license": "MIT",
   "author": "telagod",

@@ -8,6 +8,15 @@ authors.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = ["full"]
+full = ["mcp", "plugins", "telemetry", "oauth"]
+minimal = []
+mcp = []
+plugins = []
+telemetry = []
+oauth = []
+
 [dependencies]
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "blocking"] }

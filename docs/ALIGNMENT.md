@@ -1,7 +1,7 @@
 # nocode vs Claude Code 功能对齐清单
 
-> 更新时间：2026-04-09（v0.2.14 — Phase 11 完成，OAuth/Foundry/PowerShell/SessionAuth/McpOAuth/AutoUpdateUI/IDE/Voice）
-> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (106 .rs files, 700 tests)
+> 更新时间：2026-04-09（v0.2.15 — Phase 12 完成，MCP Server/IDE Server/Native Installer/Build Variants/Datadog Sink）
+> 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (108 .rs files, 729 tests)
 
 ## 图例
 
@@ -217,7 +217,7 @@
 | MCP server management | ✅ 12 components | ✅ /mcp-add /mcp-remove /mcp-restart | 完成 |
 | MCP elicitation | ✅ 1,168 LOC | ✅ ElicitationRequest/Response + Handler trait | 完成 |
 | In-process transport | ✅ | ✅ McpTransport trait + InProcessTransport | 完成 |
-| VS Code MCP | ✅ | ❌ | — |
+| VS Code MCP | ✅ | ✅ McpServer (stdio JSON-RPC, 21 tools exposed) | 完成 |
 
 ---
 
@@ -239,7 +239,7 @@
 |------|---------|--------|------|
 | VS Code 集成 | ✅ | ❌ | — |
 | JetBrains 集成 | ✅ | ❌ | — |
-| IDE server mode | ✅ | ❌ | v0.3 计划 |
+| IDE server mode | ✅ | ✅ IdeRequestHandler (JSON-RPC, query/diagnostics/completions/hover) | 完成 |
 | Desktop app | ✅ | ❌ | — |
 | Mobile | ✅ | ❌ | — |
 | Deep linking | ✅ | ❌ | — |
@@ -263,7 +263,7 @@
 | 能力 | redcode | nocode | 状态 |
 |------|---------|--------|------|
 | Feature flags | ✅ 88 flags | ✅ FeatureFlagStore (8 flags, file + env override) | 完成 |
-| Datadog integration | ✅ | ❌ | — |
+| Datadog integration | ✅ | ✅ DatadogSink (HTTP intake + batch + tags) | 完成 |
 | Event logging | ✅ | ✅ EventLogger JSONL + opt-in | 完成 |
 | Metrics opt-out | ✅ | ✅ /telemetry + feature flag + settings | 完成 |
 
@@ -291,8 +291,8 @@
 | install.sh | ✅ | ✅ | 完成 |
 | /doctor 诊断 | ✅ | ✅ | 完成 |
 | Auto-updater | ✅ | ✅ UpdateChecker (GitHub releases + cache + semver) | 完成 |
-| Native installer | ✅ | ❌ | — |
-| Build variants | ✅ | ❌ | — |
+| Native installer | ✅ | ✅ install.sh (platform detect + checksum + PATH) | 完成 |
+| Build variants | ✅ | ✅ Cargo features (full/minimal/mcp/plugins/telemetry/oauth) | 完成 |
 | 灰度 / 回滚 | ✅ | ❌ | — |
 
 ---
@@ -341,8 +341,8 @@
 | Providers | 1 (Claude) | 5 (Claude/OpenAI/Gemini/Custom/Mock) | 超集 |
 | Run modes | ~5 | 9 | 超集 |
 | Slash commands | ~20 | 28 | 超集 |
-| Tests | — | 700 | — |
-| Modules | — | 106 .rs | — |
+| Tests | — | 729 | — |
+| Modules | — | 108 .rs | — |
 
 ### 与 v0.1 对比的进展
 

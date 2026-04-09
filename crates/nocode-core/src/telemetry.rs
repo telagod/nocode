@@ -206,6 +206,161 @@ pub fn init_global_event_logger(logger: EventLogger) {
     *guard = logger;
 }
 
+// ---------------------------------------------------------------------------
+// DatadogSink — sends telemetry events to Datadog intake API
+// ---------------------------------------------------------------------------
+
+/// Configuration for Datadog telemetry sink.
+#[derive(Debug, Clone)]
+pub struct DatadogConfig {
+    /// Datadog API key.
+    pub api_key: String,
+    /// Datadog site (e.g., "datadoghq.com", "datadoghq.eu").
+    pub site: String,
+    /// Service name tag.
+    pub service: String,
+    /// Additional tags (key:value format).
+    pub tags: Vec<String>,
+}
+
+impl DatadogConfig {
+    pub fn new(api_key: &str) -> Self {
+        Self {
+            api_key: api_key.to_string(),
+            site: "datadoghq.com".to_string(),
+            service: "nocode".to_string(),
+            tags: Vec::new(),
+        }
+    }
+
+    pub fn with_site(mut self, site: &str) -> Self {
+        self.site = site.to_string();
+        self
+    }
+
+    pub fn with_service(mut self, service: &str) -> Self {
+        self.service = service.to_string();
+        self
+    }
+
+    pub fn with_tag(mut self, tag: &str) -> Self {
+        self.tags.push(tag.to_string());
+        self
+    }
+
+    /// Intake URL for logs.
+    pub fn intake_url(&self) -> String {
+        format!("https://http-intake.logs.{}/api/v2/logs", self.site)
+    }
+}
+
+/// Datadog telemetry sink — batches and sends events via HTTP.
+pub struct DatadogSink {
+    config: DatadogConfig,
+    buffer: Vec<TelemetryEvent>,
+    /// Max events before auto-flush.
+    batch_size: usize,
+    /// Total events sent.
+    sent_count: u64,
+}
+
+impl DatadogSink {
+    pub fn new(config: DatadogConfig) -> Self {
+        Self {
+            config,
+            buffer: Vec::new(),
+            batch_size: 50,
+            sent_count: 0,
+        }
+    }
+
+    pub fn with_batch_size(mut self, size: usize) -> Self {
+        self.batch_size = size;
+        self
+    }
+
+    /// Buffer an event. Auto-flushes when batch_size is reached.
+    pub fn push(&mut self, event: TelemetryEvent) -> Result<(), String> {
+        self.buffer.push(event);
+        if self.buffer.len() >= self.batch_size {
+            self.flush()?;
+        }
+        Ok(())
+    }
+
+    /// Flush all buffered events to Datadog.
+    pub fn flush(&mut self) -> Result<usize, String> {
+        if self.buffer.is_empty() {
+            return Ok(0);
+        }
+        let events = std::mem::take(&mut self.buffer);
+        let count = events.len();
+        let payload = self.build_payload(&events)?;
+        self.send(&payload)?;
+        self.sent_count += count as u64;
+        Ok(count)
+    }
+
+    /// Total events sent to Datadog.
+    pub fn sent_count(&self) -> u64 {
+        self.sent_count
+    }
+
+    /// Events currently buffered.
+    pub fn buffered_count(&self) -> usize {
+        self.buffer.len()
+    }
+
+    fn build_payload(&self, events: &[TelemetryEvent]) -> Result<String, String> {
+        let logs: Vec<serde_json::Value> = events
+            .iter()
+            .map(|e| {
+                let mut tags = self.config.tags.clone();
+                tags.push(format!("event_type:{}", serde_json::to_string(&e.event_type).unwrap_or_default().trim_matches('"')));
+                if let Some(sid) = &e.session_id {
+                    tags.push(format!("session_id:{sid}"));
+                }
+                serde_json::json!({
+                    "ddsource": "nocode",
+                    "ddtags": tags.join(","),
+                    "hostname": hostname(),
+                    "service": self.config.service,
+                    "message": serde_json::to_string(&e.data).unwrap_or_default(),
+                    "date": e.timestamp.to_rfc3339(),
+                })
+            })
+            .collect();
+        serde_json::to_string(&logs).map_err(|e| format!("serialize error: {e}"))
+    }
+
+    fn send(&self, payload: &str) -> Result<(), String> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| format!("client error: {e}"))?;
+
+        let resp = client
+            .post(self.config.intake_url())
+            .header("Content-Type", "application/json")
+            .header("DD-API-KEY", &self.config.api_key)
+            .body(payload.to_string())
+            .send()
+            .map_err(|e| format!("send error: {e}"))?;
+
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            Err(format!("Datadog HTTP {}", resp.status()))
+        }
+    }
+}
+
+fn hostname() -> String {
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("HOST"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,5 +447,79 @@ mod tests {
             let parsed: EventType = serde_json::from_str(&json).unwrap();
             assert_eq!(&parsed, t);
         }
+    }
+
+    // --- DatadogSink ---
+
+    #[test]
+    fn datadog_config_defaults() {
+        let config = DatadogConfig::new("dd-api-key");
+        assert_eq!(config.site, "datadoghq.com");
+        assert_eq!(config.service, "nocode");
+        assert!(config.tags.is_empty());
+    }
+
+    #[test]
+    fn datadog_config_builder() {
+        let config = DatadogConfig::new("key")
+            .with_site("datadoghq.eu")
+            .with_service("my-app")
+            .with_tag("env:prod");
+        assert_eq!(config.site, "datadoghq.eu");
+        assert_eq!(config.service, "my-app");
+        assert_eq!(config.tags, vec!["env:prod"]);
+    }
+
+    #[test]
+    fn datadog_intake_url() {
+        let config = DatadogConfig::new("key");
+        assert_eq!(
+            config.intake_url(),
+            "https://http-intake.logs.datadoghq.com/api/v2/logs"
+        );
+        let eu = DatadogConfig::new("key").with_site("datadoghq.eu");
+        assert_eq!(
+            eu.intake_url(),
+            "https://http-intake.logs.datadoghq.eu/api/v2/logs"
+        );
+    }
+
+    #[test]
+    fn datadog_sink_buffers() {
+        let config = DatadogConfig::new("fake-key");
+        let mut sink = DatadogSink::new(config).with_batch_size(100);
+        let event = TelemetryEvent::new(EventType::ToolCall, serde_json::json!({"tool": "Bash"}));
+        // Push without triggering flush (batch_size=100)
+        sink.buffer.push(event);
+        assert_eq!(sink.buffered_count(), 1);
+        assert_eq!(sink.sent_count(), 0);
+    }
+
+    #[test]
+    fn datadog_sink_build_payload() {
+        let config = DatadogConfig::new("key").with_tag("env:test");
+        let sink = DatadogSink::new(config);
+        let event = TelemetryEvent::new(
+            EventType::ModelCall,
+            serde_json::json!({"model": "claude"}),
+        ).with_session("sess-1");
+        let payload = sink.build_payload(&[event]).unwrap();
+        assert!(payload.contains("nocode"));
+        assert!(payload.contains("env:test"));
+        assert!(payload.contains("session_id:sess-1"));
+        assert!(payload.contains("model_call"));
+    }
+
+    #[test]
+    fn datadog_sink_flush_empty() {
+        let config = DatadogConfig::new("key");
+        let mut sink = DatadogSink::new(config);
+        assert_eq!(sink.flush().unwrap(), 0);
+    }
+
+    #[test]
+    fn datadog_hostname() {
+        let h = hostname();
+        assert!(!h.is_empty());
     }
 }
