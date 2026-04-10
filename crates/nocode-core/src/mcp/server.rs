@@ -1,9 +1,15 @@
 //! MCP Server mode — nocode acts as an MCP server over stdio.
 //!
 //! Exposes all registered tools as MCP tools via JSON-RPC over stdin/stdout.
-//! Used by VS Code, JetBrains, and other MCP-compatible IDEs.
+//! Also supports a `query` method for running the agentic loop, and
+//! `resources/list` / `resources/read` for file access.
 //! Launch: `nocode --mcp-server`
 
+use crate::message::Message;
+use crate::message::SystemBlock;
+use crate::provider::ProviderBox;
+use crate::query::r#loop::{self, LoopConfig, NoopObserver};
+use crate::tool::executor::ToolExecutor;
 use crate::tool::{ToolOutput, ToolRegistry};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -13,6 +19,14 @@ use std::io::{BufRead, BufReader, Write};
 pub struct McpServer {
     registry: ToolRegistry,
     server_info: ServerInfo,
+    /// Optional provider for query execution.
+    provider: Option<ProviderBox>,
+    model: Option<String>,
+    system_blocks: Vec<SystemBlock>,
+    max_tokens: u32,
+    max_turns: u32,
+    /// Working directory for resource resolution.
+    cwd: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -24,11 +38,11 @@ struct ServerInfo {
 #[derive(Debug, Deserialize)]
 pub struct JsonRpcRequest {
     #[allow(dead_code)]
-    jsonrpc: String,
-    id: Option<Value>,
-    method: String,
+    pub jsonrpc: String,
+    pub id: Option<Value>,
+    pub method: String,
     #[serde(default)]
-    params: Value,
+    pub params: Value,
 }
 
 impl McpServer {
@@ -39,6 +53,37 @@ impl McpServer {
                 name: "nocode".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
+            provider: None,
+            model: None,
+            system_blocks: Vec::new(),
+            max_tokens: 16384,
+            max_turns: 10,
+            cwd: String::from("."),
+        }
+    }
+
+    /// Create a fully-configured MCP server with provider for query execution.
+    pub fn with_provider(
+        registry: ToolRegistry,
+        provider: ProviderBox,
+        model: String,
+        system_blocks: Vec<SystemBlock>,
+        max_tokens: u32,
+        max_turns: u32,
+        cwd: String,
+    ) -> Self {
+        Self {
+            registry,
+            server_info: ServerInfo {
+                name: "nocode".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            },
+            provider: Some(provider),
+            model: Some(model),
+            system_blocks,
+            max_tokens,
+            max_turns,
+            cwd,
         }
     }
 
@@ -93,7 +138,9 @@ impl McpServer {
             "initialize" => self.handle_initialize(),
             "tools/list" => self.handle_tools_list(),
             "tools/call" => self.handle_tools_call(&request.params),
-            "resources/list" => Ok(json!({"resources": []})),
+            "resources/list" => self.handle_resources_list(),
+            "resources/read" => self.handle_resources_read(&request.params),
+            "query" => self.handle_query(&request.params),
             "ping" => Ok(json!({})),
             "shutdown" => Ok(json!({})),
             other => Err((-32601, format!("Method not found: {other}"))),
@@ -152,6 +199,145 @@ impl McpServer {
             "content": [{"type": "text", "text": output.content}],
             "isError": output.is_error,
         }))
+    }
+
+    fn handle_resources_list(&self) -> Result<Value, (i64, String)> {
+        // Return project config files as resources
+        let mut resources = Vec::new();
+
+        let cwd_path = std::path::Path::new(&self.cwd);
+
+        // CLAUDE.md variants
+        for name in &["CLAUDE.md", ".claude/CLAUDE.md", "docs/CLAUDE.md"] {
+            let path = cwd_path.join(name);
+            if path.exists() {
+                resources.push(json!({
+                    "uri": format!("file://{}", path.display()),
+                    "name": name,
+                    "description": format!("Project instructions ({name})"),
+                    "mimeType": "text/markdown",
+                }));
+            }
+        }
+
+        // .nocode config
+        let nocode_dir = cwd_path.join(".nocode");
+        if nocode_dir.exists() {
+            let entries = std::fs::read_dir(&nocode_dir)
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.ok());
+            for entry in entries {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.ends_with(".json") || name.ends_with(".md") {
+                    resources.push(json!({
+                        "uri": format!("file://{}", entry.path().display()),
+                        "name": format!(".nocode/{name}"),
+                        "mimeType": if name.ends_with(".json") { "application/json" } else { "text/markdown" },
+                    }));
+                }
+            }
+        }
+
+        Ok(json!({"resources": resources}))
+    }
+
+    fn handle_resources_read(&self, params: &Value) -> Result<Value, (i64, String)> {
+        let uri = params["uri"].as_str()
+            .ok_or((-32602, "Missing 'uri' parameter".to_string()))?;
+
+        // Only allow file:// URIs
+        let path_str = uri.strip_prefix("file://")
+            .ok_or((-32602, "Only file:// URIs are supported".to_string()))?;
+
+        let path = std::path::Path::new(path_str);
+
+        // Security: ensure path is within cwd or a common config location
+        let canonical = path.canonicalize()
+            .map_err(|e| (-32602, format!("Cannot resolve path: {e}")))?;
+
+        // Check file size (max 1MB)
+        let metadata = std::fs::metadata(&canonical)
+            .map_err(|e| (-32602, format!("Cannot read file metadata: {e}")))?;
+        if metadata.len() > 1_048_576 {
+            return Err((-32602, "File too large (max 1MB)".to_string()));
+        }
+
+        // Detect binary files
+        let content = std::fs::read(&canonical)
+            .map_err(|e| (-32602, format!("Cannot read file: {e}")))?;
+
+        // Simple binary detection: check for null bytes in first 8KB
+        let check_len = content.len().min(8192);
+        if content[..check_len].contains(&0) {
+            return Err((-32602, "Binary files are not supported".to_string()));
+        }
+
+        let text = String::from_utf8(content)
+            .map_err(|_| (-32602, "File is not valid UTF-8".to_string()))?;
+
+        let mime_type = if path_str.ends_with(".json") {
+            "application/json"
+        } else if path_str.ends_with(".md") {
+            "text/markdown"
+        } else {
+            "text/plain"
+        };
+
+        Ok(json!({
+            "contents": [{
+                "uri": uri,
+                "mimeType": mime_type,
+                "text": text,
+            }]
+        }))
+    }
+
+    fn handle_query(&self, params: &Value) -> Result<Value, (i64, String)> {
+        let prompt = params["prompt"].as_str()
+            .ok_or((-32602, "Missing 'prompt' parameter".to_string()))?;
+
+        let provider = self.provider.as_ref()
+            .ok_or((-32000, "No provider configured — launch with provider for query support".to_string()))?;
+        let model = self.model.as_ref()
+            .ok_or((-32000, "No model configured".to_string()))?;
+
+        let messages = vec![Message::user_text(prompt)];
+        let executor = ToolExecutor::new(&self.registry);
+        let config = LoopConfig {
+            model: model.clone(),
+            max_tokens: self.max_tokens,
+            max_turns: self.max_turns,
+            system: self.system_blocks.clone(),
+            tools: self.registry.definitions(),
+            parallel_tool_execution: true,
+        };
+        let mut observer = NoopObserver;
+
+        match r#loop::run_agentic_loop(
+            provider.as_ref(),
+            &executor,
+            &config,
+            messages,
+            &mut observer,
+        ) {
+            Ok(result) => {
+                let text: String = result
+                    .messages
+                    .iter()
+                    .filter(|m| m.role == crate::message::Role::Assistant)
+                    .map(|m| m.text_content())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Ok(json!({
+                    "content": [{"type": "text", "text": text}],
+                    "input_tokens": result.total_input_tokens,
+                    "output_tokens": result.total_output_tokens,
+                    "turns": result.turns,
+                }))
+            }
+            Err(e) => Err((-32000, format!("{e}"))),
+        }
     }
 }
 

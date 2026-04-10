@@ -7,6 +7,7 @@ use crate::tool::bash_validation;
 use crate::tool::file_safety;
 use crate::tool::hook_runner::HookRunner;
 use crate::tool::permission::{PermissionDecision, PermissionMode, PermissionPrompter};
+use crate::tool::session_tools::is_plan_mode;
 use crate::tool::tool_validation::validate_tool_input;
 use crate::tool::trust::{PermissionEnforcer, TrustDecision};
 use serde_json::Value;
@@ -170,6 +171,11 @@ impl<'a> ToolExecutor<'a> {
 
     /// Check if a tool call is permitted under the current permission mode.
     fn check_permission(&self, name: &str, input: &Value) -> bool {
+        // Plan mode overrides everything: only read-only tools allowed
+        if is_plan_mode() {
+            return Self::is_read_only_tool(name, input);
+        }
+
         match self.permission_mode {
             PermissionMode::Auto => true,
             PermissionMode::Ask => {
@@ -262,6 +268,25 @@ impl<'a> ToolExecutor<'a> {
                 }
             }
             _ => None,
+        }
+    }
+
+    /// Determine whether a tool is considered read-only (safe for plan mode).
+    fn is_read_only_tool(name: &str, input: &Value) -> bool {
+        match name {
+            // Always read-only
+            "FileRead" | "Glob" | "Grep" | "TaskGet" | "TaskList" | "TaskOutput"
+            | "MemoryList" | "MemorySearch" | "CronList" | "ToolSearch"
+            | "ListMcpResources" | "ReadMcpResource" | "AskUserQuestion"
+            | "EnterPlanMode" | "ExitPlanMode" => true,
+            // Bash: only if the command is read-only
+            "Bash" => {
+                let cmd = input["command"].as_str().unwrap_or("");
+                !bash_validation::is_write_command(cmd)
+                    && bash_validation::is_read_only_command(cmd)
+            }
+            // Everything else is write/destructive
+            _ => false,
         }
     }
 }
@@ -451,6 +476,9 @@ mod tests {
 
     #[test]
     fn sandbox_blocks_network() {
+        // Ensure plan mode is off so permission check doesn't interfere
+        crate::tool::session_tools::exit_plan_mode();
+
         let reg = test_registry();
         let sandbox = SandboxConfig {
             enabled: true,
@@ -472,5 +500,56 @@ mod tests {
         } else {
             panic!("Expected ToolResult");
         }
+    }
+
+    #[test]
+    fn plan_mode_blocks_write_tools() {
+        use crate::tool::session_tools::{exit_plan_mode, is_plan_mode, enter_plan_mode};
+
+        // Clean slate
+        exit_plan_mode();
+        assert!(!is_plan_mode());
+
+        let reg = test_registry();
+        let exec = ToolExecutor::new(&reg);
+
+        // Activate plan mode directly
+        enter_plan_mode();
+        assert!(is_plan_mode());
+
+        // Now FileWrite should be blocked by permission
+        let result = exec.execute_tool_use(
+            "id-pm2",
+            "FileWrite",
+            &json!({"file_path": "/tmp/nocode_plan_test.txt", "content": "x"}),
+        );
+        if let ContentBlock::ToolResult {
+            content, is_error, ..
+        } = &result
+        {
+            assert!(is_error);
+            assert!(content.contains("Permission denied"));
+        } else {
+            panic!("Expected ToolResult");
+        }
+
+        // Read-only tool should still work
+        let result = exec.execute_tool_use("id-pm3", "Glob", &json!({"pattern": "/tmp/*"}));
+        if let ContentBlock::ToolResult { is_error, .. } = &result {
+            assert!(!is_error);
+        } else {
+            panic!("Expected ToolResult");
+        }
+
+        // Read-only Bash should work
+        let result = exec.execute_tool_use("id-pm4", "Bash", &json!({"command": "ls /tmp"}));
+        if let ContentBlock::ToolResult { is_error, .. } = &result {
+            assert!(!is_error);
+        } else {
+            panic!("Expected ToolResult");
+        }
+
+        // Clean up
+        exit_plan_mode();
     }
 }

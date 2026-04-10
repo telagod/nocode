@@ -1,7 +1,43 @@
 //! Session control tools — EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree.
+//!
+//! Plan mode restricts the model to read-only operations while it explores the
+//! codebase and designs an approach. Exiting plan mode registers any
+//! `allowedPrompts` as temporary permission rules so the model can implement
+//! its plan.
 
+use crate::tool::permission::{PermissionRule, RuleAction, global_permission_rules};
 use crate::tool::{Tool, ToolOutput};
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
+
+// ---------------------------------------------------------------------------
+// Plan mode global state
+// ---------------------------------------------------------------------------
+
+/// Global plan-mode flag. When true, the ToolExecutor restricts all tool
+/// calls to read-only operations (same as `PermissionMode::ReadOnly`).
+static PLAN_MODE_ACTIVE: OnceLock<AtomicBool> = OnceLock::new();
+
+/// Returns the global plan-mode flag.
+pub fn plan_mode_active() -> &'static AtomicBool {
+    PLAN_MODE_ACTIVE.get_or_init(|| AtomicBool::new(false))
+}
+
+/// Check whether plan mode is currently active.
+pub fn is_plan_mode() -> bool {
+    plan_mode_active().load(Ordering::Relaxed)
+}
+
+/// Activate plan mode.
+pub fn enter_plan_mode() {
+    plan_mode_active().store(true, Ordering::Relaxed);
+}
+
+/// Deactivate plan mode.
+pub fn exit_plan_mode() {
+    plan_mode_active().store(false, Ordering::Relaxed);
+}
 
 // ---------------------------------------------------------------------------
 // EnterPlanMode
@@ -14,7 +50,7 @@ impl Tool for EnterPlanModeTool {
         "EnterPlanMode"
     }
     fn description(&self) -> &str {
-        "Enter plan mode to explore the codebase and design an implementation approach before writing code."
+        "Enter plan mode to explore the codebase and design an implementation approach before writing code. In plan mode, only read-only tools are available."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -23,9 +59,14 @@ impl Tool for EnterPlanModeTool {
         })
     }
     fn execute(&self, _input: &Value) -> ToolOutput {
+        enter_plan_mode();
         ToolOutput::success(
-            "Entered plan mode. Explore the codebase and present your plan for approval.",
+            "Entered plan mode. You can now explore the codebase with read-only tools. \
+             Present your plan for approval, then use ExitPlanMode to begin implementation.",
         )
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -40,7 +81,7 @@ impl Tool for ExitPlanModeTool {
         "ExitPlanMode"
     }
     fn description(&self) -> &str {
-        "Exit plan mode and begin implementing the approved plan."
+        "Exit plan mode and begin implementing the approved plan. Optionally specify allowedPrompts for temporary permission rules."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -61,6 +102,8 @@ impl Tool for ExitPlanModeTool {
         })
     }
     fn execute(&self, input: &Value) -> ToolOutput {
+        exit_plan_mode();
+
         let prompts = input["allowedPrompts"]
             .as_array()
             .map(|arr| {
@@ -68,20 +111,37 @@ impl Tool for ExitPlanModeTool {
                     .filter_map(|p| {
                         let tool = p["tool"].as_str()?;
                         let prompt = p["prompt"].as_str()?;
-                        Some(format!("{tool}: {prompt}"))
+                        Some((tool.to_string(), prompt.to_string()))
                     })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
 
         if prompts.is_empty() {
-            ToolOutput::success("Exited plan mode. Ready to implement.")
-        } else {
-            ToolOutput::success(format!(
-                "Exited plan mode. Allowed actions:\n{}",
-                prompts.join("\n")
-            ))
+            return ToolOutput::success("Exited plan mode. Ready to implement.");
         }
+
+        // Register each allowedPrompt as a permission rule
+        let rules = global_permission_rules();
+        let mut guard = rules.lock().unwrap_or_else(|e| e.into_inner());
+        let mut registered = Vec::new();
+        for (tool, prompt) in &prompts {
+            let _ = guard.add(PermissionRule {
+                tool_name: tool.clone(),
+                action: RuleAction::Allow,
+                argument_pattern: Some(prompt.clone()),
+            });
+            registered.push(format!("{tool}: {prompt}"));
+        }
+
+        ToolOutput::success(format!(
+            "Exited plan mode. Registered {} permission rule(s):\n{}",
+            registered.len(),
+            registered.join("\n")
+        ))
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -169,19 +229,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn enter_plan_mode_succeeds() {
+    fn enter_exit_plan_mode_roundtrip() {
+        // Clean slate
+        exit_plan_mode();
+        assert!(!is_plan_mode());
+
+        // Enter
         let tool = EnterPlanModeTool;
         let result = tool.execute(&json!({}));
         assert!(!result.is_error);
         assert!(result.content.contains("plan mode"));
-    }
+        assert!(is_plan_mode());
 
-    #[test]
-    fn exit_plan_mode_no_prompts() {
+        // Exit
         let tool = ExitPlanModeTool;
         let result = tool.execute(&json!({}));
         assert!(!result.is_error);
-        assert!(result.content.contains("Exited plan mode"));
+        assert!(!is_plan_mode());
     }
 
     #[test]
@@ -196,6 +260,7 @@ mod tests {
         assert!(!result.is_error);
         assert!(result.content.contains("Bash: run tests"));
         assert!(result.content.contains("Bash: install dependencies"));
+        assert!(result.content.contains("2 permission rule"));
     }
 
     #[test]

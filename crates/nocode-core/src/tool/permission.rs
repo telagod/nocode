@@ -34,6 +34,48 @@ pub trait PermissionPrompter: Send + Sync {
     fn prompt(&self, tool_name: &str, arguments_summary: &str) -> PermissionDecision;
 }
 
+// ---------------------------------------------------------------------------
+// QuestionPrompter — AskUserQuestion interaction bridge
+// ---------------------------------------------------------------------------
+
+/// User's answer to a question posed by AskUserQuestion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserAnswer {
+    /// The selected option label for each question (index matches question order).
+    pub selections: Vec<String>,
+}
+
+/// Trait for interactive question prompting (AskUserQuestion).
+/// Implementations block until the user responds.
+pub trait QuestionPrompter: Send + Sync {
+    /// Present questions to the user and block until they answer.
+    /// Returns the user's selections or an error string if cancelled/timeout.
+    fn prompt_questions(&self, questions: &serde_json::Value) -> Result<UserAnswer, String>;
+}
+
+/// Auto-answer prompter that picks the first option (for non-interactive mode).
+pub struct AutoFirstOptionPrompter;
+
+impl QuestionPrompter for AutoFirstOptionPrompter {
+    fn prompt_questions(&self, questions: &serde_json::Value) -> Result<UserAnswer, String> {
+        let Some(arr) = questions.as_array() else {
+            return Err("Invalid questions format".to_string());
+        };
+        let selections = arr
+            .iter()
+            .map(|q| {
+                q["options"]
+                    .as_array()
+                    .and_then(|opts| opts.first())
+                    .and_then(|o| o["label"].as_str())
+                    .unwrap_or("N/A")
+                    .to_string()
+            })
+            .collect();
+        Ok(UserAnswer { selections })
+    }
+}
+
 /// Auto-approve prompter (for non-interactive / Auto mode).
 pub struct AutoApprovePrompter;
 

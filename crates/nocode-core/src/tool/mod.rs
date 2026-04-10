@@ -79,6 +79,13 @@ pub trait Tool: Send + Sync {
             cache_control: None,
         }
     }
+
+    /// Support downcasting for tools that need runtime type injection.
+    fn as_any(&self) -> &dyn std::any::Any {
+        // Default: return a dangling reference — tools must override if they
+        // need to support downcasting.
+        &()
+    }
 }
 
 /// Registry of available tools.
@@ -101,6 +108,14 @@ impl ToolRegistry {
         self.tools.get(name).map(AsRef::as_ref)
     }
 
+    /// Get a tool as a concrete type via downcasting.
+    /// Returns None if the tool doesn't exist or isn't the requested type.
+    pub fn get_as<T: 'static>(&self, name: &str) -> Option<&T> {
+        self.tools
+            .get(name)
+            .and_then(|tool| tool.as_any().downcast_ref::<T>())
+    }
+
     pub fn definitions(&self) -> Vec<ToolDefinition> {
         self.tools.values().map(|t| t.definition()).collect()
     }
@@ -116,7 +131,7 @@ impl ToolRegistry {
         // 1. Agent
         registry.register(Box::new(agent::AgentTool));
         // 2. AskUserQuestion
-        registry.register(Box::new(interactive_tools::AskUserQuestionTool));
+        registry.register(Box::new(interactive_tools::AskUserQuestionTool::new()));
         // 3. Bash
         registry.register(Box::new(bash::BashTool::new(&cwd)));
         // 4. Config

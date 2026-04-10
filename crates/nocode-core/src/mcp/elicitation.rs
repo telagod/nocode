@@ -125,6 +125,78 @@ impl ElicitationHandler for AutoConfirmHandler {
     }
 }
 
+/// Interactive handler — communicates with a user interface via channels.
+///
+/// The TUI or REPL sends an `ElicitationRequest` through the `tx` channel,
+/// and receives an `ElicitationResponse` back on the `rx` channel.
+/// This decouples the MCP protocol layer from the UI layer.
+pub struct InteractiveElicitationHandler {
+    tx: std::sync::mpsc::Sender<(ElicitationRequest, std::sync::mpsc::Sender<ElicitationResponse>)>,
+}
+
+impl InteractiveElicitationHandler {
+    /// Create a new interactive handler, returning the handler and a receiver
+    /// for the UI to listen on.
+    pub fn new() -> (Self, std::sync::mpsc::Receiver<(ElicitationRequest, std::sync::mpsc::Sender<ElicitationResponse>)>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        (Self { tx }, rx)
+    }
+}
+
+impl ElicitationHandler for InteractiveElicitationHandler {
+    fn handle(&self, request: &ElicitationRequest) -> ElicitationResponse {
+        // Create a one-shot channel for the response
+        let (resp_tx, resp_rx) = std::sync::mpsc::channel();
+
+        // Send the request + response sender to the UI
+        if self.tx.send((request.clone(), resp_tx)).is_err() {
+            return ElicitationResponse {
+                id: request.id.clone(),
+                action: ElicitationAction::Deny,
+                values: std::collections::HashMap::new(),
+            };
+        }
+
+        // Wait for the UI response (with timeout)
+        let timeout = if request.timeout_secs > 0 {
+            std::time::Duration::from_secs(request.timeout_secs)
+        } else {
+            std::time::Duration::from_secs(120) // default 2 min
+        };
+
+        match resp_rx.recv_timeout(timeout) {
+            Ok(response) => response,
+            Err(_) => ElicitationResponse {
+                id: request.id.clone(),
+                action: ElicitationAction::Timeout,
+                values: std::collections::HashMap::new(),
+            },
+        }
+    }
+}
+
+/// Helper for the TUI/REPL side: process a pending elicitation request
+/// by auto-filling defaults and returning a confirm response.
+/// Useful as a fallback when no interactive UI is available.
+pub fn auto_fill_defaults(request: &ElicitationRequest) -> ElicitationResponse {
+    let mut values = std::collections::HashMap::new();
+    if let Some(schema) = &request.schema {
+        for field in &schema.fields {
+            let value = match field.field_type {
+                ElicitationFieldType::Boolean => Value::Bool(false),
+                ElicitationFieldType::Number => Value::Number(0.into()),
+                _ => Value::String(field.default_value.clone().unwrap_or_default()),
+            };
+            values.insert(field.name.clone(), value);
+        }
+    }
+    ElicitationResponse {
+        id: request.id.clone(),
+        action: ElicitationAction::Confirm,
+        values,
+    }
+}
+
 /// Parse an elicitation/create JSON-RPC params into an ElicitationRequest.
 pub fn parse_elicitation_request(params: &Value) -> Result<ElicitationRequest, String> {
     serde_json::from_value(params.clone())

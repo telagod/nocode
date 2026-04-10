@@ -61,6 +61,111 @@ impl McpOAuthManager {
         self.configs.insert(config.server_name.clone(), config);
     }
 
+    /// Start a full OAuth flow: spin up a localhost callback server, open the
+    /// browser, wait for the redirect, exchange the code, and cache the token.
+    ///
+    /// Returns the cached access token on success.
+    pub fn start_oauth_flow(
+        &mut self,
+        server_name: &str,
+        timeout_secs: u64,
+    ) -> Result<String, String> {
+        // 1. Bind a random port for the callback
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| format!("Failed to bind callback port: {e}"))?;
+        let port = listener.local_addr()
+            .map_err(|e| format!("Failed to get local addr: {e}"))?
+            .port();
+
+        // 2. Dynamically update redirect_uri to match the bound port
+        let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+
+        // 3. Temporarily patch the config's redirect_uri for URL generation
+        let config = self.configs.get(server_name)
+            .ok_or_else(|| format!("No OAuth config for server '{server_name}'"))?;
+        let mut patched_config = config.oauth.clone();
+        patched_config.redirect_uri = redirect_uri.clone();
+
+        let client = OAuthClient::new(patched_config);
+        let state = format!("mcp-oauth-{server_name}");
+        let (url, pkce) = client.authorize_url(&state);
+        let pkce_verifier = pkce.verifier;
+
+        // 4. Open browser
+        let browser_opened = open_browser(&url);
+
+        // 5. Wait for callback with timeout
+        listener.set_nonblocking(false)
+            .map_err(|e| format!("Failed to set blocking mode: {e}"))?;
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        let mut code_opt: Option<String> = None;
+
+        // Set read timeout on the listener so we can check deadline
+        listener.set_ttl(30).ok();
+        let accept_timeout = std::time::Duration::from_secs(5);
+        listener.set_nonblocking(false).ok();
+
+        while std::time::Instant::now() < deadline {
+            // Set a per-accept timeout
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let _wait_time = remaining.min(accept_timeout);
+
+            match listener.accept() {
+                Ok((mut stream, _addr)) => {
+                    // Read the HTTP request
+                    let mut buf = [0u8; 4096];
+                    let n = std::io::Read::read(&mut stream, &mut buf)
+                        .unwrap_or(0);
+                    let request_str = String::from_utf8_lossy(&buf[..n]);
+
+                    // Send a "you can close this page" response
+                    let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<html><body><h1>Authorization successful!</h1><p>You can close this tab now.</p></body></html>";
+                    let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
+
+                    // Extract code from query string
+                    if let Some(code) = extract_code_from_request(&request_str) {
+                        code_opt = Some(code);
+                        break;
+                    }
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(_) => {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            }
+
+            if !browser_opened {
+                // If we couldn't open the browser, give the user the URL to visit manually
+                // but still wait for the callback
+                eprintln!("Please open this URL in your browser:\n{url}");
+                // Only print once — set a flag to avoid repeated messages
+                break;
+            }
+        }
+
+        let code = code_opt
+            .ok_or_else(|| "OAuth flow timed out — no callback received".to_string())?;
+
+        // 6. Exchange code for token
+        // Need to use patched config for exchange too
+        let exchange_config = self.configs.get(server_name)
+            .ok_or_else(|| format!("No OAuth config for server '{server_name}'"))?;
+        let mut exchange_config = exchange_config.oauth.clone();
+        exchange_config.redirect_uri = redirect_uri;
+        let exchange_client = OAuthClient::new(exchange_config);
+        let resp = exchange_client.exchange_code(&code, &pkce_verifier)?;
+
+        // 7. Cache token
+        let token = resp.access_token.clone();
+        self.tokens.insert(server_name.to_string(), CachedToken::from_response(&resp));
+
+        Ok(token)
+    }
+
     /// Get the authorization URL for an MCP server.
     pub fn authorize_url(&self, server_name: &str, state: &str) -> Result<(String, String), String> {
         let config = self.configs.get(server_name)
@@ -140,6 +245,69 @@ impl Default for McpOAuthManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Try to open a URL in the system's default browser.
+/// Returns true if a browser command was found and executed.
+fn open_browser(url: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    let cmd = "open";
+    #[cfg(target_os = "windows")]
+    let cmd = "explorer";
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let cmd = "xdg-open";
+
+    // Try the platform command first, then fallback to common browsers
+    let candidates = [
+        cmd,
+        "python3", // python3 -m webbrowser
+    ];
+
+    for candidate in &candidates {
+        if which_command(candidate) {
+            let result = match *candidate {
+                "python3" => std::process::Command::new("python3")
+                    .args(["-m", "webbrowser", url])
+                    .spawn(),
+                _ => std::process::Command::new(candidate)
+                    .arg(url)
+                    .spawn(),
+            };
+            if result.is_ok() {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Check if a command exists on the system PATH.
+fn which_command(cmd: &str) -> bool {
+    std::process::Command::new("which")
+        .arg(cmd)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Extract the authorization code from an HTTP request line.
+/// Expects GET /callback?code=xxx&state=yyy
+fn extract_code_from_request(request: &str) -> Option<String> {
+    // Parse the request line: "GET /callback?code=xxx&state=yyy HTTP/1.1"
+    let first_line = request.lines().next()?;
+    let path = first_line.split(' ').nth(1)?;
+    let query = path.split('?').nth(1)?;
+
+    for pair in query.split('&') {
+        let (key, value) = pair.split_once('=')?;
+        if key == "code" {
+            return Some(urlencoding::decode(value).ok()?.into_owned());
+        }
+    }
+
+    None
 }
 
 /// Global singleton MCP OAuth manager.

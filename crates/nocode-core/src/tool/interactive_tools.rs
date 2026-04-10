@@ -1,13 +1,43 @@
 //! Interactive tools — AskUserQuestion, Config, NotebookEdit.
 
+use crate::tool::permission::{AutoFirstOptionPrompter, QuestionPrompter};
 use crate::tool::{Tool, ToolOutput};
 use serde_json::{Value, json};
+use std::sync::Mutex;
 
 // ---------------------------------------------------------------------------
 // AskUserQuestion
 // ---------------------------------------------------------------------------
 
-pub struct AskUserQuestionTool;
+/// AskUserQuestion tool — presents questions to the user and waits for responses.
+///
+/// Uses a `QuestionPrompter` bridge (injected via `set_question_prompter`)
+/// to block the tool execution thread until the user answers in TUI/REPL.
+pub struct AskUserQuestionTool {
+    prompter: Mutex<Option<Box<dyn QuestionPrompter>>>,
+}
+
+impl AskUserQuestionTool {
+    pub fn new() -> Self {
+        Self {
+            prompter: Mutex::new(None),
+        }
+    }
+
+    /// Inject a question prompter (e.g. TUI bridge or REPL stdin bridge).
+    /// Falls back to `AutoFirstOptionPrompter` if none is set.
+    pub fn set_prompter(&self, prompter: Box<dyn QuestionPrompter>) {
+        if let Ok(mut p) = self.prompter.lock() {
+            *p = Some(prompter);
+        }
+    }
+}
+
+impl Default for AskUserQuestionTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Tool for AskUserQuestionTool {
     fn name(&self) -> &str {
@@ -53,10 +83,40 @@ impl Tool for AskUserQuestionTool {
         if questions.is_null() || !questions.is_array() {
             return ToolOutput::error("Missing required parameter: questions");
         }
-        ToolOutput::success(format!(
-            "Questions pending user response: {}",
-            serde_json::to_string_pretty(questions).unwrap_or_default()
-        ))
+
+        // Use injected prompter, or fall back to auto-first-option
+        let result = if let Ok(guard) = self.prompter.lock() {
+            if let Some(ref prompter) = *guard {
+                prompter.prompt_questions(questions)
+            } else {
+                AutoFirstOptionPrompter.prompt_questions(questions)
+            }
+        } else {
+            AutoFirstOptionPrompter.prompt_questions(questions)
+        };
+
+        match result {
+            Ok(answer) => {
+                // Build structured response matching Claude Code's expected format
+                let response: Vec<Value> = answer
+                    .selections
+                    .iter()
+                    .enumerate()
+                    .map(|(i, sel)| {
+                        json!({
+                            "question_index": i,
+                            "answer": sel
+                        })
+                    })
+                    .collect();
+                ToolOutput::success(json!({"answers": response}).to_string())
+            }
+            Err(e) => ToolOutput::error(format!("Question cancelled: {e}")),
+        }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -301,14 +361,14 @@ mod tests {
 
     #[test]
     fn ask_user_question_missing_questions() {
-        let tool = AskUserQuestionTool;
+        let tool = AskUserQuestionTool::new();
         let result = tool.execute(&json!({}));
         assert!(result.is_error);
     }
 
     #[test]
-    fn ask_user_question_returns_questions() {
-        let tool = AskUserQuestionTool;
+    fn ask_user_question_auto_first_option() {
+        let tool = AskUserQuestionTool::new();
         let result = tool.execute(&json!({
             "questions": [{"question": "Which?", "header": "Choice", "options": [
                 {"label": "A", "description": "Option A"},
@@ -316,7 +376,41 @@ mod tests {
             ]}]
         }));
         assert!(!result.is_error);
-        assert!(result.content.contains("Which?"));
+        // Without injected prompter, auto-selects first option "A"
+        assert!(result.content.contains("A"));
+        assert!(result.content.contains("answers"));
+    }
+
+    #[test]
+    fn ask_user_question_with_prompter() {
+        use crate::tool::permission::UserAnswer;
+        use std::sync::Mutex;
+
+        /// Test prompter that returns predetermined answers.
+        struct TestPrompter {
+            answers: Mutex<Vec<String>>,
+        }
+        impl QuestionPrompter for TestPrompter {
+            fn prompt_questions(&self, _questions: &serde_json::Value) -> Result<UserAnswer, String> {
+                let mut guard = self.answers.lock().unwrap();
+                let selections: Vec<String> = guard.drain(..).collect();
+                Ok(UserAnswer { selections })
+            }
+        }
+
+        let tool = AskUserQuestionTool::new();
+        tool.set_prompter(Box::new(TestPrompter {
+            answers: Mutex::new(vec!["B".to_string()]),
+        }));
+
+        let result = tool.execute(&json!({
+            "questions": [{"question": "Which?", "header": "Choice", "options": [
+                {"label": "A", "description": "Option A"},
+                {"label": "B", "description": "Option B"}
+            ]}]
+        }));
+        assert!(!result.is_error);
+        assert!(result.content.contains("B"));
     }
 
     #[test]
