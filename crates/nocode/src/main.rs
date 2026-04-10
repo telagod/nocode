@@ -42,6 +42,7 @@ use nocode_core::query::r#loop::{self, LoopConfig, NoopObserver};
 use nocode_core::tool::ToolRegistry;
 use nocode_core::tool::executor::ToolExecutor;
 use std::env;
+use std::sync::Arc;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -145,7 +146,7 @@ fn main() {
 
     // Default: REPL mode (also --repl)
     repl::run_repl(
-        provider_box.as_ref(),
+        nocode_core::provider::ProviderBox::from_arc(Arc::from(provider_box)),
         &registry,
         &system_blocks,
         &model,
@@ -448,7 +449,8 @@ fn run_bridge_remote_once(prompt: &str) {
 
 fn run_ide_server() {
     // IDE server: JSON-RPC over stdio for IDE extensions (VS Code, JetBrains).
-    // Protocol: read JSON-RPC requests from stdin, write responses to stdout.
+    // Delegates to IdeRequestHandler for real query execution.
+    use nocode_core::ide_server::{IdeRequestHandler, IdeServerConfig, parse_ide_request};
     use std::io::{self, BufRead, Write};
 
     let stdin = io::stdin();
@@ -468,9 +470,18 @@ fn run_ide_server() {
     let registry = ToolRegistry::with_defaults(&cwd);
     let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
     let provider_box = build_provider(&provider_type, &settings);
-    let executor = ToolExecutor::new(&registry);
     let max_tokens = settings.max_tokens.unwrap_or(16384);
     let max_turns = settings.max_turns.unwrap_or(10);
+
+    let handler = IdeRequestHandler::new(
+        IdeServerConfig::default(),
+        nocode_core::provider::ProviderBox::from_arc(Arc::from(provider_box)),
+        registry,
+        model,
+        system_blocks,
+        max_tokens,
+        max_turns,
+    );
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -481,8 +492,8 @@ fn run_ide_server() {
             continue;
         }
 
-        let request: serde_json::Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
+        let request = match parse_ide_request(&line) {
+            Ok(r) => r,
             Err(e) => {
                 let err_resp = serde_json::json!({
                     "jsonrpc": "2.0",
@@ -495,101 +506,25 @@ fn run_ide_server() {
             }
         };
 
-        let id = request
-            .get("id")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        let method = request["method"].as_str().unwrap_or("");
+        // Check for shutdown before handler (to break the loop)
+        let is_shutdown = request.method == "shutdown";
 
-        let response = match method {
-            "initialize" => {
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": {
-                        "name": "nocode",
-                        "version": env!("CARGO_PKG_VERSION"),
-                        "capabilities": {
-                            "tools": registry.names(),
-                            "model": model,
-                            "provider": provider_type.as_str(),
-                        }
-                    }
-                })
-            }
-            "query" => {
-                let prompt = request["params"]["prompt"].as_str().unwrap_or("");
-                let messages = vec![Message::user_text(prompt)];
-                let config = r#loop::LoopConfig {
-                    model: model.clone(),
-                    max_tokens,
-                    max_turns,
-                    system: system_blocks.clone(),
-                    tools: registry.definitions(),
-                    parallel_tool_execution: true,
-                };
-                let mut observer = r#loop::NoopObserver;
-                match r#loop::run_agentic_loop(
-                    provider_box.as_ref(),
-                    &executor,
-                    &config,
-                    messages,
-                    &mut observer,
-                ) {
-                    Ok(result) => {
-                        let text: String = result
-                            .messages
-                            .iter()
-                            .filter(|m| m.role == nocode_core::message::Role::Assistant)
-                            .map(|m| m.text_content())
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "result": {
-                                "text": text,
-                                "input_tokens": result.total_input_tokens,
-                                "output_tokens": result.total_output_tokens,
-                            }
-                        })
-                    }
-                    Err(e) => {
-                        serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "error": { "code": -32000, "message": format!("{e}") }
-                        })
-                    }
-                }
-            }
-            "shutdown" => {
-                let resp = serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": null
-                });
-                let _ = writeln!(stdout, "{}", resp);
-                let _ = stdout.flush();
-                break;
-            }
-            _ => {
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32601, "message": format!("Method not found: {method}") }
-                })
-            }
-        };
+        if let Some(response) = handler.handle(&request) {
+            let _ = writeln!(stdout, "{}", response);
+            let _ = stdout.flush();
+        }
 
-        let _ = writeln!(stdout, "{}", response);
-        let _ = stdout.flush();
+        if is_shutdown {
+            break;
+        }
     }
 }
 
 fn run_mcp_server() {
     // MCP server: expose nocode tools via MCP protocol over stdio.
-    // Implements tools/list and tools/call for external MCP clients.
+    // Implements tools/list, tools/call, resources/list, resources/read, and query.
+    use nocode_core::mcp::server::McpServer;
+    use nocode_core::provider::ProviderBox;
     use std::io::{self, BufRead, Write};
 
     let stdin = io::stdin();
@@ -603,7 +538,24 @@ fn run_mcp_server() {
     let cwd = env::current_dir()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| String::from("."));
+    let settings = Settings::load_merged(&cwd);
+    let provider_type = resolve_provider(&settings);
+    let model = resolve_model(&settings);
     let registry = ToolRegistry::with_defaults(&cwd);
+    let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
+    let provider_box = build_provider(&provider_type, &settings);
+    let max_tokens = settings.max_tokens.unwrap_or(16384);
+    let max_turns = settings.max_turns.unwrap_or(10);
+
+    let server = McpServer::with_provider(
+        registry,
+        ProviderBox::from_arc(Arc::from(provider_box)),
+        model,
+        system_blocks,
+        max_tokens,
+        max_turns,
+        cwd,
+    );
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -628,84 +580,24 @@ fn run_mcp_server() {
             }
         };
 
-        let id = request
-            .get("id")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        let method = request["method"].as_str().unwrap_or("");
-
-        let response = match method {
-            "initialize" => {
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": { "tools": {} },
-                        "serverInfo": {
-                            "name": "nocode",
-                            "version": env!("CARGO_PKG_VERSION"),
-                        }
-                    }
-                })
-            }
-            "tools/list" => {
-                let tools: Vec<serde_json::Value> = registry
-                    .definitions()
-                    .iter()
-                    .map(|d| {
-                        serde_json::json!({
-                            "name": d.name,
-                            "description": d.description,
-                            "inputSchema": d.input_schema,
-                        })
-                    })
-                    .collect();
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": { "tools": tools }
-                })
-            }
-            "tools/call" => {
-                let tool_name = request["params"]["name"].as_str().unwrap_or("");
-                let arguments = request["params"]
-                    .get("arguments")
-                    .cloned()
-                    .unwrap_or(serde_json::json!({}));
-                if let Some(tool) = registry.get(tool_name) {
-                    let output = tool.execute(&arguments);
-                    serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "result": {
-                            "content": [{
-                                "type": "text",
-                                "text": output.content,
-                            }],
-                            "isError": output.is_error,
-                        }
-                    })
-                } else {
-                    serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "error": { "code": -32602, "message": format!("Unknown tool: {tool_name}") }
-                    })
-                }
-            }
-            "notifications/initialized" => continue,
-            _ => {
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32601, "message": format!("Method not found: {method}") }
-                })
-            }
+        // Parse into JsonRpcRequest
+        let rpc_req = nocode_core::mcp::server::JsonRpcRequest {
+            jsonrpc: request["jsonrpc"].as_str().unwrap_or("2.0").to_string(),
+            id: request.get("id").cloned(),
+            method: request["method"].as_str().unwrap_or("").to_string(),
+            params: request.get("params").cloned().unwrap_or(serde_json::json!({})),
         };
 
-        let _ = writeln!(stdout, "{}", response);
-        let _ = stdout.flush();
+        let is_shutdown = rpc_req.method == "shutdown";
+
+        if let Some(response) = server.handle_request(&rpc_req) {
+            let _ = writeln!(stdout, "{}", response);
+            let _ = stdout.flush();
+        }
+
+        if is_shutdown {
+            break;
+        }
     }
 }
 

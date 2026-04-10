@@ -63,14 +63,36 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             let mgr = global_mcp_manager();
             let mgr = mgr.lock().unwrap_or_else(|e| e.into_inner());
             let servers = mgr.list_servers();
+            let tools = mgr.all_tools();
             let text = if servers.is_empty() {
-                "No MCP servers connected.\n\nConfigure in .nocode/settings.json under \"mcp_servers\".".to_string()
+                "No MCP servers connected.\n\nConfigure in .nocode/settings.json under \"mcp_servers\".\n\nCommands:\n  /mcp-add <name> <command> [args...]  — Connect a server\n  /mcp-remove <name>                   — Disconnect\n  /mcp-restart <name>                  — Reconnect".to_string()
             } else {
-                let mut lines = Vec::new();
+                let mut lines = vec![format!("Connected MCP servers ({}):\n", servers.len())];
                 for (name, phase, tool_count) in &servers {
-                    lines.push(format!("  {name}: {phase:?} ({tool_count} tools)"));
+                    let status = match phase {
+                        nocode_core::mcp::manager::McpPhase::Connected => "●",
+                        nocode_core::mcp::manager::McpPhase::Handshake => "●",
+                        nocode_core::mcp::manager::McpPhase::Spawning => "◐",
+                        nocode_core::mcp::manager::McpPhase::Initializing => "◐",
+                        nocode_core::mcp::manager::McpPhase::ToolDiscovery => "◐",
+                        nocode_core::mcp::manager::McpPhase::Reconnecting => "◐",
+                        nocode_core::mcp::manager::McpPhase::Degraded => "◐",
+                        nocode_core::mcp::manager::McpPhase::HealthCheck => "◐",
+                        _ => "○",
+                    };
+                    lines.push(format!("  {status} {name}: {phase:?} ({tool_count} tools)"));
                 }
-                format!("Connected MCP servers:\n\n{}", lines.join("\n"))
+                lines.push(String::new());
+                if !tools.is_empty() {
+                    lines.push(format!("Discovered tools ({}):", tools.len()));
+                    for (server, tool) in tools.iter().take(30) {
+                        lines.push(format!("  {server}:{}", tool.name));
+                    }
+                    if tools.len() > 30 {
+                        lines.push(format!("  ... and {} more", tools.len() - 30));
+                    }
+                }
+                lines.join("\n")
             };
             let overlay_w = OverlayBlock::new("MCP Servers", &text);
             frame.render_widget(overlay_w, area);
@@ -81,45 +103,96 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             let reg = reg.lock().unwrap_or_else(|e| e.into_inner());
             let workers = reg.list();
             let text = if workers.is_empty() {
-                "No background agents running.".to_string()
+                "No background agents running.\n\nUse /agent-create <name> <prompt> to spawn one.".to_string()
             } else {
-                let mut lines = Vec::new();
+                let mut lines = vec![format!("Background agents ({}):\n", workers.len())];
                 for w in &workers {
-                    lines.push(format!("  {} ({}): {:?}", w.name, w.id, w.state));
+                    let state_icon = match w.state {
+                        nocode_core::agent::worker::WorkerState::Running => "▶",
+                        nocode_core::agent::worker::WorkerState::ReadyForPrompt => "●",
+                        nocode_core::agent::worker::WorkerState::Finished => "✓",
+                        nocode_core::agent::worker::WorkerState::Failed => "✗",
+                        _ => "○",
+                    };
+                    lines.push(format!("  {state_icon} {} ({}): {:?}", w.name, w.id, w.state));
                 }
-                format!("Background agents:\n\n{}", lines.join("\n"))
+                lines.push(String::new());
+                lines.push("Commands: /agent-create <name> <prompt>".to_string());
+                lines.join("\n")
             };
             let overlay_w = OverlayBlock::new("Agents", &text);
             frame.render_widget(overlay_w, area);
         }
         Overlay::Config => {
-            let overlay_w = OverlayBlock::new(
-                "Configuration",
-                "Config loaded from:\n\
-                 1. ~/.nocode/settings.json (user)\n\
-                 2. .nocode/settings.json (project)\n\
-                 3. .nocode/settings.local.json (local)\n\n\
-                 Environment overrides: NOCODE_MODEL, NOCODE_SYSTEM_PROMPT, etc.",
-            );
+            use nocode_core::config::settings::Settings;
+            let cwd = std::env::current_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let settings = Settings::load_merged(&cwd);
+            let mut lines = vec![
+                "Configuration:".to_string(),
+                String::new(),
+                format!("  Model:        {}", settings.model.unwrap_or_else(|| "default".to_string())),
+                format!("  Max turns:    {}", settings.max_turns.unwrap_or(10)),
+                format!("  Max tokens:   {}", settings.max_tokens.unwrap_or(16384)),
+                format!("  Permission:   {}", settings.permission_mode.as_deref().unwrap_or("ask")),
+            ];
+            if let Some(ref prompt) = settings.system_prompt {
+                lines.push(format!("  System prompt: {}...", &prompt[..prompt.len().min(50)]));
+            }
+            lines.push(String::new());
+            lines.push("Config loaded from:".to_string());
+            lines.push("  1. ~/.nocode/settings.json (user)".to_string());
+            lines.push("  2. .nocode/settings.json (project)".to_string());
+            lines.push("  3. .nocode/settings.local.json (local)".to_string());
+            lines.push(String::new());
+            lines.push("Environment overrides: NOCODE_MODEL, NOCODE_SYSTEM_PROMPT, etc.".to_string());
+            let config_text = lines.join("\n");
+            let overlay_w = OverlayBlock::new("Configuration", &config_text);
             frame.render_widget(overlay_w, area);
         }
         Overlay::Memory => {
-            let overlay_w = OverlayBlock::new(
-                "Memory",
-                "Memory stored in ~/.nocode/memory/\n\
-                 Use /memory <query> to search memories.",
-            );
+            use nocode_core::storage::memory::MemoryStore;
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            let mem_dir = format!("{home}/.nocode/memory");
+            let store = MemoryStore::new(&mem_dir);
+            let text = match store.list() {
+                Ok(entries) if entries.is_empty() => {
+                    format!("Memory directory: {mem_dir}\n\nNo memories stored yet.\n\nUse the MemorySave tool or /memory <query> to search.")
+                }
+                Ok(entries) => {
+                    let mut lines = vec![format!("Memory entries ({}):\n", entries.len())];
+                    for entry in entries.iter().take(20) {
+                        let ty = entry.memory_type.as_str();
+                        lines.push(format!("  [{ty}] {} — {}", entry.name, entry.description));
+                    }
+                    if entries.len() > 20 {
+                        lines.push(format!("  ... and {} more", entries.len() - 20));
+                    }
+                    lines.push(String::new());
+                    lines.push(format!("Directory: {mem_dir}"));
+                    lines.join("\n")
+                }
+                Err(e) => format!("Memory directory: {mem_dir}\n\nError: {e}"),
+            };
+            let overlay_w = OverlayBlock::new("Memory", &text);
             frame.render_widget(overlay_w, area);
         }
         Overlay::Cost => {
             let cost = hud.estimated_cost();
+            let inp = hud.cumulative_input_tokens();
+            let out = hud.cumulative_output_tokens();
+            let total = inp + out;
             let text = format!(
                 "Token usage:\n\n\
-                 Input:  {}\n\
-                 Output: {}\n\
-                 Est. cost: ${cost:.4}",
-                hud.cumulative_input_tokens(),
-                hud.cumulative_output_tokens(),
+                 \x20 Input:         {inp}\n\
+                 \x20 Output:        {out}\n\
+                 \x20 Total:         {total}\n\
+                 \x20 Est. cost:     ${cost:.4}\n\
+                 \x20 Context used:  {:.1}%\n\n\
+                 Cost is estimated based on model pricing.\n\
+                 Use /insights for detailed session statistics.",
+                hud.context_pct(),
             );
             let overlay_w = OverlayBlock::new("Cost", &text);
             frame.render_widget(overlay_w, area);
@@ -132,6 +205,29 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                  [y] Yes  [n] No  [a] Always allow"
             );
             let overlay_w = OverlayBlock::new("\u{26A0} Permission Required", &text);
+            frame.render_widget(overlay_w, area);
+        }
+        Overlay::Question { questions, selected } => {
+            let mut text = String::from("The assistant has a question:\n\n");
+            if let Some(arr) = questions.as_array() {
+                for (i, q) in arr.iter().enumerate() {
+                    let header = q["header"].as_str().unwrap_or("Question");
+                    let question_text = q["question"].as_str().unwrap_or("?");
+                    let cur = selected.get(i).copied().unwrap_or(0);
+                    text.push_str(&format!("[{header}] {question_text}\n"));
+                    if let Some(opts) = q["options"].as_array() {
+                        for (j, opt) in opts.iter().enumerate() {
+                            let label = opt["label"].as_str().unwrap_or("?");
+                            let desc = opt["description"].as_str().unwrap_or("");
+                            let marker = if j == cur { ">" } else { " " };
+                            text.push_str(&format!("  {marker} {}. {label} — {desc}\n", j + 1));
+                        }
+                    }
+                    text.push('\n');
+                }
+            }
+            text.push_str("[Enter] Confirm  [Esc] Cancel  [\u{2190}\u{2192}] Change option  [1-4] Quick select");
+            let overlay_w = OverlayBlock::new("Question", &text);
             frame.render_widget(overlay_w, area);
         }
         Overlay::Errors(errors) => {

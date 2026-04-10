@@ -52,6 +52,10 @@ pub enum CommandAction {
     Telemetry,
     Ide,
     Voice,
+    Copy,
+    Undo,
+    Redo,
+    Rewind,
 }
 
 /// A registered slash command.
@@ -381,6 +385,34 @@ impl CommandRegistry {
                 summary: "Voice input mode (requires system microphone)",
                 argument_hint: Some("[start|stop|status]"),
                 action: CommandAction::Voice,
+            },
+            CommandEntry {
+                name: "copy",
+                aliases: &[],
+                summary: "Copy last assistant response to clipboard",
+                argument_hint: None,
+                action: CommandAction::Copy,
+            },
+            CommandEntry {
+                name: "undo",
+                aliases: &[],
+                summary: "Undo the last file modification",
+                argument_hint: None,
+                action: CommandAction::Undo,
+            },
+            CommandEntry {
+                name: "redo",
+                aliases: &[],
+                summary: "Redo the last undone file modification",
+                argument_hint: None,
+                action: CommandAction::Redo,
+            },
+            CommandEntry {
+                name: "rewind",
+                aliases: &[],
+                summary: "Rewind conversation to a previous state",
+                argument_hint: Some("[message_index]"),
+                action: CommandAction::Rewind,
             },
         ];
 

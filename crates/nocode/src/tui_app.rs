@@ -68,6 +68,10 @@ pub(crate) enum Overlay {
         tool_name: String,
         tool_id: String,
     },
+    Question {
+        questions: serde_json::Value,
+        selected: Vec<usize>,
+    },
     Errors(Vec<String>),
 }
 
@@ -107,6 +111,12 @@ pub(crate) struct TuiApp {
     /// Channel to send permission decisions back to the executor thread.
     pub(crate) permission_tx:
         Option<std::sync::mpsc::Sender<nocode_core::tool::permission::PermissionDecision>>,
+    /// Channel to send question answers back to the executor thread.
+    pub(crate) question_tx: Option<
+        std::sync::mpsc::Sender<
+            Result<nocode_core::tool::permission::UserAnswer, String>,
+        >,
+    >,
     /// Search state
     pub(crate) search_query: String,
     pub(crate) search_active: bool,
@@ -140,6 +150,7 @@ impl TuiApp {
             hud: StatusHud::new(model, ""),
             error_log: Vec::new(),
             permission_tx: None,
+            question_tx: None,
             search_query: String::new(),
             search_active: false,
             search_matches: Vec::new(),
@@ -488,6 +499,91 @@ impl TuiApp {
                 }
                 return HandleKeyResult::Continue;
             }
+            // Question overlay: navigate options and confirm
+            if matches!(self.overlay, Overlay::Question { .. }) {
+                if let Overlay::Question {
+                    ref questions,
+                    ref mut selected,
+                } = self.overlay
+                {
+                    match key.code {
+                        KeyCode::Up => {
+                            if !selected.is_empty() {
+                                // Move to previous question
+                            }
+                        }
+                        KeyCode::Down => {
+                            if !selected.is_empty() {
+                                // Move to next question
+                            }
+                        }
+                        KeyCode::Left => {
+                            if let Some(cur) = selected.first_mut()
+                                && *cur > 0
+                            {
+                                *cur -= 1;
+                            }
+                        }
+                        KeyCode::Right => {
+                            if let (Some(cur), Some(arr)) =
+                                (selected.first_mut(), questions.as_array())
+                                && let Some(q) = arr.first()
+                            {
+                                let opt_count = q["options"]
+                                    .as_array()
+                                    .map(|a| a.len())
+                                    .unwrap_or(1);
+                                if *cur + 1 < opt_count {
+                                    *cur += 1;
+                                }
+                            }
+                        }
+                        KeyCode::Char('\n') | KeyCode::Enter => {
+                            // Build answer from selected options
+                            let selections: Vec<String> = if let Some(arr) = questions.as_array() {
+                                arr.iter()
+                                    .enumerate()
+                                    .map(|(i, q)| {
+                                        let idx = selected.get(i).copied().unwrap_or(0);
+                                        q["options"]
+                                            .as_array()
+                                            .and_then(|opts| opts.get(idx))
+                                            .and_then(|o| o["label"].as_str())
+                                            .unwrap_or("N/A")
+                                            .to_string()
+                                    })
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
+                            let answer =
+                                nocode_core::tool::permission::UserAnswer { selections };
+                            if let Some(tx) = self.question_tx.take() {
+                                let _ = tx.send(Ok(answer));
+                            }
+                            self.overlay = Overlay::None;
+                            self.dirty = true;
+                        }
+                        KeyCode::Esc => {
+                            if let Some(tx) = self.question_tx.take() {
+                                let _ = tx.send(Err("Cancelled by user".to_string()));
+                            }
+                            self.overlay = Overlay::None;
+                            self.dirty = true;
+                        }
+                        // Number keys 1-4 for quick option selection
+                        KeyCode::Char(c) if ('1'..='4').contains(&c) => {
+                            let idx = (c as usize) - ('1' as usize);
+                            if let Some(cur) = selected.first_mut() {
+                                *cur = idx;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                self.dirty = true;
+                return HandleKeyResult::Continue;
+            }
             // Other overlays: Esc closes
             if key.code == KeyCode::Esc {
                 self.overlay = Overlay::None;
@@ -776,7 +872,7 @@ impl TuiApp {
         self.dirty = true;
     }
 
-    fn copy_last_assistant_to_clipboard(&mut self) {
+    pub(crate) fn copy_last_assistant_to_clipboard(&mut self) {
         // Find last assistant message
         let text = self
             .chat_messages
@@ -1024,6 +1120,19 @@ pub(crate) fn run_app_loop(
                         app.overlay = Overlay::Permission { tool_name, tool_id };
                         app.dirty = true;
                     }
+                    Ok(TuiEvent::QuestionRequest {
+                        questions,
+                        response_tx,
+                    }) => {
+                        app.question_tx = Some(response_tx);
+                        // Initialize selection index per question (default: first option)
+                        let selected = questions
+                            .as_array()
+                            .map(|arr| vec![0usize; arr.len()])
+                            .unwrap_or_default();
+                        app.overlay = Overlay::Question { questions, selected };
+                        app.dirty = true;
+                    }
                     Ok(TuiEvent::MessagesUpdated(updated_msgs)) => {
                         // Incremental session persistence
                         use nocode_core::session::persistence::SessionPersistence;
@@ -1158,6 +1267,12 @@ pub(crate) fn run_app_loop(
                                 std::thread::spawn(move || {
                                     let perm_bridge =
                                         crate::tui_events::TuiEventPermissionBridge::new(tx_perm);
+                                    let q_bridge =
+                                        crate::tui_events::TuiEventQuestionBridge::new(tx.clone());
+                                    // Inject question prompter into AskUserQuestion tool
+                                    if let Some(ask_tool) = r.get_as::<nocode_core::tool::interactive_tools::AskUserQuestionTool>("AskUserQuestion") {
+                                        ask_tool.set_prompter(Box::new(q_bridge));
+                                    }
                                     let executor =
                                         ToolExecutor::new(&r).with_prompter(&perm_bridge);
                                     let mut observer = ChannelObserver { tx };

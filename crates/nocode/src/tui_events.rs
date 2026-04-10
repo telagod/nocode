@@ -30,6 +30,10 @@ pub(crate) enum TuiEvent {
         tool_id: String,
         response_tx: mpsc::Sender<nocode_core::tool::permission::PermissionDecision>,
     },
+    QuestionRequest {
+        questions: serde_json::Value,
+        response_tx: mpsc::Sender<Result<nocode_core::tool::permission::UserAnswer, String>>,
+    },
     MessagesUpdated(Vec<Message>),
     Complete(Result<LoopResult, String>, ToolRegistry),
 }
@@ -129,5 +133,46 @@ impl nocode_core::tool::permission::PermissionPrompter for TuiEventPermissionBri
         response_rx
             .recv_timeout(self.timeout)
             .unwrap_or(PermissionDecision::Deny)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Question bridge that sends AskUserQuestion requests via TuiEvent channel
+// ---------------------------------------------------------------------------
+
+/// Question prompter that sends requests through the TuiEvent channel
+/// and blocks until the TUI thread responds via a one-shot response channel.
+pub(crate) struct TuiEventQuestionBridge {
+    tx: mpsc::Sender<TuiEvent>,
+    timeout: std::time::Duration,
+}
+
+impl TuiEventQuestionBridge {
+    pub fn new(tx: mpsc::Sender<TuiEvent>) -> Self {
+        Self {
+            tx,
+            timeout: std::time::Duration::from_secs(120),
+        }
+    }
+}
+
+impl nocode_core::tool::permission::QuestionPrompter for TuiEventQuestionBridge {
+    fn prompt_questions(
+        &self,
+        questions: &serde_json::Value,
+    ) -> Result<nocode_core::tool::permission::UserAnswer, String> {
+        let (response_tx, response_rx) = mpsc::channel();
+        let event = TuiEvent::QuestionRequest {
+            questions: questions.clone(),
+            response_tx,
+        };
+
+        if self.tx.send(event).is_err() {
+            return Err("TUI channel closed".to_string());
+        }
+
+        response_rx
+            .recv_timeout(self.timeout)
+            .map_err(|_| "Question timed out".to_string())?
     }
 }

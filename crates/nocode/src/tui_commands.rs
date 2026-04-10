@@ -89,7 +89,7 @@ pub(crate) fn handle_slash_command(
             SlashResult::Handled
         }
         CommandAction::Permissions => {
-            app.push_system("Permission mode: ask (default)");
+            cmd_permissions_status(app);
             SlashResult::Handled
         }
         CommandAction::History => {
@@ -225,6 +225,22 @@ pub(crate) fn handle_slash_command(
         }
         CommandAction::Voice => {
             cmd_voice(app, args.as_deref());
+            SlashResult::Handled
+        }
+        CommandAction::Copy => {
+            app.copy_last_assistant_to_clipboard();
+            SlashResult::Handled
+        }
+        CommandAction::Undo => {
+            cmd_undo(app, messages);
+            SlashResult::Handled
+        }
+        CommandAction::Redo => {
+            cmd_redo(app, messages);
+            SlashResult::Handled
+        }
+        CommandAction::Rewind => {
+            cmd_rewind(app, args.as_deref(), messages);
             SlashResult::Handled
         }
     }
@@ -1025,28 +1041,87 @@ fn cmd_telemetry(app: &mut TuiApp, args: Option<&str>) {
     }
 }
 
+fn cmd_permissions_status(app: &mut TuiApp) {
+    let store = nocode_core::tool::permission::global_permission_rules();
+    let guard = store.lock().unwrap_or_else(|e| e.into_inner());
+    let rules = guard.list();
+    let mut lines = vec!["Permission rules:".to_string(), String::new()];
+    if rules.is_empty() {
+        lines.push("  (no rules configured — default: ask)".to_string());
+    } else {
+        for rule in rules {
+            let pattern = rule.argument_pattern.as_deref().unwrap_or("(any)");
+            lines.push(format!("  {:<16} {:?}  pattern: {}", rule.tool_name, rule.action, pattern));
+        }
+    }
+    lines.push(String::new());
+    lines.push("Usage: /permissions-add <tool> <allow|deny> [pattern]".to_string());
+    lines.push("       /permissions-remove <tool> [pattern]".to_string());
+    app.push_system(&lines.join("\n"));
+}
+
 fn cmd_ide(app: &mut TuiApp, args: Option<&str>) {
     match args.map(str::trim) {
         None | Some("status") | Some("") => {
             app.push_system(
                 "IDE Server:\n\n\
-                 \x20 Status:  not running\n\
+                 \x20 Status:  available (standalone mode)\n\
                  \x20 Mode:    --ide-server\n\
-                 \x20 Port:    3002 (default)\n\n\
-                 The IDE server provides a JSON-RPC interface for VS Code / JetBrains integration.\n\
-                 Start with: nocode --ide-server\n\n\
-                 Usage: /ide start|stop|status",
+                 \x20 Port:    3002 (default)\n\
+                 \x20 Endpoints: initialize, query, completions, hover, diagnostics, status\n\n\
+                 The IDE server provides a JSON-RPC interface for VS Code / JetBrains.\n\
+                 It supports:\n\
+                 \x20 - query:     Full agentic loop execution\n\
+                 \x20 - completions: Slash commands + tool names\n\
+                 \x20 - hover:     File content at line\n\
+                 \x20 - diagnostics: Platform info\n\n\
+                 Start: nocode --ide-server\n\
+                 Or use /ide start to launch from TUI.",
             );
         }
         Some("start") => {
-            app.push_system(
-                "IDE server must be started from the command line:\n\
-                 \x20 nocode --ide-server\n\n\
-                 This runs a dedicated JSON-RPC server for IDE integration.",
-            );
+            // Launch IDE server as a background process
+            let exe = std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "nocode".to_string());
+            match std::process::Command::new(&exe)
+                .arg("--ide-server")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+            {
+                Ok(child) => {
+                    let pid = child.id();
+                    app.push_system(&format!(
+                        "IDE server started (PID {pid})\n\
+                         \x20 Endpoint: stdio JSON-RPC\n\
+                         \x20 Use /ide stop to terminate."
+                    ));
+                }
+                Err(e) => {
+                    app.push_error(&format!(
+                        "Failed to start IDE server: {e}\n\
+                         Try running directly: nocode --ide-server"
+                    ));
+                }
+            }
         }
         Some("stop") => {
-            app.push_system("IDE server is not running from within TUI.");
+            // Try to find and kill a running IDE server process
+            match std::process::Command::new("pkill")
+                .args(["-f", "nocode.*--ide-server"])
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    app.push_system("IDE server stopped.");
+                }
+                _ => {
+                    app.push_system(
+                        "No running IDE server found.\n\
+                         The server may have been started from a different terminal.",
+                    );
+                }
+            }
         }
         Some(other) => {
             app.push_error(&format!("Invalid option: {other} (use start/stop/status)"));
@@ -1066,6 +1141,10 @@ fn cmd_voice(app: &mut TuiApp, args: Option<&str>) {
                 .arg("arecord")
                 .output()
                 .is_ok_and(|o| o.status.success());
+            let has_whisper = std::process::Command::new("which")
+                .arg("whisper")
+                .output()
+                .is_ok_and(|o| o.status.success());
 
             let backend = if has_sox {
                 "sox (rec)"
@@ -1074,13 +1153,14 @@ fn cmd_voice(app: &mut TuiApp, args: Option<&str>) {
             } else {
                 "none detected"
             };
+            let transcribe = if has_whisper { "whisper CLI" } else { "API needed" };
 
             app.push_system(&format!(
                 "Voice Input:\n\n\
-                 \x20 Status:    not active\n\
-                 \x20 Backend:   {backend}\n\
-                 \x20 Required:  sox or arecord + whisper API\n\n\
-                 Voice input captures audio, transcribes via Whisper, and sends as text.\n\n\
+                 \x20 Status:     available\n\
+                 \x20 Recording:  {backend}\n\
+                 \x20 Transcribe: {transcribe}\n\n\
+                 Voice captures audio, transcribes, and sends as text.\n\n\
                  Usage: /voice start|stop|status"
             ));
         }
@@ -1089,23 +1169,156 @@ fn cmd_voice(app: &mut TuiApp, args: Option<&str>) {
                 .arg("sox")
                 .output()
                 .is_ok_and(|o| o.status.success());
-            if !has_sox {
+            let has_arecord = std::process::Command::new("which")
+                .arg("arecord")
+                .output()
+                .is_ok_and(|o| o.status.success());
+
+            if !has_sox && !has_arecord {
                 app.push_error(
-                    "Voice input requires 'sox' to be installed.\n\
+                    "Voice input requires 'sox' or 'arecord' to be installed.\n\
                      Install: sudo apt install sox (Linux) / brew install sox (macOS)",
                 );
                 return;
             }
-            app.push_system(
-                "Voice input: recording not yet implemented.\n\
-                 This is a placeholder for future Whisper API integration.",
-            );
+
+            // Record to a temp WAV file
+            let tmp_path = std::env::temp_dir().join("nocode_voice.wav");
+            let tmp_str = tmp_path.to_string_lossy().into_owned();
+
+            // Use sox rec or arecord
+            let record_result = if has_sox {
+                std::process::Command::new("rec")
+                    .args(["-q", &tmp_str, "trim", "0", "5"])
+                    .output()
+            } else {
+                std::process::Command::new("arecord")
+                    .args(["-q", "-d", "5", "-f", "S16_LE", "-r", "16000", &tmp_str])
+                    .output()
+            };
+
+            match record_result {
+                Ok(output) if output.status.success() => {
+                    // Try whisper CLI transcription
+                    let transcript = if std::process::Command::new("which")
+                        .arg("whisper")
+                        .output()
+                        .is_ok_and(|o| o.status.success())
+                    {
+                        match std::process::Command::new("whisper")
+                            .args([&tmp_str, "--model", "tiny", "--output_format", "txt", "--output_dir", "/tmp"])
+                            .output()
+                        {
+                            Ok(wo) => {
+                                let txt_path = tmp_path.with_extension("txt");
+                                std::fs::read_to_string(&txt_path).unwrap_or_else(|_| {
+                                    String::from_utf8_lossy(&wo.stdout).into_owned()
+                                })
+                            }
+                            Err(_) => "(whisper transcription failed)".to_string(),
+                        }
+                    } else {
+                        "(recorded to ".to_string() + &tmp_str + " — install whisper CLI for transcription)"
+                    };
+
+                    if !transcript.trim().is_empty() && transcript != "(whisper transcription failed)" {
+                        app.input = transcript.trim().to_string();
+                        app.cursor_pos = app.input.len();
+                        app.push_system("Voice input captured. Press Enter to send.");
+                    } else {
+                        app.push_system(&format!("Voice recorded to {tmp_str} (no transcription available)"));
+                    }
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    app.push_error(&format!("Recording failed: {stderr}"));
+                }
+                Err(e) => {
+                    app.push_error(&format!("Failed to start recording: {e}"));
+                }
+            }
         }
         Some("stop") => {
-            app.push_system("Voice input is not active.");
+            // Kill any running recording process
+            let _ = std::process::Command::new("pkill")
+                .args(["-f", "rec.*nocode_voice|arecord.*nocode_voice"])
+                .output();
+            app.push_system("Voice recording stopped.");
         }
         Some(other) => {
             app.push_error(&format!("Invalid option: {other} (use start/stop/status)"));
         }
     }
+}
+
+fn cmd_undo(app: &mut TuiApp, _messages: &mut Vec<Message>) {
+    let mut history = nocode_core::storage::file_history::FileHistory::new(".").unwrap_or_else(|_| {
+        nocode_core::storage::file_history::FileHistory::new("/tmp").unwrap()
+    });
+    if history.can_undo() {
+        match history.undo() {
+            Ok(path) => app.push_system(&format!("Undone: {path}")),
+            Err(e) => app.push_error(&format!("Undo failed: {e}")),
+        }
+    } else {
+        app.push_system("Nothing to undo.");
+    }
+}
+
+fn cmd_redo(app: &mut TuiApp, _messages: &mut Vec<Message>) {
+    let mut history = nocode_core::storage::file_history::FileHistory::new(".").unwrap_or_else(|_| {
+        nocode_core::storage::file_history::FileHistory::new("/tmp").unwrap()
+    });
+    if history.can_redo() {
+        match history.redo() {
+            Ok(path) => app.push_system(&format!("Redone: {path}")),
+            Err(e) => app.push_error(&format!("Redo failed: {e}")),
+        }
+    } else {
+        app.push_system("Nothing to redo.");
+    }
+}
+
+fn cmd_rewind(app: &mut TuiApp, args: Option<&str>, messages: &mut Vec<Message>) {
+    let target = match args {
+        Some(n) => match n.parse::<usize>() {
+            Ok(idx) => idx,
+            Err(_) => {
+                app.push_error("Usage: /rewind <message_index>");
+                return;
+            }
+        },
+        None => {
+            if messages.len() > 1 {
+                messages.len() - 1
+            } else {
+                app.push_system("Nothing to rewind.");
+                return;
+            }
+        }
+    };
+
+    if target >= messages.len() {
+        app.push_error(&format!("Index {target} out of range (0..{})", messages.len()));
+        return;
+    }
+
+    let removed = messages.len() - target;
+    messages.truncate(target);
+    app.chat_messages.clear();
+    app.invalidate_height_cache();
+    for msg in messages.iter() {
+        match msg.role {
+            nocode_core::message::Role::User => {
+                app.push_user_message(&msg.text_content());
+            }
+            nocode_core::message::Role::Assistant => {
+                let text = msg.text_content();
+                if !text.is_empty() {
+                    app.update_streaming_assistant(&text);
+                }
+            }
+        }
+    }
+    app.push_system(&format!("Rewound {removed} messages (now {} total)", messages.len()));
 }
