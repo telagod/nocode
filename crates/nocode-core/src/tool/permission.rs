@@ -1,20 +1,15 @@
 /// Permission mode for tool execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PermissionMode {
     /// Auto-approve all tool calls.
     Auto,
     /// Ask user for approval on each tool call.
+    #[default]
     Ask,
     /// Deny all tool calls.
     Deny,
     /// Read-only: allow read commands, block all writes.
     ReadOnly,
-}
-
-impl Default for PermissionMode {
-    fn default() -> Self {
-        Self::Ask
-    }
 }
 
 /// Decision returned by a permission prompter.
