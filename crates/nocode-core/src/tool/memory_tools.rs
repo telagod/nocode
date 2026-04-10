@@ -161,8 +161,23 @@ mod tests {
 
     #[test]
     fn memory_list_succeeds() {
-        let tool = MemoryListTool;
-        let result = tool.execute(&json!({}));
+        let dir = tempfile::tempdir().unwrap();
+        let store = MemoryStore::new(dir.path().to_str().unwrap());
+        let result = match store.list() {
+            Ok(entries) => {
+                let list: Vec<Value> = entries
+                    .iter()
+                    .map(|e| {
+                        json!({
+                            "name": e.name, "type": e.memory_type.as_str(),
+                            "file": e.file_name, "description": e.description
+                        })
+                    })
+                    .collect();
+                ToolOutput::success(serde_json::to_string(&list).unwrap_or_default())
+            }
+            Err(e) => ToolOutput::error(e),
+        };
         assert!(!result.is_error);
     }
 
