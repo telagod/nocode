@@ -110,10 +110,7 @@ impl ElicitationHandler for AutoConfirmHandler {
         if let Some(schema) = &request.schema {
             for field in &schema.fields {
                 if let Some(default) = &field.default_value {
-                    values.insert(
-                        field.name.clone(),
-                        Value::String(default.clone()),
-                    );
+                    values.insert(field.name.clone(), Value::String(default.clone()));
                 }
             }
         }
@@ -131,13 +128,22 @@ impl ElicitationHandler for AutoConfirmHandler {
 /// and receives an `ElicitationResponse` back on the `rx` channel.
 /// This decouples the MCP protocol layer from the UI layer.
 pub struct InteractiveElicitationHandler {
-    tx: std::sync::mpsc::Sender<(ElicitationRequest, std::sync::mpsc::Sender<ElicitationResponse>)>,
+    tx: std::sync::mpsc::Sender<(
+        ElicitationRequest,
+        std::sync::mpsc::Sender<ElicitationResponse>,
+    )>,
 }
 
 impl InteractiveElicitationHandler {
     /// Create a new interactive handler, returning the handler and a receiver
     /// for the UI to listen on.
-    pub fn new() -> (Self, std::sync::mpsc::Receiver<(ElicitationRequest, std::sync::mpsc::Sender<ElicitationResponse>)>) {
+    pub fn new() -> (
+        Self,
+        std::sync::mpsc::Receiver<(
+            ElicitationRequest,
+            std::sync::mpsc::Sender<ElicitationResponse>,
+        )>,
+    ) {
         let (tx, rx) = std::sync::mpsc::channel();
         (Self { tx }, rx)
     }
@@ -199,8 +205,7 @@ pub fn auto_fill_defaults(request: &ElicitationRequest) -> ElicitationResponse {
 
 /// Parse an elicitation/create JSON-RPC params into an ElicitationRequest.
 pub fn parse_elicitation_request(params: &Value) -> Result<ElicitationRequest, String> {
-    serde_json::from_value(params.clone())
-        .map_err(|e| format!("invalid elicitation request: {e}"))
+    serde_json::from_value(params.clone()).map_err(|e| format!("invalid elicitation request: {e}"))
 }
 
 /// Build a JSON-RPC result from an ElicitationResponse.

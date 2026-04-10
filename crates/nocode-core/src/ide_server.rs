@@ -7,8 +7,8 @@
 use crate::message::{Message, SystemBlock};
 use crate::provider::ProviderBox;
 use crate::query::r#loop::{self, LoopConfig, NoopObserver};
-use crate::tool::executor::ToolExecutor;
 use crate::tool::ToolRegistry;
+use crate::tool::executor::ToolExecutor;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -50,7 +50,7 @@ impl IdeMethod {
             "cancel" => Some(Self::Cancel),
             "status" => Some(Self::Status),
             "diagnostics" => Some(Self::Diagnostics),
-// APPEND_REST
+            // APPEND_REST
             "completions" => Some(Self::Completions),
             "hover" => Some(Self::Hover),
             "shutdown" => Some(Self::Shutdown),
@@ -177,7 +177,8 @@ impl IdeRequestHandler {
     }
 
     fn handle_query(&self, params: &Value) -> Result<Value, (i64, String)> {
-        let prompt = params["prompt"].as_str()
+        let prompt = params["prompt"]
+            .as_str()
             .ok_or((-32602, "Missing 'prompt' parameter".to_string()))?;
 
         let messages = vec![Message::user_text(prompt)];
@@ -249,18 +250,63 @@ impl IdeRequestHandler {
 
         // Collect slash command names
         let mut items: Vec<Value> = [
-            "help", "quit", "exit", "status", "model", "clear", "compact",
-            "review", "plan", "agents", "mcp", "mcp-add", "mcp-remove", "mcp-restart",
-            "memory", "sessions", "resume", "config", "theme", "vim", "export",
-            "history", "version", "doctor", "permissions", "cost", "init", "login",
-            "insights", "feature-flags", "telemetry", "skills", "env", "keybindings",
-            "bughunter", "security-review", "copy", "undo", "redo", "rewind",
-            "agent-create", "permissions-add", "permissions-remove",
-            "plugin-install", "plugin-remove", "plugin-list", "ide", "voice",
-        ].iter()
-            .filter(|c| prefix.is_empty() || format!("/{c}").starts_with(prefix) || c.starts_with(prefix.trim_start_matches('/')))
-            .map(|c| json!({"label": format!("/{c}"), "kind": "command"}))
-            .collect();
+            "help",
+            "quit",
+            "exit",
+            "status",
+            "model",
+            "clear",
+            "compact",
+            "review",
+            "plan",
+            "agents",
+            "mcp",
+            "mcp-add",
+            "mcp-remove",
+            "mcp-restart",
+            "memory",
+            "sessions",
+            "resume",
+            "config",
+            "theme",
+            "vim",
+            "export",
+            "history",
+            "version",
+            "doctor",
+            "permissions",
+            "cost",
+            "init",
+            "login",
+            "insights",
+            "feature-flags",
+            "telemetry",
+            "skills",
+            "env",
+            "keybindings",
+            "bughunter",
+            "security-review",
+            "copy",
+            "undo",
+            "redo",
+            "rewind",
+            "agent-create",
+            "permissions-add",
+            "permissions-remove",
+            "plugin-install",
+            "plugin-remove",
+            "plugin-list",
+            "ide",
+            "voice",
+        ]
+        .iter()
+        .filter(|c| {
+            prefix.is_empty()
+                || format!("/{c}").starts_with(prefix)
+                || c.starts_with(prefix.trim_start_matches('/'))
+        })
+        .map(|c| json!({"label": format!("/{c}"), "kind": "command"}))
+        .collect();
 
         // Append tool names
         let tool_names = self.registry.names();
@@ -275,7 +321,8 @@ impl IdeRequestHandler {
     }
 
     fn handle_hover(&self, params: &Value) -> Result<Value, (i64, String)> {
-        let file = params["file"].as_str()
+        let file = params["file"]
+            .as_str()
             .ok_or((-32602, "Missing 'file' parameter".to_string()))?;
         let line = params["line"].as_u64().unwrap_or(0) as usize;
         let context_lines = params["context_lines"].as_u64().unwrap_or(5) as usize;
@@ -290,10 +337,12 @@ impl IdeRequestHandler {
 
         let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
-            Err(e) => return Ok(json!({
-                "contents": format!("Cannot read file: {e}"),
-                "found": false,
-            })),
+            Err(e) => {
+                return Ok(json!({
+                    "contents": format!("Cannot read file: {e}"),
+                    "found": false,
+                }));
+            }
         };
 
         let lines: Vec<&str> = content.lines().collect();
@@ -307,11 +356,16 @@ impl IdeRequestHandler {
         }
 
         // Clamp line number
-        let center = if line == 0 { 0 } else { (line - 1).min(lines.len() - 1) };
+        let center = if line == 0 {
+            0
+        } else {
+            (line - 1).min(lines.len() - 1)
+        };
         let start = center.saturating_sub(context_lines);
         let end = (center + context_lines + 1).min(lines.len());
         let snippet: Vec<&str> = lines[start..end].to_vec();
-        let language = path.extension()
+        let language = path
+            .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("text")
             .to_string();
@@ -341,9 +395,10 @@ impl crate::provider::Provider for StubProvider {
     fn create_message(
         &self,
         _request: &crate::provider::types::CreateMessageRequest,
-    ) -> Result<crate::provider::types::CreateMessageResponse, crate::provider::types::ProviderError> {
-        use crate::provider::types::{CreateMessageResponse, StopReason, Usage};
+    ) -> Result<crate::provider::types::CreateMessageResponse, crate::provider::types::ProviderError>
+    {
         use crate::message::ContentBlock;
+        use crate::provider::types::{CreateMessageResponse, StopReason, Usage};
         Ok(CreateMessageResponse {
             id: "stub-id".to_string(),
             content: vec![ContentBlock::text("stub response")],
@@ -357,7 +412,8 @@ impl crate::provider::Provider for StubProvider {
         &self,
         request: &crate::provider::types::CreateMessageRequest,
         _on_event: &mut dyn FnMut(crate::provider::types::StreamEvent),
-    ) -> Result<crate::provider::types::CreateMessageResponse, crate::provider::types::ProviderError> {
+    ) -> Result<crate::provider::types::CreateMessageResponse, crate::provider::types::ProviderError>
+    {
         self.create_message(request)
     }
 }

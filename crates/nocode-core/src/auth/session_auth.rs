@@ -44,7 +44,7 @@ impl SessionAuthStore {
             sessions: HashMap::new(),
         }
     }
-// APPEND_REST
+    // APPEND_REST
 
     /// Register a token for a session.
     pub fn register(
@@ -229,7 +229,10 @@ mod tests {
         store.register("t3", "s3", None, Some(3600));
         let cleaned = store.cleanup_expired();
         assert_eq!(cleaned, 2);
-        assert_eq!(store.validate("t3"), AuthResult::Authenticated("s3".to_string()));
+        assert_eq!(
+            store.validate("t3"),
+            AuthResult::Authenticated("s3".to_string())
+        );
     }
 
     #[test]

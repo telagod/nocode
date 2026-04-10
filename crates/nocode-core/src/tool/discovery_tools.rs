@@ -167,16 +167,22 @@ impl ToolSearchTool {
             .collect();
 
         if results.is_empty() {
-            return ToolOutput::success(json!({
-                "tools": [],
-                "message": format!("No tools matching '{query}' found")
-            }).to_string());
+            return ToolOutput::success(
+                json!({
+                    "tools": [],
+                    "message": format!("No tools matching '{query}' found")
+                })
+                .to_string(),
+            );
         }
 
-        ToolOutput::success(json!({
-            "tools": results,
-            "total": results.len()
-        }).to_string())
+        ToolOutput::success(
+            json!({
+                "tools": results,
+                "total": results.len()
+            })
+            .to_string(),
+        )
     }
 }
 

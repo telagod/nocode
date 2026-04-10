@@ -391,7 +391,10 @@ mod tests {
             answers: Mutex<Vec<String>>,
         }
         impl QuestionPrompter for TestPrompter {
-            fn prompt_questions(&self, _questions: &serde_json::Value) -> Result<UserAnswer, String> {
+            fn prompt_questions(
+                &self,
+                _questions: &serde_json::Value,
+            ) -> Result<UserAnswer, String> {
                 let mut guard = self.answers.lock().unwrap();
                 let selections: Vec<String> = guard.drain(..).collect();
                 Ok(UserAnswer { selections })

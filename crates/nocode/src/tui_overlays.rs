@@ -103,7 +103,8 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             let reg = reg.lock().unwrap_or_else(|e| e.into_inner());
             let workers = reg.list();
             let text = if workers.is_empty() {
-                "No background agents running.\n\nUse /agent-create <name> <prompt> to spawn one.".to_string()
+                "No background agents running.\n\nUse /agent-create <name> <prompt> to spawn one."
+                    .to_string()
             } else {
                 let mut lines = vec![format!("Background agents ({}):\n", workers.len())];
                 for w in &workers {
@@ -114,7 +115,10 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                         nocode_core::agent::worker::WorkerState::Failed => "✗",
                         _ => "○",
                     };
-                    lines.push(format!("  {state_icon} {} ({}): {:?}", w.name, w.id, w.state));
+                    lines.push(format!(
+                        "  {state_icon} {} ({}): {:?}",
+                        w.name, w.id, w.state
+                    ));
                 }
                 lines.push(String::new());
                 lines.push("Commands: /agent-create <name> <prompt>".to_string());
@@ -132,13 +136,22 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             let mut lines = vec![
                 "Configuration:".to_string(),
                 String::new(),
-                format!("  Model:        {}", settings.model.unwrap_or_else(|| "default".to_string())),
+                format!(
+                    "  Model:        {}",
+                    settings.model.unwrap_or_else(|| "default".to_string())
+                ),
                 format!("  Max turns:    {}", settings.max_turns.unwrap_or(10)),
                 format!("  Max tokens:   {}", settings.max_tokens.unwrap_or(16384)),
-                format!("  Permission:   {}", settings.permission_mode.as_deref().unwrap_or("ask")),
+                format!(
+                    "  Permission:   {}",
+                    settings.permission_mode.as_deref().unwrap_or("ask")
+                ),
             ];
             if let Some(ref prompt) = settings.system_prompt {
-                lines.push(format!("  System prompt: {}...", &prompt[..prompt.len().min(50)]));
+                lines.push(format!(
+                    "  System prompt: {}...",
+                    &prompt[..prompt.len().min(50)]
+                ));
             }
             lines.push(String::new());
             lines.push("Config loaded from:".to_string());
@@ -146,7 +159,9 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             lines.push("  2. .nocode/settings.json (project)".to_string());
             lines.push("  3. .nocode/settings.local.json (local)".to_string());
             lines.push(String::new());
-            lines.push("Environment overrides: NOCODE_MODEL, NOCODE_SYSTEM_PROMPT, etc.".to_string());
+            lines.push(
+                "Environment overrides: NOCODE_MODEL, NOCODE_SYSTEM_PROMPT, etc.".to_string(),
+            );
             let config_text = lines.join("\n");
             let overlay_w = OverlayBlock::new("Configuration", &config_text);
             frame.render_widget(overlay_w, area);
@@ -158,7 +173,9 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             let store = MemoryStore::new(&mem_dir);
             let text = match store.list() {
                 Ok(entries) if entries.is_empty() => {
-                    format!("Memory directory: {mem_dir}\n\nNo memories stored yet.\n\nUse the MemorySave tool or /memory <query> to search.")
+                    format!(
+                        "Memory directory: {mem_dir}\n\nNo memories stored yet.\n\nUse the MemorySave tool or /memory <query> to search."
+                    )
                 }
                 Ok(entries) => {
                     let mut lines = vec![format!("Memory entries ({}):\n", entries.len())];
@@ -207,7 +224,10 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             let overlay_w = OverlayBlock::new("\u{26A0} Permission Required", &text);
             frame.render_widget(overlay_w, area);
         }
-        Overlay::Question { questions, selected } => {
+        Overlay::Question {
+            questions,
+            selected,
+        } => {
             let mut text = String::from("The assistant has a question:\n\n");
             if let Some(arr) = questions.as_array() {
                 for (i, q) in arr.iter().enumerate() {

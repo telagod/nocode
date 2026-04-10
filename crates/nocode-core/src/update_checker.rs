@@ -118,17 +118,17 @@ impl UpdateChecker {
     }
 
     fn fetch_latest(&self) -> Result<(String, String), String> {
-        let url = format!(
-            "https://api.github.com/repos/{}/releases/latest",
-            self.repo
-        );
+        let url = format!("https://api.github.com/repos/{}/releases/latest", self.repo);
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .user_agent("nocode-update-checker")
             .build()
             .map_err(|e| format!("client error: {e}"))?;
 
-        let resp = client.get(&url).send().map_err(|e| format!("request error: {e}"))?;
+        let resp = client
+            .get(&url)
+            .send()
+            .map_err(|e| format!("request error: {e}"))?;
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
         }

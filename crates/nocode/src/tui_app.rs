@@ -112,11 +112,8 @@ pub(crate) struct TuiApp {
     pub(crate) permission_tx:
         Option<std::sync::mpsc::Sender<nocode_core::tool::permission::PermissionDecision>>,
     /// Channel to send question answers back to the executor thread.
-    pub(crate) question_tx: Option<
-        std::sync::mpsc::Sender<
-            Result<nocode_core::tool::permission::UserAnswer, String>,
-        >,
-    >,
+    pub(crate) question_tx:
+        Option<std::sync::mpsc::Sender<Result<nocode_core::tool::permission::UserAnswer, String>>>,
     /// Search state
     pub(crate) search_query: String,
     pub(crate) search_active: bool,
@@ -529,10 +526,8 @@ impl TuiApp {
                                 (selected.first_mut(), questions.as_array())
                                 && let Some(q) = arr.first()
                             {
-                                let opt_count = q["options"]
-                                    .as_array()
-                                    .map(|a| a.len())
-                                    .unwrap_or(1);
+                                let opt_count =
+                                    q["options"].as_array().map(|a| a.len()).unwrap_or(1);
                                 if *cur + 1 < opt_count {
                                     *cur += 1;
                                 }
@@ -556,8 +551,7 @@ impl TuiApp {
                             } else {
                                 Vec::new()
                             };
-                            let answer =
-                                nocode_core::tool::permission::UserAnswer { selections };
+                            let answer = nocode_core::tool::permission::UserAnswer { selections };
                             if let Some(tx) = self.question_tx.take() {
                                 let _ = tx.send(Ok(answer));
                             }
@@ -1130,7 +1124,10 @@ pub(crate) fn run_app_loop(
                             .as_array()
                             .map(|arr| vec![0usize; arr.len()])
                             .unwrap_or_default();
-                        app.overlay = Overlay::Question { questions, selected };
+                        app.overlay = Overlay::Question {
+                            questions,
+                            selected,
+                        };
                         app.dirty = true;
                     }
                     Ok(TuiEvent::MessagesUpdated(updated_msgs)) => {

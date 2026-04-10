@@ -287,8 +287,8 @@ impl PluginRuntime {
             return Err(format!("No manifest.json found in '{source_path}'"));
         }
 
-        let raw = std::fs::read_to_string(&manifest_path)
-            .map_err(|e| format!("read manifest: {e}"))?;
+        let raw =
+            std::fs::read_to_string(&manifest_path).map_err(|e| format!("read manifest: {e}"))?;
         let manifest: PluginManifest =
             serde_json::from_str(&raw).map_err(|e| format!("parse manifest: {e}"))?;
 
@@ -351,8 +351,7 @@ pub struct PluginInfo {
 /// Recursively copy a directory.
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(dst).map_err(|e| format!("mkdir {}: {e}", dst.display()))?;
-    let entries =
-        std::fs::read_dir(src).map_err(|e| format!("read_dir {}: {e}", src.display()))?;
+    let entries = std::fs::read_dir(src).map_err(|e| format!("read_dir {}: {e}", src.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("dir entry: {e}"))?;
         let src_path = entry.path();
@@ -535,7 +534,8 @@ mod tests {
         std::fs::write(
             source.join("manifest.json"),
             r#"{"name":"installable","version":"1.0","command":"echo ok"}"#,
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(source.join("extra.txt"), "data").unwrap();
 
         let rt = PluginRuntime::new(plugins_dir.to_str().unwrap());
@@ -570,7 +570,8 @@ mod tests {
         std::fs::write(
             plugin_dir.join("manifest.json"),
             r#"{"name":"my-plug","version":"2.0","description":"A plugin","tools":["t1","t2"]}"#,
-        ).unwrap();
+        )
+        .unwrap();
         let rt = PluginRuntime::new(tmp.to_str().unwrap());
         let list = rt.list_installed();
         assert_eq!(list.len(), 1);
@@ -584,6 +585,9 @@ mod tests {
     #[test]
     fn install_from_nonexistent_path() {
         let rt = PluginRuntime::new("/tmp/nocode_plug_nowhere");
-        assert!(rt.install_from_path("/tmp/nocode_does_not_exist_xyz").is_err());
+        assert!(
+            rt.install_from_path("/tmp/nocode_does_not_exist_xyz")
+                .is_err()
+        );
     }
 }

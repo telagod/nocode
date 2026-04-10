@@ -28,7 +28,11 @@ pub enum WsMessage {
     /// Server signals tool use start.
     ToolStart { id: String, tool_name: String },
     /// Server signals tool use result.
-    ToolResult { id: String, content: String, is_error: bool },
+    ToolResult {
+        id: String,
+        content: String,
+        is_error: bool,
+    },
     /// Server signals query complete.
     Complete { id: String, stop_reason: String },
     /// Server signals an error.
@@ -227,12 +231,31 @@ mod tests {
     #[test]
     fn ws_message_serde_roundtrip() {
         let msgs = vec![
-            WsMessage::Query { id: "q1".into(), content: "hello".into() },
-            WsMessage::Delta { id: "q1".into(), text: "world".into() },
-            WsMessage::ToolStart { id: "q1".into(), tool_name: "Bash".into() },
-            WsMessage::ToolResult { id: "q1".into(), content: "ok".into(), is_error: false },
-            WsMessage::Complete { id: "q1".into(), stop_reason: "end_turn".into() },
-            WsMessage::Error { id: "q1".into(), message: "fail".into() },
+            WsMessage::Query {
+                id: "q1".into(),
+                content: "hello".into(),
+            },
+            WsMessage::Delta {
+                id: "q1".into(),
+                text: "world".into(),
+            },
+            WsMessage::ToolStart {
+                id: "q1".into(),
+                tool_name: "Bash".into(),
+            },
+            WsMessage::ToolResult {
+                id: "q1".into(),
+                content: "ok".into(),
+                is_error: false,
+            },
+            WsMessage::Complete {
+                id: "q1".into(),
+                stop_reason: "end_turn".into(),
+            },
+            WsMessage::Error {
+                id: "q1".into(),
+                message: "fail".into(),
+            },
             WsMessage::Ping { timestamp: 123 },
             WsMessage::Pong { timestamp: 123 },
         ];

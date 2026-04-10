@@ -45,7 +45,7 @@ impl TelemetryEvent {
     }
 
     pub fn with_session(mut self, session_id: &str) -> Self {
-// APPEND_MORE
+        // APPEND_MORE
         self.session_id = Some(session_id.to_string());
         self
     }
@@ -84,8 +84,7 @@ impl EventLogger {
         self.ensure_dir()?;
         let date = event.timestamp.format("%Y-%m-%d");
         let path = self.base_dir.join(format!("events_{date}.jsonl"));
-        let line =
-            serde_json::to_string(event).map_err(|e| format!("serialize error: {e}"))?;
+        let line = serde_json::to_string(event).map_err(|e| format!("serialize error: {e}"))?;
         let mut file = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -155,8 +154,7 @@ impl EventLogger {
     /// Read events from a specific date file.
     pub fn read_events(&self, date: &str) -> Result<Vec<TelemetryEvent>, String> {
         let path = self.base_dir.join(format!("events_{date}.jsonl"));
-        let raw = fs::read_to_string(&path)
-            .map_err(|e| format!("read error: {e}"))?;
+        let raw = fs::read_to_string(&path).map_err(|e| format!("read error: {e}"))?;
         let mut events = Vec::new();
         for line in raw.lines() {
             if line.trim().is_empty() {
@@ -171,13 +169,13 @@ impl EventLogger {
 
     /// List available event log dates.
     pub fn list_dates(&self) -> Result<Vec<String>, String> {
-        let dir = fs::read_dir(&self.base_dir)
-            .map_err(|e| format!("read dir error: {e}"))?;
+        let dir = fs::read_dir(&self.base_dir).map_err(|e| format!("read dir error: {e}"))?;
         let mut dates = Vec::new();
         for entry in dir {
             let entry = entry.map_err(|e| format!("dir entry error: {e}"))?;
             let name = entry.file_name().to_string_lossy().to_string();
-            if let Some(date) = name.strip_prefix("events_")
+            if let Some(date) = name
+                .strip_prefix("events_")
                 .and_then(|s| s.strip_suffix(".jsonl"))
             {
                 dates.push(date.to_string());
@@ -188,8 +186,7 @@ impl EventLogger {
     }
 
     fn ensure_dir(&self) -> Result<(), String> {
-        fs::create_dir_all(&self.base_dir)
-            .map_err(|e| format!("mkdir error: {e}"))
+        fs::create_dir_all(&self.base_dir).map_err(|e| format!("mkdir error: {e}"))
     }
 }
 
@@ -316,7 +313,12 @@ impl DatadogSink {
             .iter()
             .map(|e| {
                 let mut tags = self.config.tags.clone();
-                tags.push(format!("event_type:{}", serde_json::to_string(&e.event_type).unwrap_or_default().trim_matches('"')));
+                tags.push(format!(
+                    "event_type:{}",
+                    serde_json::to_string(&e.event_type)
+                        .unwrap_or_default()
+                        .trim_matches('"')
+                ));
                 if let Some(sid) = &e.session_id {
                     tags.push(format!("session_id:{sid}"));
                 }
@@ -367,10 +369,7 @@ mod tests {
 
     #[test]
     fn event_serialization_roundtrip() {
-        let event = TelemetryEvent::new(
-            EventType::ToolCall,
-            serde_json::json!({"tool": "Bash"}),
-        );
+        let event = TelemetryEvent::new(EventType::ToolCall, serde_json::json!({"tool": "Bash"}));
         let json = serde_json::to_string(&event).unwrap();
         let parsed: TelemetryEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.event_type, EventType::ToolCall);
@@ -499,10 +498,9 @@ mod tests {
     fn datadog_sink_build_payload() {
         let config = DatadogConfig::new("key").with_tag("env:test");
         let sink = DatadogSink::new(config);
-        let event = TelemetryEvent::new(
-            EventType::ModelCall,
-            serde_json::json!({"model": "claude"}),
-        ).with_session("sess-1");
+        let event =
+            TelemetryEvent::new(EventType::ModelCall, serde_json::json!({"model": "claude"}))
+                .with_session("sess-1");
         let payload = sink.build_payload(&[event]).unwrap();
         assert!(payload.contains("nocode"));
         assert!(payload.contains("env:test"));

@@ -25,9 +25,9 @@ pub struct CachedToken {
 
 impl CachedToken {
     pub fn from_response(resp: &TokenResponse) -> Self {
-        let expires_at = resp.expires_in.map(|secs| {
-            chrono::Utc::now().timestamp() + secs as i64
-        });
+        let expires_at = resp
+            .expires_in
+            .map(|secs| chrono::Utc::now().timestamp() + secs as i64);
         Self {
             access_token: resp.access_token.clone(),
             refresh_token: resp.refresh_token.clone(),
@@ -54,7 +54,7 @@ impl McpOAuthManager {
             tokens: HashMap::new(),
         }
     }
-// APPEND_REST
+    // APPEND_REST
 
     /// Register OAuth config for an MCP server.
     pub fn register(&mut self, config: McpOAuthConfig) {
@@ -73,7 +73,8 @@ impl McpOAuthManager {
         // 1. Bind a random port for the callback
         let listener = std::net::TcpListener::bind("127.0.0.1:0")
             .map_err(|e| format!("Failed to bind callback port: {e}"))?;
-        let port = listener.local_addr()
+        let port = listener
+            .local_addr()
             .map_err(|e| format!("Failed to get local addr: {e}"))?
             .port();
 
@@ -81,7 +82,9 @@ impl McpOAuthManager {
         let redirect_uri = format!("http://127.0.0.1:{port}/callback");
 
         // 3. Temporarily patch the config's redirect_uri for URL generation
-        let config = self.configs.get(server_name)
+        let config = self
+            .configs
+            .get(server_name)
             .ok_or_else(|| format!("No OAuth config for server '{server_name}'"))?;
         let mut patched_config = config.oauth.clone();
         patched_config.redirect_uri = redirect_uri.clone();
@@ -95,7 +98,8 @@ impl McpOAuthManager {
         let browser_opened = open_browser(&url);
 
         // 5. Wait for callback with timeout
-        listener.set_nonblocking(false)
+        listener
+            .set_nonblocking(false)
             .map_err(|e| format!("Failed to set blocking mode: {e}"))?;
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
@@ -115,8 +119,7 @@ impl McpOAuthManager {
                 Ok((mut stream, _addr)) => {
                     // Read the HTTP request
                     let mut buf = [0u8; 4096];
-                    let n = std::io::Read::read(&mut stream, &mut buf)
-                        .unwrap_or(0);
+                    let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
                     let request_str = String::from_utf8_lossy(&buf[..n]);
 
                     // Send a "you can close this page" response
@@ -147,12 +150,14 @@ impl McpOAuthManager {
             }
         }
 
-        let code = code_opt
-            .ok_or_else(|| "OAuth flow timed out — no callback received".to_string())?;
+        let code =
+            code_opt.ok_or_else(|| "OAuth flow timed out — no callback received".to_string())?;
 
         // 6. Exchange code for token
         // Need to use patched config for exchange too
-        let exchange_config = self.configs.get(server_name)
+        let exchange_config = self
+            .configs
+            .get(server_name)
             .ok_or_else(|| format!("No OAuth config for server '{server_name}'"))?;
         let mut exchange_config = exchange_config.oauth.clone();
         exchange_config.redirect_uri = redirect_uri;
@@ -161,14 +166,21 @@ impl McpOAuthManager {
 
         // 7. Cache token
         let token = resp.access_token.clone();
-        self.tokens.insert(server_name.to_string(), CachedToken::from_response(&resp));
+        self.tokens
+            .insert(server_name.to_string(), CachedToken::from_response(&resp));
 
         Ok(token)
     }
 
     /// Get the authorization URL for an MCP server.
-    pub fn authorize_url(&self, server_name: &str, state: &str) -> Result<(String, String), String> {
-        let config = self.configs.get(server_name)
+    pub fn authorize_url(
+        &self,
+        server_name: &str,
+        state: &str,
+    ) -> Result<(String, String), String> {
+        let config = self
+            .configs
+            .get(server_name)
             .ok_or_else(|| format!("No OAuth config for server '{server_name}'"))?;
         let client = OAuthClient::new(config.oauth.clone());
         let (url, pkce) = client.authorize_url(state);
@@ -182,17 +194,22 @@ impl McpOAuthManager {
         code: &str,
         pkce_verifier: &str,
     ) -> Result<(), String> {
-        let config = self.configs.get(server_name)
+        let config = self
+            .configs
+            .get(server_name)
             .ok_or_else(|| format!("No OAuth config for server '{server_name}'"))?;
         let client = OAuthClient::new(config.oauth.clone());
         let resp = client.exchange_code(code, pkce_verifier)?;
-        self.tokens.insert(server_name.to_string(), CachedToken::from_response(&resp));
+        self.tokens
+            .insert(server_name.to_string(), CachedToken::from_response(&resp));
         Ok(())
     }
 
     /// Get a valid access token for an MCP server (refreshing if needed).
     pub fn get_token(&mut self, server_name: &str) -> Result<String, String> {
-        let cached = self.tokens.get(server_name)
+        let cached = self
+            .tokens
+            .get(server_name)
             .ok_or_else(|| format!("No token for server '{server_name}' — run OAuth flow first"))?
             .clone();
 
@@ -202,10 +219,14 @@ impl McpOAuthManager {
 
         // Try refresh
         let Some(refresh_token) = &cached.refresh_token else {
-            return Err(format!("Token expired and no refresh token for '{server_name}'"));
+            return Err(format!(
+                "Token expired and no refresh token for '{server_name}'"
+            ));
         };
 
-        let config = self.configs.get(server_name)
+        let config = self
+            .configs
+            .get(server_name)
             .ok_or_else(|| format!("No OAuth config for server '{server_name}'"))?;
         let client = OAuthClient::new(config.oauth.clone());
         let resp = client.refresh_token(refresh_token)?;
@@ -217,7 +238,8 @@ impl McpOAuthManager {
 
     /// Check if a server has a valid (non-expired) token.
     pub fn has_valid_token(&self, server_name: &str) -> bool {
-        self.tokens.get(server_name)
+        self.tokens
+            .get(server_name)
             .is_some_and(|t| !t.is_expired())
     }
 
@@ -259,8 +281,7 @@ fn open_browser(url: &str) -> bool {
 
     // Try the platform command first, then fallback to common browsers
     let candidates = [
-        cmd,
-        "python3", // python3 -m webbrowser
+        cmd, "python3", // python3 -m webbrowser
     ];
 
     for candidate in &candidates {
@@ -269,9 +290,7 @@ fn open_browser(url: &str) -> bool {
                 "python3" => std::process::Command::new("python3")
                     .args(["-m", "webbrowser", url])
                     .spawn(),
-                _ => std::process::Command::new(candidate)
-                    .arg(url)
-                    .spawn(),
+                _ => std::process::Command::new(candidate).arg(url).spawn(),
             };
             if result.is_ok() {
                 return true;
@@ -384,11 +403,14 @@ mod tests {
     #[test]
     fn revoke_clears_token() {
         let mut mgr = McpOAuthManager::new();
-        mgr.tokens.insert("srv".to_string(), CachedToken {
-            access_token: "at".to_string(),
-            refresh_token: None,
-            expires_at: None,
-        });
+        mgr.tokens.insert(
+            "srv".to_string(),
+            CachedToken {
+                access_token: "at".to_string(),
+                refresh_token: None,
+                expires_at: None,
+            },
+        );
         assert!(mgr.has_valid_token("srv"));
         assert!(mgr.revoke("srv"));
         assert!(!mgr.has_valid_token("srv"));
@@ -401,11 +423,14 @@ mod tests {
         assert_eq!(mgr.configured_servers().len(), 1);
         assert!(mgr.authenticated_servers().is_empty());
 
-        mgr.tokens.insert("github-mcp".to_string(), CachedToken {
-            access_token: "at".to_string(),
-            refresh_token: None,
-            expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        });
+        mgr.tokens.insert(
+            "github-mcp".to_string(),
+            CachedToken {
+                access_token: "at".to_string(),
+                refresh_token: None,
+                expires_at: Some(chrono::Utc::now().timestamp() + 3600),
+            },
+        );
         assert_eq!(mgr.authenticated_servers().len(), 1);
     }
 
@@ -419,11 +444,14 @@ mod tests {
     #[test]
     fn get_token_returns_cached() {
         let mut mgr = McpOAuthManager::new();
-        mgr.tokens.insert("srv".to_string(), CachedToken {
-            access_token: "my-token".to_string(),
-            refresh_token: None,
-            expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        });
+        mgr.tokens.insert(
+            "srv".to_string(),
+            CachedToken {
+                access_token: "my-token".to_string(),
+                refresh_token: None,
+                expires_at: Some(chrono::Utc::now().timestamp() + 3600),
+            },
+        );
         assert_eq!(mgr.get_token("srv").unwrap(), "my-token");
     }
 

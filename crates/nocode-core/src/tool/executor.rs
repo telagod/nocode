@@ -275,10 +275,9 @@ impl<'a> ToolExecutor<'a> {
     fn is_read_only_tool(name: &str, input: &Value) -> bool {
         match name {
             // Always read-only
-            "FileRead" | "Glob" | "Grep" | "TaskGet" | "TaskList" | "TaskOutput"
-            | "MemoryList" | "MemorySearch" | "CronList" | "ToolSearch"
-            | "ListMcpResources" | "ReadMcpResource" | "AskUserQuestion"
-            | "EnterPlanMode" | "ExitPlanMode" => true,
+            "FileRead" | "Glob" | "Grep" | "TaskGet" | "TaskList" | "TaskOutput" | "MemoryList"
+            | "MemorySearch" | "CronList" | "ToolSearch" | "ListMcpResources"
+            | "ReadMcpResource" | "AskUserQuestion" | "EnterPlanMode" | "ExitPlanMode" => true,
             // Bash: only if the command is read-only
             "Bash" => {
                 let cmd = input["command"].as_str().unwrap_or("");
@@ -504,7 +503,7 @@ mod tests {
 
     #[test]
     fn plan_mode_blocks_write_tools() {
-        use crate::tool::session_tools::{exit_plan_mode, is_plan_mode, enter_plan_mode};
+        use crate::tool::session_tools::{enter_plan_mode, exit_plan_mode, is_plan_mode};
 
         // Clean slate
         exit_plan_mode();

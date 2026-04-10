@@ -128,17 +128,16 @@ impl ToolClassifier {
     pub fn classify(tool_name: &str, input: &serde_json::Value) -> ToolRiskLevel {
         match tool_name {
             // Safe: read-only tools
-            "FileRead" | "Glob" | "Grep" | "TaskGet" | "TaskList" | "TaskOutput"
-            | "MemoryList" | "MemorySearch" | "CronList" | "ToolSearch"
-            | "ListMcpResources" | "ReadMcpResource" | "AskUserQuestion"
-            | "ExitPlanMode" => ToolRiskLevel::Safe,
+            "FileRead" | "Glob" | "Grep" | "TaskGet" | "TaskList" | "TaskOutput" | "MemoryList"
+            | "MemorySearch" | "CronList" | "ToolSearch" | "ListMcpResources"
+            | "ReadMcpResource" | "AskUserQuestion" | "ExitPlanMode" => ToolRiskLevel::Safe,
 
             // Bash: depends on command content
             "Bash" => Self::classify_bash(input),
 
             // Write: file modifications
-            "FileWrite" | "FileEdit" | "NotebookEdit" | "TodoWrite"
-            | "Config" | "MemorySave" | "MemoryDelete" => ToolRiskLevel::Write,
+            "FileWrite" | "FileEdit" | "NotebookEdit" | "TodoWrite" | "Config" | "MemorySave"
+            | "MemoryDelete" => ToolRiskLevel::Write,
 
             // Potentially destructive
             "EnterWorktree" | "ExitWorktree" => ToolRiskLevel::Write,
@@ -188,9 +187,19 @@ impl ToolClassifier {
 
         // Destructive patterns
         let destructive_patterns = [
-            "rm -rf", "rm -r", "mkfs", "dd if=", "shutdown", "reboot",
-            "kill -9", "pkill", "DROP TABLE", "DROP DATABASE",
-            "truncate", "format", "> /dev/",
+            "rm -rf",
+            "rm -r",
+            "mkfs",
+            "dd if=",
+            "shutdown",
+            "reboot",
+            "kill -9",
+            "pkill",
+            "DROP TABLE",
+            "DROP DATABASE",
+            "truncate",
+            "format",
+            "> /dev/",
         ];
         let cmd_lower = cmd.to_lowercase();
         for pattern in &destructive_patterns {
@@ -259,9 +268,8 @@ impl PermissionRuleStore {
     /// Remove a rule by tool name (and optional pattern).
     pub fn remove(&mut self, tool_name: &str, pattern: Option<&str>) -> Result<bool, String> {
         let before = self.rules.len();
-        self.rules.retain(|r| {
-            !(r.tool_name == tool_name && r.argument_pattern.as_deref() == pattern)
-        });
+        self.rules
+            .retain(|r| !(r.tool_name == tool_name && r.argument_pattern.as_deref() == pattern));
         let removed = self.rules.len() < before;
         if removed {
             self.save()?;
@@ -277,7 +285,9 @@ impl PermissionRuleStore {
                 continue;
             }
             if let Some(pattern) = &rule.argument_pattern
-                && args_summary.to_lowercase().contains(&pattern.to_lowercase())
+                && args_summary
+                    .to_lowercase()
+                    .contains(&pattern.to_lowercase())
             {
                 return Some(rule.action);
             }
@@ -359,42 +369,80 @@ mod tests {
     #[test]
     fn classify_read_tools_as_safe() {
         let input = serde_json::json!({});
-        assert_eq!(ToolClassifier::classify("FileRead", &input), ToolRiskLevel::Safe);
-        assert_eq!(ToolClassifier::classify("Glob", &input), ToolRiskLevel::Safe);
-        assert_eq!(ToolClassifier::classify("Grep", &input), ToolRiskLevel::Safe);
-        assert_eq!(ToolClassifier::classify("TaskList", &input), ToolRiskLevel::Safe);
+        assert_eq!(
+            ToolClassifier::classify("FileRead", &input),
+            ToolRiskLevel::Safe
+        );
+        assert_eq!(
+            ToolClassifier::classify("Glob", &input),
+            ToolRiskLevel::Safe
+        );
+        assert_eq!(
+            ToolClassifier::classify("Grep", &input),
+            ToolRiskLevel::Safe
+        );
+        assert_eq!(
+            ToolClassifier::classify("TaskList", &input),
+            ToolRiskLevel::Safe
+        );
     }
 
     #[test]
     fn classify_write_tools() {
         let input = serde_json::json!({});
-        assert_eq!(ToolClassifier::classify("FileWrite", &input), ToolRiskLevel::Write);
-        assert_eq!(ToolClassifier::classify("FileEdit", &input), ToolRiskLevel::Write);
-        assert_eq!(ToolClassifier::classify("Agent", &input), ToolRiskLevel::Write);
-        assert_eq!(ToolClassifier::classify("WebFetch", &input), ToolRiskLevel::Write);
+        assert_eq!(
+            ToolClassifier::classify("FileWrite", &input),
+            ToolRiskLevel::Write
+        );
+        assert_eq!(
+            ToolClassifier::classify("FileEdit", &input),
+            ToolRiskLevel::Write
+        );
+        assert_eq!(
+            ToolClassifier::classify("Agent", &input),
+            ToolRiskLevel::Write
+        );
+        assert_eq!(
+            ToolClassifier::classify("WebFetch", &input),
+            ToolRiskLevel::Write
+        );
     }
 
     #[test]
     fn classify_bash_read_only() {
         let input = serde_json::json!({"command": "ls -la"});
-        assert_eq!(ToolClassifier::classify("Bash", &input), ToolRiskLevel::Safe);
+        assert_eq!(
+            ToolClassifier::classify("Bash", &input),
+            ToolRiskLevel::Safe
+        );
     }
 
     #[test]
     fn classify_bash_write() {
         let input = serde_json::json!({"command": "cp file1.txt file2.txt"});
-        assert_eq!(ToolClassifier::classify("Bash", &input), ToolRiskLevel::Write);
+        assert_eq!(
+            ToolClassifier::classify("Bash", &input),
+            ToolRiskLevel::Write
+        );
     }
 
     #[test]
     fn classify_bash_destructive() {
         let input = serde_json::json!({"command": "rm -rf /tmp/stuff"});
-        assert_eq!(ToolClassifier::classify("Bash", &input), ToolRiskLevel::Destructive);
+        assert_eq!(
+            ToolClassifier::classify("Bash", &input),
+            ToolRiskLevel::Destructive
+        );
     }
 
     #[test]
     fn classify_bash_destructive_patterns() {
-        for cmd in &["mkfs /dev/sda", "dd if=/dev/zero", "shutdown -h now", "DROP TABLE users"] {
+        for cmd in &[
+            "mkfs /dev/sda",
+            "dd if=/dev/zero",
+            "shutdown -h now",
+            "DROP TABLE users",
+        ] {
             let input = serde_json::json!({"command": cmd});
             assert_eq!(
                 ToolClassifier::classify("Bash", &input),
@@ -451,7 +499,10 @@ mod tests {
     #[test]
     fn unknown_tool_defaults_to_write() {
         let input = serde_json::json!({});
-        assert_eq!(ToolClassifier::classify("SomeNewTool", &input), ToolRiskLevel::Write);
+        assert_eq!(
+            ToolClassifier::classify("SomeNewTool", &input),
+            ToolRiskLevel::Write
+        );
     }
 
     // --- PermissionRuleStore ---
@@ -461,11 +512,13 @@ mod tests {
         let tmp = format!("/tmp/nocode_perm_test_{}.json", std::process::id());
         let _ = std::fs::remove_file(&tmp);
         let mut store = PermissionRuleStore::new(&tmp);
-        store.add(PermissionRule {
-            tool_name: "Bash".to_string(),
-            action: RuleAction::Allow,
-            argument_pattern: None,
-        }).unwrap();
+        store
+            .add(PermissionRule {
+                tool_name: "Bash".to_string(),
+                action: RuleAction::Allow,
+                argument_pattern: None,
+            })
+            .unwrap();
         assert_eq!(store.check("Bash", ""), Some(RuleAction::Allow));
         assert_eq!(store.check("FileWrite", ""), None);
         let _ = std::fs::remove_file(&tmp);
@@ -476,13 +529,18 @@ mod tests {
         let tmp = format!("/tmp/nocode_perm_test2_{}.json", std::process::id());
         let _ = std::fs::remove_file(&tmp);
         let mut store = PermissionRuleStore::new(&tmp);
-        store.add(PermissionRule {
-            tool_name: "Bash".to_string(),
-            action: RuleAction::Deny,
-            argument_pattern: Some("docker".to_string()),
-        }).unwrap();
+        store
+            .add(PermissionRule {
+                tool_name: "Bash".to_string(),
+                action: RuleAction::Deny,
+                argument_pattern: Some("docker".to_string()),
+            })
+            .unwrap();
         // Pattern match
-        assert_eq!(store.check("Bash", "docker run nginx"), Some(RuleAction::Deny));
+        assert_eq!(
+            store.check("Bash", "docker run nginx"),
+            Some(RuleAction::Deny)
+        );
         // No pattern match — no rule without pattern
         assert_eq!(store.check("Bash", "ls -la"), None);
         let _ = std::fs::remove_file(&tmp);
@@ -493,11 +551,13 @@ mod tests {
         let tmp = format!("/tmp/nocode_perm_test3_{}.json", std::process::id());
         let _ = std::fs::remove_file(&tmp);
         let mut store = PermissionRuleStore::new(&tmp);
-        store.add(PermissionRule {
-            tool_name: "FileWrite".to_string(),
-            action: RuleAction::Allow,
-            argument_pattern: None,
-        }).unwrap();
+        store
+            .add(PermissionRule {
+                tool_name: "FileWrite".to_string(),
+                action: RuleAction::Allow,
+                argument_pattern: None,
+            })
+            .unwrap();
         assert!(store.remove("FileWrite", None).unwrap());
         assert_eq!(store.check("FileWrite", ""), None);
         assert!(!store.remove("FileWrite", None).unwrap());
@@ -510,11 +570,13 @@ mod tests {
         let _ = std::fs::remove_file(&tmp);
         {
             let mut store = PermissionRuleStore::new(&tmp);
-            store.add(PermissionRule {
-                tool_name: "Agent".to_string(),
-                action: RuleAction::Deny,
-                argument_pattern: None,
-            }).unwrap();
+            store
+                .add(PermissionRule {
+                    tool_name: "Agent".to_string(),
+                    action: RuleAction::Deny,
+                    argument_pattern: None,
+                })
+                .unwrap();
         }
         let store2 = PermissionRuleStore::new(&tmp);
         assert_eq!(store2.check("Agent", ""), Some(RuleAction::Deny));
@@ -526,11 +588,13 @@ mod tests {
         let tmp = format!("/tmp/nocode_perm_test5_{}.json", std::process::id());
         let _ = std::fs::remove_file(&tmp);
         let mut store = PermissionRuleStore::new(&tmp);
-        store.add(PermissionRule {
-            tool_name: "*".to_string(),
-            action: RuleAction::AlwaysAsk,
-            argument_pattern: None,
-        }).unwrap();
+        store
+            .add(PermissionRule {
+                tool_name: "*".to_string(),
+                action: RuleAction::AlwaysAsk,
+                argument_pattern: None,
+            })
+            .unwrap();
         assert_eq!(store.check("Bash", ""), Some(RuleAction::AlwaysAsk));
         assert_eq!(store.check("FileWrite", ""), Some(RuleAction::AlwaysAsk));
         let _ = std::fs::remove_file(&tmp);
@@ -541,11 +605,13 @@ mod tests {
         let tmp = format!("/tmp/nocode_perm_test6_{}.json", std::process::id());
         let _ = std::fs::remove_file(&tmp);
         let mut store = PermissionRuleStore::new(&tmp);
-        store.add(PermissionRule {
-            tool_name: "Bash".to_string(),
-            action: RuleAction::Allow,
-            argument_pattern: None,
-        }).unwrap();
+        store
+            .add(PermissionRule {
+                tool_name: "Bash".to_string(),
+                action: RuleAction::Allow,
+                argument_pattern: None,
+            })
+            .unwrap();
         store.clear().unwrap();
         assert!(store.list().is_empty());
         let _ = std::fs::remove_file(&tmp);
@@ -556,16 +622,20 @@ mod tests {
         let tmp = format!("/tmp/nocode_perm_test7_{}.json", std::process::id());
         let _ = std::fs::remove_file(&tmp);
         let mut store = PermissionRuleStore::new(&tmp);
-        store.add(PermissionRule {
-            tool_name: "Bash".to_string(),
-            action: RuleAction::Allow,
-            argument_pattern: None,
-        }).unwrap();
-        store.add(PermissionRule {
-            tool_name: "Bash".to_string(),
-            action: RuleAction::Deny,
-            argument_pattern: None,
-        }).unwrap();
+        store
+            .add(PermissionRule {
+                tool_name: "Bash".to_string(),
+                action: RuleAction::Allow,
+                argument_pattern: None,
+            })
+            .unwrap();
+        store
+            .add(PermissionRule {
+                tool_name: "Bash".to_string(),
+                action: RuleAction::Deny,
+                argument_pattern: None,
+            })
+            .unwrap();
         assert_eq!(store.list().len(), 1);
         assert_eq!(store.check("Bash", ""), Some(RuleAction::Deny));
         let _ = std::fs::remove_file(&tmp);

@@ -48,7 +48,7 @@ pub struct TokenResponse {
     pub expires_in: Option<u64>,
     #[serde(default)]
     pub refresh_token: Option<String>,
-// APPEND_REST
+    // APPEND_REST
     #[serde(default)]
     pub scope: Option<String>,
 }
@@ -82,11 +82,7 @@ impl OAuthClient {
     }
 
     /// Exchange an authorization code for tokens.
-    pub fn exchange_code(
-        &self,
-        code: &str,
-        pkce_verifier: &str,
-    ) -> Result<TokenResponse, String> {
+    pub fn exchange_code(&self, code: &str, pkce_verifier: &str) -> Result<TokenResponse, String> {
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()
@@ -178,7 +174,9 @@ fn generate_random_string(len: usize) -> String {
         .collect();
     (0..len)
         .map(|_| {
-            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
             chars[(state >> 33) as usize % chars.len()]
         })
         .collect()

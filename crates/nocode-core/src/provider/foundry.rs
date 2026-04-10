@@ -45,7 +45,7 @@ impl FoundryProvider {
     pub fn foundry_id(&self) -> &str {
         &self.foundry_id
     }
-// APPEND_REST
+    // APPEND_REST
 
     fn serialize_request(&self, request: &CreateMessageRequest) -> Result<String, ProviderError> {
         serde_json::to_string(request)

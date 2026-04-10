@@ -641,7 +641,10 @@ impl DreamConsolidator {
         let mut to_delete: Vec<String> = Vec::new();
 
         for entry in &entries {
-            let key = (entry.memory_type.as_str().to_string(), normalize_name(&entry.name));
+            let key = (
+                entry.memory_type.as_str().to_string(),
+                normalize_name(&entry.name),
+            );
             if let Some(existing) = seen.get(&key) {
                 // Merge: keep the longer content, delete the shorter
                 if entry.content.len() > existing.content.len() {
@@ -1056,20 +1059,24 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         let store = MemoryStore::new(tmp.to_str().unwrap());
         // Two feedback memories with similar normalized names
-        store.save(&MemoryEntry {
-            name: "feedback_testing".to_string(),
-            description: "no mocks v1".to_string(),
-            memory_type: MemoryType::Feedback,
-            content: "short".to_string(),
-            file_name: "feedback_testing_1.md".to_string(),
-        }).unwrap();
-        store.save(&MemoryEntry {
-            name: "feedback_testing".to_string(),
-            description: "no mocks v2".to_string(),
-            memory_type: MemoryType::Feedback,
-            content: "longer content wins the merge".to_string(),
-            file_name: "feedback_testing_2.md".to_string(),
-        }).unwrap();
+        store
+            .save(&MemoryEntry {
+                name: "feedback_testing".to_string(),
+                description: "no mocks v1".to_string(),
+                memory_type: MemoryType::Feedback,
+                content: "short".to_string(),
+                file_name: "feedback_testing_1.md".to_string(),
+            })
+            .unwrap();
+        store
+            .save(&MemoryEntry {
+                name: "feedback_testing".to_string(),
+                description: "no mocks v2".to_string(),
+                memory_type: MemoryType::Feedback,
+                content: "longer content wins the merge".to_string(),
+                file_name: "feedback_testing_2.md".to_string(),
+            })
+            .unwrap();
 
         let c = DreamConsolidator::new(tmp.to_str().unwrap(), 30);
         let report = c.consolidate().unwrap();
@@ -1087,20 +1094,24 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("nocode_dream3_{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         let store = MemoryStore::new(tmp.to_str().unwrap());
-        store.save(&MemoryEntry {
-            name: "user_role".to_string(),
-            description: "pentester".to_string(),
-            memory_type: MemoryType::User,
-            content: "Senior pentester.".to_string(),
-            file_name: "user_role.md".to_string(),
-        }).unwrap();
-        store.save(&MemoryEntry {
-            name: "feedback_testing".to_string(),
-            description: "no mocks".to_string(),
-            memory_type: MemoryType::Feedback,
-            content: "Use real database.".to_string(),
-            file_name: "feedback_testing.md".to_string(),
-        }).unwrap();
+        store
+            .save(&MemoryEntry {
+                name: "user_role".to_string(),
+                description: "pentester".to_string(),
+                memory_type: MemoryType::User,
+                content: "Senior pentester.".to_string(),
+                file_name: "user_role.md".to_string(),
+            })
+            .unwrap();
+        store
+            .save(&MemoryEntry {
+                name: "feedback_testing".to_string(),
+                description: "no mocks".to_string(),
+                memory_type: MemoryType::Feedback,
+                content: "Use real database.".to_string(),
+                file_name: "feedback_testing.md".to_string(),
+            })
+            .unwrap();
 
         let c = DreamConsolidator::new(tmp.to_str().unwrap(), 30);
         let report = c.consolidate().unwrap();
@@ -1117,13 +1128,15 @@ mod tests {
         let store = MemoryStore::new(tmp.to_str().unwrap());
         // Create 21 memories to trigger threshold
         for i in 0..21 {
-            store.save(&MemoryEntry {
-                name: format!("mem_{i}"),
-                description: format!("desc {i}"),
-                memory_type: MemoryType::User,
-                content: format!("content {i}"),
-                file_name: format!("mem_{i}.md"),
-            }).unwrap();
+            store
+                .save(&MemoryEntry {
+                    name: format!("mem_{i}"),
+                    description: format!("desc {i}"),
+                    memory_type: MemoryType::User,
+                    content: format!("content {i}"),
+                    file_name: format!("mem_{i}.md"),
+                })
+                .unwrap();
         }
         let c = DreamConsolidator::new(tmp.to_str().unwrap(), 30);
         assert!(c.should_consolidate());

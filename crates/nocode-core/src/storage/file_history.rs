@@ -38,7 +38,12 @@ impl FileHistory {
 
     /// Record a file modification for potential undo.
     /// Call this *before* the modification with the old content.
-    pub fn record_edit(&mut self, path: &Path, old_content: Option<String>, new_content: Option<String>) {
+    pub fn record_edit(
+        &mut self,
+        path: &Path,
+        old_content: Option<String>,
+        new_content: Option<String>,
+    ) {
         self.undo_stack.push(FileEditRecord {
             path: path.to_path_buf(),
             old_content,
@@ -142,7 +147,11 @@ mod tests {
         fs::write(&file_path, "original").unwrap();
 
         let mut history = FileHistory::new(dir.to_str().unwrap()).unwrap();
-        history.record_edit(&file_path, Some("original".to_string()), Some("modified".to_string()));
+        history.record_edit(
+            &file_path,
+            Some("original".to_string()),
+            Some("modified".to_string()),
+        );
 
         // Simulate the edit
         fs::write(&file_path, "modified").unwrap();
@@ -167,7 +176,11 @@ mod tests {
         fs::write(&file_path, "original").unwrap();
 
         let mut history = FileHistory::new(dir.to_str().unwrap()).unwrap();
-        history.record_edit(&file_path, Some("original".to_string()), Some("modified".to_string()));
+        history.record_edit(
+            &file_path,
+            Some("original".to_string()),
+            Some("modified".to_string()),
+        );
         fs::write(&file_path, "modified").unwrap();
 
         history.undo().unwrap();

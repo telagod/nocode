@@ -8,8 +8,8 @@
 use crate::tool::permission::{PermissionRule, RuleAction, global_permission_rules};
 use crate::tool::{Tool, ToolOutput};
 use serde_json::{Value, json};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 // ---------------------------------------------------------------------------
 // Plan mode global state

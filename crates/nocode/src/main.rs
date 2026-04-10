@@ -585,7 +585,10 @@ fn run_mcp_server() {
             jsonrpc: request["jsonrpc"].as_str().unwrap_or("2.0").to_string(),
             id: request.get("id").cloned(),
             method: request["method"].as_str().unwrap_or("").to_string(),
-            params: request.get("params").cloned().unwrap_or(serde_json::json!({})),
+            params: request
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::json!({})),
         };
 
         let is_shutdown = rpc_req.method == "shutdown";

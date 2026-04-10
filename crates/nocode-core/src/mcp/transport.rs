@@ -44,7 +44,7 @@ impl RpcResponse {
     }
 
     pub fn error(id: u64, code: i64, message: &str) -> Self {
-// APPEND_REST
+        // APPEND_REST
         Self {
             jsonrpc: "2.0".to_string(),
             id: Some(id),
@@ -161,10 +161,13 @@ impl McpTransport for EchoTransport {
             return Err("transport is shut down".to_string());
         }
         self.call_count += 1;
-        Ok(RpcResponse::success(req.id, serde_json::json!({
-            "echo_method": req.method,
-            "echo_params": req.params,
-        })))
+        Ok(RpcResponse::success(
+            req.id,
+            serde_json::json!({
+                "echo_method": req.method,
+                "echo_params": req.params,
+            }),
+        ))
     }
 
     fn notify(&mut self, _method: &str, _params: Value) -> Result<(), String> {
@@ -250,9 +253,8 @@ mod tests {
 
     #[test]
     fn in_process_transport_calls_handler() {
-        let handler: InProcessHandler = Box::new(|req| {
-            RpcResponse::success(req.id, json!({"handled": true}))
-        });
+        let handler: InProcessHandler =
+            Box::new(|req| RpcResponse::success(req.id, json!({"handled": true})));
         let mut transport = InProcessTransport::new(handler);
         let req = RpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -266,9 +268,7 @@ mod tests {
 
     #[test]
     fn in_process_transport_shutdown() {
-        let handler: InProcessHandler = Box::new(|req| {
-            RpcResponse::success(req.id, json!({}))
-        });
+        let handler: InProcessHandler = Box::new(|req| RpcResponse::success(req.id, json!({})));
         let mut transport = InProcessTransport::new(handler);
         transport.shutdown();
         assert!(!transport.is_alive());
@@ -277,9 +277,7 @@ mod tests {
 
     #[test]
     fn in_process_transport_notify() {
-        let handler: InProcessHandler = Box::new(|req| {
-            RpcResponse::success(req.id, json!({}))
-        });
+        let handler: InProcessHandler = Box::new(|req| RpcResponse::success(req.id, json!({})));
         let mut transport = InProcessTransport::new(handler);
         assert!(transport.notify("initialized", json!({})).is_ok());
     }

@@ -89,7 +89,7 @@ impl McpServer {
 
     /// Run the MCP server loop (blocking, reads stdin, writes stdout).
     pub fn run(&self) -> Result<(), String> {
-// APPEND_REST
+        // APPEND_REST
         let stdin = std::io::stdin();
         let reader = BufReader::new(stdin.lock());
         let stdout = std::io::stdout();
@@ -109,17 +109,27 @@ impl McpServer {
                         "id": null,
                         "error": {"code": -32700, "message": format!("Parse error: {e}")}
                     });
-                    writeln!(writer, "{}", serde_json::to_string(&err_resp).unwrap_or_default())
-                        .map_err(|e| format!("stdout write error: {e}"))?;
+                    writeln!(
+                        writer,
+                        "{}",
+                        serde_json::to_string(&err_resp).unwrap_or_default()
+                    )
+                    .map_err(|e| format!("stdout write error: {e}"))?;
                     continue;
                 }
             };
 
             let response = self.handle_request(&request);
             if let Some(resp) = response {
-                writeln!(writer, "{}", serde_json::to_string(&resp).unwrap_or_default())
-                    .map_err(|e| format!("stdout write error: {e}"))?;
-                writer.flush().map_err(|e| format!("stdout flush error: {e}"))?;
+                writeln!(
+                    writer,
+                    "{}",
+                    serde_json::to_string(&resp).unwrap_or_default()
+                )
+                .map_err(|e| format!("stdout write error: {e}"))?;
+                writer
+                    .flush()
+                    .map_err(|e| format!("stdout flush error: {e}"))?;
             }
 
             // Shutdown on exit
@@ -175,22 +185,30 @@ impl McpServer {
     }
 
     fn handle_tools_list(&self) -> Result<Value, (i64, String)> {
-        let tools: Vec<Value> = self.registry.definitions().iter().map(|def| {
-            json!({
-                "name": def.name,
-                "description": def.description,
-                "inputSchema": def.input_schema,
+        let tools: Vec<Value> = self
+            .registry
+            .definitions()
+            .iter()
+            .map(|def| {
+                json!({
+                    "name": def.name,
+                    "description": def.description,
+                    "inputSchema": def.input_schema,
+                })
             })
-        }).collect();
+            .collect();
         Ok(json!({"tools": tools}))
     }
 
     fn handle_tools_call(&self, params: &Value) -> Result<Value, (i64, String)> {
-        let name = params["name"].as_str()
+        let name = params["name"]
+            .as_str()
             .ok_or((-32602, "Missing 'name' parameter".to_string()))?;
         let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
-        let tool = self.registry.get(name)
+        let tool = self
+            .registry
+            .get(name)
             .ok_or((-32602, format!("Tool '{name}' not found")))?;
 
         let output: ToolOutput = tool.execute(&arguments);
@@ -243,17 +261,20 @@ impl McpServer {
     }
 
     fn handle_resources_read(&self, params: &Value) -> Result<Value, (i64, String)> {
-        let uri = params["uri"].as_str()
+        let uri = params["uri"]
+            .as_str()
             .ok_or((-32602, "Missing 'uri' parameter".to_string()))?;
 
         // Only allow file:// URIs
-        let path_str = uri.strip_prefix("file://")
+        let path_str = uri
+            .strip_prefix("file://")
             .ok_or((-32602, "Only file:// URIs are supported".to_string()))?;
 
         let path = std::path::Path::new(path_str);
 
         // Security: ensure path is within cwd or a common config location
-        let canonical = path.canonicalize()
+        let canonical = path
+            .canonicalize()
             .map_err(|e| (-32602, format!("Cannot resolve path: {e}")))?;
 
         // Check file size (max 1MB)
@@ -264,8 +285,8 @@ impl McpServer {
         }
 
         // Detect binary files
-        let content = std::fs::read(&canonical)
-            .map_err(|e| (-32602, format!("Cannot read file: {e}")))?;
+        let content =
+            std::fs::read(&canonical).map_err(|e| (-32602, format!("Cannot read file: {e}")))?;
 
         // Simple binary detection: check for null bytes in first 8KB
         let check_len = content.len().min(8192);
@@ -294,12 +315,17 @@ impl McpServer {
     }
 
     fn handle_query(&self, params: &Value) -> Result<Value, (i64, String)> {
-        let prompt = params["prompt"].as_str()
+        let prompt = params["prompt"]
+            .as_str()
             .ok_or((-32602, "Missing 'prompt' parameter".to_string()))?;
 
-        let provider = self.provider.as_ref()
-            .ok_or((-32000, "No provider configured — launch with provider for query support".to_string()))?;
-        let model = self.model.as_ref()
+        let provider = self.provider.as_ref().ok_or((
+            -32000,
+            "No provider configured — launch with provider for query support".to_string(),
+        ))?;
+        let model = self
+            .model
+            .as_ref()
             .ok_or((-32000, "No model configured".to_string()))?;
 
         let messages = vec![Message::user_text(prompt)];
