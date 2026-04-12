@@ -134,6 +134,7 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             editing,
             input,
             status,
+            provider,
             model,
             custom_base_url,
             custom_api_format,
@@ -159,32 +160,42 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                 "Editable configuration".to_string(),
                 String::new(),
                 format!(
-                    "{} Model:        {}",
+                    "{} Provider:     {}",
                     active(0, *selected),
-                    field_value(0, *selected, *editing, input, model)
+                    provider
+                ),
+                format!(
+                    "{} Model:        {}",
+                    active(1, *selected),
+                    field_value(1, *selected, *editing, input, model)
                 ),
                 format!(
                     "{} Custom URL:   {}",
-                    active(1, *selected),
-                    field_value(1, *selected, *editing, input, custom_base_url)
+                    active(2, *selected),
+                    field_value(2, *selected, *editing, input, custom_base_url)
                 ),
                 format!(
                     "{} Custom API:   {}",
-                    active(2, *selected),
-                    field_value(2, *selected, *editing, input, custom_api_format)
+                    active(3, *selected),
+                    field_value(3, *selected, *editing, input, custom_api_format)
                 ),
                 String::new(),
                 format!("Save tier: {tier_label}  [Tab to cycle]"),
-                format!("Quick API toggle: {}", if *selected == 2 { "←/→" } else { "select Custom API field" }),
+                format!(
+                    "Quick provider toggle: {}",
+                    if *selected == 0 { "←/→ or Enter" } else { "select Provider field" }
+                ),
+                format!(
+                    "Quick API toggle: {}",
+                    if *selected == 3 { "←/→" } else { "select Custom API field" }
+                ),
                 "Controls: ↑/↓ select  Enter apply/edit  E manual edit  S save  R refresh  Esc close/cancel".to_string(),
                 "Paste works while editing a field.".to_string(),
                 "Tip: leave a field empty to clear it.".to_string(),
                 String::new(),
                 format!(
                     "Provider preview: {}",
-                    if custom_base_url.is_empty() && custom_api_format.is_empty() {
-                        "default".to_string()
-                    } else {
+                    if provider == "custom" {
                         format!(
                             "custom ({})",
                             if custom_api_format.is_empty() {
@@ -193,6 +204,10 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                                 custom_api_format
                             }
                         )
+                    } else if provider == "auto" {
+                        "auto".to_string()
+                    } else {
+                        provider.clone()
                     }
                 ),
                 "Default launch mode: TUI".to_string(),

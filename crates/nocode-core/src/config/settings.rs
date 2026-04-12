@@ -28,6 +28,8 @@ impl SettingsTier {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
+    pub model_provider: Option<String>,
+    #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
     pub permission_mode: Option<String>,
@@ -87,6 +89,7 @@ impl Settings {
     /// maps merged key-by-key, vecs replaced wholesale).
     pub fn merge(mut self, other: Self) -> Self {
         // Scalars: last wins
+        self.model_provider = other.model_provider.or(self.model_provider);
         self.model = other.model.or(self.model);
         self.permission_mode = other.permission_mode.or(self.permission_mode);
         self.max_turns = other.max_turns.or(self.max_turns);
@@ -141,6 +144,7 @@ impl Settings {
     /// Supports dotted key paths like "mcp_servers.github.command".
     pub fn set_key(&mut self, key: &str, value: &str) -> Result<(), String> {
         match key {
+            "model_provider" => self.model_provider = Some(value.to_string()),
             "model" => self.model = Some(value.to_string()),
             "permission_mode" => self.permission_mode = Some(value.to_string()),
             "max_turns" => {
@@ -162,7 +166,7 @@ impl Settings {
             }
             _ => {
                 return Err(format!(
-                    "Unknown setting key: '{key}'. Supported: model, permission_mode, max_turns, max_tokens, custom_base_url, custom_api_format, system_prompt, reasoning_effort, telemetry_enabled"
+                    "Unknown setting key: '{key}'. Supported: model_provider, model, permission_mode, max_turns, max_tokens, custom_base_url, custom_api_format, system_prompt, reasoning_effort, telemetry_enabled"
                 ));
             }
         }
@@ -172,6 +176,7 @@ impl Settings {
     /// Get a single key's current effective value.
     pub fn get_key(&self, key: &str) -> Option<String> {
         match key {
+            "model_provider" => self.model_provider.clone(),
             "model" => self.model.clone(),
             "permission_mode" => self.permission_mode.clone(),
             "max_turns" => self.max_turns.map(|v| v.to_string()),
@@ -188,6 +193,9 @@ impl Settings {
     /// List all set keys and their values.
     pub fn list_set_keys(&self) -> Vec<(String, String)> {
         let mut result = Vec::new();
+        if let Some(v) = &self.model_provider {
+            result.push(("model_provider".into(), v.clone()));
+        }
         if let Some(v) = &self.model {
             result.push(("model".into(), v.clone()));
         }

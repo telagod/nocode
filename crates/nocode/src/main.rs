@@ -337,6 +337,13 @@ fn resolve_provider(settings: &Settings) -> ModelProvider {
     {
         return provider;
     }
+    if let Some(provider) = settings
+        .model_provider
+        .as_deref()
+        .and_then(ModelProvider::parse)
+    {
+        return provider;
+    }
     if settings.custom_base_url.is_some() || settings.custom_api_format.is_some() {
         return ModelProvider::Custom;
     }

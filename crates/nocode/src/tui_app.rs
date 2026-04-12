@@ -6,6 +6,7 @@
 
 use crate::command_registry::CommandRegistry;
 use crate::markdown_render::render_markdown_to_lines;
+use crate::resolve_provider;
 use crate::spinner::Spinner;
 use crate::status_hud::StatusHud;
 use crate::tui_commands::{SlashResult, handle_slash_command};
@@ -70,6 +71,7 @@ pub(crate) enum Overlay {
         editing: bool,
         input: String,
         status: Option<String>,
+        provider: String,
         model: String,
         custom_base_url: String,
         custom_api_format: String,
@@ -100,22 +102,30 @@ impl TuiApp {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
         let settings = Settings::load_merged(&cwd);
-        let custom_base_url = settings.custom_base_url.unwrap_or_default();
+        let custom_base_url = settings.custom_base_url.clone().unwrap_or_default();
         let custom_api_format = settings
             .custom_api_format
+            .clone()
             .unwrap_or_else(|| "openai".to_string());
-        let (model_suggestions, status) =
-            match fetch_model_suggestions(custom_base_url.trim(), custom_api_format.trim()) {
-                Ok(models) if !models.is_empty() => {
-                    let count = models.len();
-                    (models, Some(format!("Loaded {count} model suggestion(s)")))
-                }
-                Ok(models) => (models, Some("No model suggestions returned".to_string())),
-                Err(e) => (
-                    Vec::new(),
-                    Some(format!("Model suggestions unavailable: {e}")),
-                ),
-            };
+        let provider = settings
+            .model_provider
+            .clone()
+            .unwrap_or_else(|| resolve_provider(&settings).as_str().to_string());
+        let (model_suggestions, status) = match fetch_model_suggestions(
+            provider.as_str(),
+            custom_base_url.trim(),
+            custom_api_format.trim(),
+        ) {
+            Ok(models) if !models.is_empty() => {
+                let count = models.len();
+                (models, Some(format!("Loaded {count} model suggestion(s)")))
+            }
+            Ok(models) => (models, Some("No model suggestions returned".to_string())),
+            Err(e) => (
+                Vec::new(),
+                Some(format!("Model suggestions unavailable: {e}")),
+            ),
+        };
         self.overlay = Overlay::Config {
             selected: 0,
             tier: 0,
@@ -123,6 +133,7 @@ impl TuiApp {
             editing: false,
             input: String::new(),
             status,
+            provider,
             model: settings.model.unwrap_or_default(),
             custom_base_url,
             custom_api_format,
@@ -549,6 +560,7 @@ impl TuiApp {
         // Overlay open — handle keys
         if self.overlay.is_open() {
             if matches!(self.overlay, Overlay::Config { .. }) {
+                let mut system_notice: Option<String> = None;
                 if let Overlay::Config {
                     ref mut selected,
                     ref mut tier,
@@ -556,6 +568,7 @@ impl TuiApp {
                     ref mut editing,
                     ref mut input,
                     ref mut status,
+                    ref mut provider,
                     ref mut model,
                     ref mut custom_base_url,
                     ref mut custom_api_format,
@@ -580,13 +593,45 @@ impl TuiApp {
                             self.dirty = true;
                         }
                         KeyCode::Down if !*editing => {
-                            if *selected < 2 {
+                            if *selected < 3 {
                                 *selected += 1;
                             }
                             self.dirty = true;
                         }
+                        KeyCode::Left | KeyCode::Right if !*editing && *selected == 0 => {
+                            *provider =
+                                cycle_provider(provider, matches!(key.code, KeyCode::Right));
+                            if provider == "auto" {
+                                model_suggestions.clear();
+                                *suggestion_index = 0;
+                                *status = Some("Switched provider to auto".to_string());
+                            } else {
+                                match fetch_model_suggestions(
+                                    provider,
+                                    custom_base_url.trim(),
+                                    custom_api_format.trim(),
+                                ) {
+                                    Ok(models) => {
+                                        *model_suggestions = models;
+                                        *suggestion_index = 0;
+                                        *status = Some(format!(
+                                            "Switched provider to custom; fetched {} model suggestion(s)",
+                                            model_suggestions.len()
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        model_suggestions.clear();
+                                        *suggestion_index = 0;
+                                        *status = Some(format!(
+                                            "Switched provider to custom; model refresh failed: {e}"
+                                        ));
+                                    }
+                                }
+                            }
+                            self.dirty = true;
+                        }
                         KeyCode::Left
-                            if !*editing && *selected == 0 && !model_suggestions.is_empty() =>
+                            if !*editing && *selected == 1 && !model_suggestions.is_empty() =>
                         {
                             if *suggestion_index > 0 {
                                 *suggestion_index -= 1;
@@ -596,7 +641,7 @@ impl TuiApp {
                             *status = Some("Moved model suggestion selection".to_string());
                             self.dirty = true;
                         }
-                        KeyCode::Left | KeyCode::Right if !*editing && *selected == 2 => {
+                        KeyCode::Left | KeyCode::Right if !*editing && *selected == 3 => {
                             *custom_api_format =
                                 if custom_api_format.eq_ignore_ascii_case("anthropic") {
                                     "openai".to_string()
@@ -604,6 +649,7 @@ impl TuiApp {
                                     "anthropic".to_string()
                                 };
                             match fetch_model_suggestions(
+                                provider,
                                 custom_base_url.trim(),
                                 custom_api_format.trim(),
                             ) {
@@ -628,7 +674,7 @@ impl TuiApp {
                             self.dirty = true;
                         }
                         KeyCode::Right
-                            if !*editing && *selected == 0 && !model_suggestions.is_empty() =>
+                            if !*editing && *selected == 1 && !model_suggestions.is_empty() =>
                         {
                             *suggestion_index = (*suggestion_index + 1) % model_suggestions.len();
                             *status = Some("Moved model suggestion selection".to_string());
@@ -641,14 +687,15 @@ impl TuiApp {
                         KeyCode::Enter => {
                             if *editing {
                                 match *selected {
-                                    0 => *model = input.clone(),
-                                    1 => *custom_base_url = input.clone(),
+                                    1 => *model = input.clone(),
+                                    2 => *custom_base_url = input.clone(),
                                     _ => *custom_api_format = input.clone(),
                                 }
                                 *editing = false;
                                 input.clear();
-                                if *selected == 1 || *selected == 2 {
+                                if *selected == 2 || *selected == 3 {
                                     match fetch_model_suggestions(
+                                        provider,
                                         custom_base_url.trim(),
                                         custom_api_format.trim(),
                                     ) {
@@ -671,7 +718,7 @@ impl TuiApp {
                                 } else {
                                     *status = Some("Field updated locally".to_string());
                                 }
-                            } else if *selected == 0 && !model_suggestions.is_empty() {
+                            } else if *selected == 1 && !model_suggestions.is_empty() {
                                 let suggestion = &model_suggestions[*suggestion_index];
                                 if model != suggestion {
                                     *model = suggestion.clone();
@@ -682,11 +729,42 @@ impl TuiApp {
                                     input.clone_from(model);
                                     *status = Some("Editing model field".to_string());
                                 }
+                            } else if *selected == 0 {
+                                *provider = cycle_provider(provider, true);
+                                if provider == "auto" {
+                                    model_suggestions.clear();
+                                    *suggestion_index = 0;
+                                    *status = Some("Switched provider to auto".to_string());
+                                } else {
+                                    match fetch_model_suggestions(
+                                        provider,
+                                        custom_base_url.trim(),
+                                        custom_api_format.trim(),
+                                    ) {
+                                        Ok(models) => {
+                                            *model_suggestions = models;
+                                            *suggestion_index = 0;
+                                            *status = Some(format!(
+                                                "Switched provider to {}; fetched {} model suggestion(s)",
+                                                provider,
+                                                model_suggestions.len()
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            model_suggestions.clear();
+                                            *suggestion_index = 0;
+                                            *status = Some(format!(
+                                                "Switched provider to {}; model refresh failed: {e}",
+                                                provider
+                                            ));
+                                        }
+                                    }
+                                }
                             } else {
                                 *editing = true;
                                 match *selected {
-                                    0 => input.clone_from(model),
-                                    1 => input.clone_from(custom_base_url),
+                                    1 => input.clone_from(model),
+                                    2 => input.clone_from(custom_base_url),
                                     _ => input.clone_from(custom_api_format),
                                 }
                                 *status = Some("Editing field".to_string());
@@ -694,13 +772,17 @@ impl TuiApp {
                             self.dirty = true;
                         }
                         KeyCode::Char('e') | KeyCode::Char('E') if !*editing => {
-                            *editing = true;
-                            match *selected {
-                                0 => input.clone_from(model),
-                                1 => input.clone_from(custom_base_url),
-                                _ => input.clone_from(custom_api_format),
+                            if *selected == 0 {
+                                *status = Some("Provider uses ←/→ or Enter to switch".to_string());
+                            } else {
+                                *editing = true;
+                                match *selected {
+                                    1 => input.clone_from(model),
+                                    2 => input.clone_from(custom_base_url),
+                                    _ => input.clone_from(custom_api_format),
+                                }
+                                *status = Some("Editing field".to_string());
                             }
-                            *status = Some("Editing field".to_string());
                             self.dirty = true;
                         }
                         KeyCode::Char('s') | KeyCode::Char('S') if !*editing => {
@@ -713,6 +795,7 @@ impl TuiApp {
                                 _ => SettingsTier::Local,
                             };
                             let mut settings = Settings::load_merged(&cwd);
+                            settings.model_provider = Some(provider.clone());
                             settings.model = if model.trim().is_empty() {
                                 None
                             } else {
@@ -730,6 +813,20 @@ impl TuiApp {
                             };
                             match settings.save_tier(tier_value, &cwd) {
                                 Ok(()) => {
+                                    let provider_name = provider_display_name(provider);
+                                    if provider == "custom" {
+                                        unsafe {
+                                            std::env::set_var("NOCODE_MODEL_PROVIDER", "custom");
+                                        }
+                                    } else if provider == "auto" {
+                                        unsafe {
+                                            std::env::remove_var("NOCODE_MODEL_PROVIDER");
+                                        }
+                                    } else {
+                                        unsafe {
+                                            std::env::set_var("NOCODE_MODEL_PROVIDER", provider);
+                                        }
+                                    }
                                     if model.trim().is_empty() {
                                         unsafe {
                                             std::env::remove_var("NOCODE_MODEL");
@@ -744,7 +841,6 @@ impl TuiApp {
                                         unsafe {
                                             std::env::remove_var("NOCODE_CUSTOM_BASE_URL");
                                             std::env::remove_var("NOCODE_CUSTOM_API_FORMAT");
-                                            std::env::remove_var("NOCODE_MODEL_PROVIDER");
                                         }
                                     } else {
                                         unsafe {
@@ -756,13 +852,20 @@ impl TuiApp {
                                                 "NOCODE_CUSTOM_API_FORMAT",
                                                 custom_api_format.trim(),
                                             );
-                                            std::env::set_var("NOCODE_MODEL_PROVIDER", "custom");
                                         }
                                     }
-                                    *status = Some(
-                                        "Saved configuration and applied to current session"
-                                            .to_string(),
-                                    );
+                                    *status = Some(format!(
+                                        "Saved configuration; current provider {provider_name}"
+                                    ));
+                                    system_notice = Some(format!(
+                                        "Config applied to current session: provider {}, model {}",
+                                        provider_name,
+                                        if model.trim().is_empty() {
+                                            "(inherit)".to_string()
+                                        } else {
+                                            model.trim().to_string()
+                                        }
+                                    ));
                                 }
                                 Err(e) => {
                                     *status = Some(format!("Save failed: {e}"));
@@ -772,6 +875,7 @@ impl TuiApp {
                         }
                         KeyCode::Char('r') | KeyCode::Char('R') if !*editing => {
                             match fetch_model_suggestions(
+                                provider,
                                 custom_base_url.trim(),
                                 custom_api_format.trim(),
                             ) {
@@ -792,7 +896,7 @@ impl TuiApp {
                         }
                         KeyCode::Char(c)
                             if !*editing
-                                && *selected == 0
+                                && *selected == 1
                                 && ('1'..='8').contains(&c)
                                 && !model_suggestions.is_empty() =>
                         {
@@ -814,6 +918,9 @@ impl TuiApp {
                         }
                         _ => {}
                     }
+                }
+                if let Some(notice) = system_notice {
+                    self.push_system(&notice);
                 }
                 return HandleKeyResult::Continue;
             }
@@ -1723,7 +1830,38 @@ fn next_word_boundary(s: &str, pos: usize) -> usize {
     p.min(s.len())
 }
 
+fn provider_options() -> &'static [&'static str] {
+    &["auto", "claude", "openai", "gemini", "custom"]
+}
+
+fn cycle_provider(current: &str, forward: bool) -> String {
+    let options = provider_options();
+    let current_idx = options
+        .iter()
+        .position(|p| p.eq_ignore_ascii_case(current))
+        .unwrap_or(0);
+    let next_idx = if forward {
+        (current_idx + 1) % options.len()
+    } else if current_idx == 0 {
+        options.len() - 1
+    } else {
+        current_idx - 1
+    };
+    options[next_idx].to_string()
+}
+
+fn provider_display_name(provider: &str) -> &'static str {
+    match provider.to_ascii_lowercase().as_str() {
+        "claude" | "anthropic" => "Anthropic",
+        "openai" => "OpenAI",
+        "gemini" | "google" => "Gemini",
+        "custom" => "Custom",
+        _ => "Auto",
+    }
+}
+
 fn fetch_model_suggestions(
+    provider: &str,
     custom_base_url: &str,
     custom_api_format: &str,
 ) -> Result<Vec<String>, String> {
@@ -1738,7 +1876,7 @@ fn fetch_model_suggestions(
         custom_api_format
     };
 
-    if !custom_base_url.is_empty() {
+    if provider.eq_ignore_ascii_case("custom") || !custom_base_url.is_empty() {
         if format.eq_ignore_ascii_case("openai") {
             let key = std::env::var("OPENAI_API_KEY")
                 .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
@@ -1797,7 +1935,7 @@ fn fetch_model_suggestions(
         return Err(format!("Unsupported custom API format: {format}"));
     }
 
-    if std::env::var("OPENAI_API_KEY").is_ok() {
+    if provider.eq_ignore_ascii_case("openai") {
         let key = std::env::var("OPENAI_API_KEY").map_err(|e| e.to_string())?;
         let body = client
             .get("https://api.openai.com/v1/models")
@@ -1819,7 +1957,7 @@ fn fetch_model_suggestions(
         return Ok(models);
     }
 
-    if std::env::var("GEMINI_API_KEY").is_ok() {
+    if provider.eq_ignore_ascii_case("gemini") || provider.eq_ignore_ascii_case("google") {
         let key = std::env::var("GEMINI_API_KEY").map_err(|e| e.to_string())?;
         let body = client
             .get(format!(
@@ -1846,7 +1984,7 @@ fn fetch_model_suggestions(
         return Ok(models);
     }
 
-    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+    if provider.eq_ignore_ascii_case("claude") || provider.eq_ignore_ascii_case("anthropic") {
         let key = std::env::var("ANTHROPIC_API_KEY").map_err(|e| e.to_string())?;
         let body = client
             .get("https://api.anthropic.com/v1/models")
@@ -1867,6 +2005,16 @@ fn fetch_model_suggestions(
         models.sort();
         models.dedup();
         return Ok(models);
+    }
+
+    if std::env::var("OPENAI_API_KEY").is_ok() {
+        return fetch_model_suggestions("openai", custom_base_url, custom_api_format);
+    }
+    if std::env::var("GEMINI_API_KEY").is_ok() {
+        return fetch_model_suggestions("gemini", custom_base_url, custom_api_format);
+    }
+    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+        return fetch_model_suggestions("claude", custom_base_url, custom_api_format);
     }
 
     Err("No provider credentials found to fetch models".to_string())
