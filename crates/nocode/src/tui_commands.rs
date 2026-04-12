@@ -133,12 +133,9 @@ pub(crate) fn handle_slash_command(
             SlashResult::Handled
         }
         CommandAction::Login => {
+            app.open_config_overlay();
             app.push_system(
-                "Configure API keys via environment variables:\n\n\
-                 \x20 export ANTHROPIC_API_KEY=sk-ant-...\n\
-                 \x20 export OPENAI_API_KEY=sk-...\n\
-                 \x20 export GEMINI_API_KEY=AI...\n\n\
-                 Or add to ~/.nocode/settings.json",
+                "Opened /config. Select API Key to paste a key, press T to test, R to refresh models, then S to save.",
             );
             SlashResult::Handled
         }

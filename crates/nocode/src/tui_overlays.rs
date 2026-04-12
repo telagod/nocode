@@ -136,6 +136,8 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             status,
             provider,
             provider_source,
+            api_key,
+            api_key_source,
             model,
             model_source,
             custom_base_url,
@@ -160,6 +162,21 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                         value.to_string()
                     }
                 };
+            let api_key_value = if *selected == 1 && *editing {
+                format!("{input}_")
+            } else if api_key.is_empty() {
+                "(not set)".to_string()
+            } else {
+                let tail: String = api_key
+                    .chars()
+                    .rev()
+                    .take(4)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect();
+                format!("configured (…{tail})")
+            };
             let mut lines = vec![
                 "Editable configuration".to_string(),
                 String::new(),
@@ -170,21 +187,27 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                     provider_source
                 ),
                 format!(
-                    "{} Model:        {} ({})",
+                    "{} API Key:      {} ({})",
                     active(1, *selected),
-                    field_value(1, *selected, *editing, input, model),
+                    api_key_value,
+                    api_key_source
+                ),
+                format!(
+                    "{} Model:        {} ({})",
+                    active(2, *selected),
+                    field_value(2, *selected, *editing, input, model),
                     model_source
                 ),
                 format!(
                     "{} Custom URL:   {} ({})",
-                    active(2, *selected),
-                    field_value(2, *selected, *editing, input, custom_base_url),
+                    active(3, *selected),
+                    field_value(3, *selected, *editing, input, custom_base_url),
                     custom_base_url_source
                 ),
                 format!(
                     "{} Custom API:   {} ({})",
-                    active(3, *selected),
-                    field_value(3, *selected, *editing, input, custom_api_format),
+                    active(4, *selected),
+                    field_value(4, *selected, *editing, input, custom_api_format),
                     custom_api_format_source
                 ),
                 String::new(),
@@ -195,9 +218,9 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                 ),
                 format!(
                     "Quick API toggle: {}",
-                    if *selected == 3 { "←/→" } else { "select Custom API field" }
+                    if *selected == 4 { "←/→" } else { "select Custom API field" }
                 ),
-                "Controls: ↑/↓ select  Enter apply/edit  E manual edit  S save  R refresh  Esc close/cancel".to_string(),
+                "Controls: ↑/↓ select  Enter apply/edit  E manual edit  T test  S save  R refresh  Esc close/cancel".to_string(),
                 "Paste works while editing a field.".to_string(),
                 "Tip: leave a field empty to clear it.".to_string(),
                 String::new(),

@@ -73,6 +73,8 @@ pub(crate) enum Overlay {
         status: Option<String>,
         provider: String,
         provider_source: String,
+        api_key: String,
+        api_key_source: String,
         model: String,
         model_source: String,
         custom_base_url: String,
@@ -118,6 +120,12 @@ impl TuiApp {
             .model_provider
             .clone()
             .unwrap_or_else(|| resolve_provider(&settings).as_str().to_string());
+        let credential_store = load_credential_store();
+        let (api_key_slot, api_key_env_var) = provider_key_slot(&provider, &custom_api_format);
+        let api_key = std::env::var(api_key_env_var)
+            .ok()
+            .or_else(|| credential_store.get_key(api_key_slot))
+            .unwrap_or_default();
         let (model_suggestions, status) = match fetch_model_suggestions(
             provider.as_str(),
             custom_base_url.trim(),
@@ -149,6 +157,14 @@ impl TuiApp {
                 &local_settings,
                 (!custom_base_url.is_empty() || !custom_api_format.is_empty()).then_some("derived"),
             ),
+            api_key,
+            api_key_source: if std::env::var(api_key_env_var).is_ok() {
+                "env".to_string()
+            } else if credential_store.get_key(api_key_slot).is_some() {
+                "credentials".to_string()
+            } else {
+                "unset".to_string()
+            },
             model: settings.model.unwrap_or_default(),
             model_source: setting_source_label(
                 "model",
@@ -609,6 +625,8 @@ impl TuiApp {
                     ref mut status,
                     ref mut provider,
                     ref mut provider_source,
+                    ref mut api_key,
+                    ref mut api_key_source,
                     ref mut model,
                     ref mut model_source,
                     ref mut custom_base_url,
@@ -636,7 +654,7 @@ impl TuiApp {
                             self.dirty = true;
                         }
                         KeyCode::Down if !*editing => {
-                            if *selected < 3 {
+                            if *selected < 4 {
                                 *selected += 1;
                             }
                             self.dirty = true;
@@ -644,11 +662,26 @@ impl TuiApp {
                         KeyCode::Left | KeyCode::Right if !*editing && *selected == 0 => {
                             *provider =
                                 cycle_provider(provider, matches!(key.code, KeyCode::Right));
+                            let (slot, env_var) =
+                                provider_key_slot(provider.as_str(), custom_api_format.as_str());
+                            let store = load_credential_store();
+                            *api_key = std::env::var(env_var)
+                                .ok()
+                                .or_else(|| store.get_key(slot))
+                                .unwrap_or_default();
+                            *api_key_source = if std::env::var(env_var).is_ok() {
+                                "env".to_string()
+                            } else if store.get_key(slot).is_some() {
+                                "credentials".to_string()
+                            } else {
+                                "unset".to_string()
+                            };
                             if provider == "auto" {
                                 model_suggestions.clear();
                                 *suggestion_index = 0;
                                 *status = Some("Switched provider to auto".to_string());
                             } else {
+                                apply_api_key_to_env(provider, custom_api_format, api_key);
                                 match fetch_model_suggestions(
                                     provider,
                                     custom_base_url.trim(),
@@ -674,7 +707,7 @@ impl TuiApp {
                             self.dirty = true;
                         }
                         KeyCode::Left
-                            if !*editing && *selected == 1 && !model_suggestions.is_empty() =>
+                            if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
                         {
                             if *suggestion_index > 0 {
                                 *suggestion_index -= 1;
@@ -684,13 +717,14 @@ impl TuiApp {
                             *status = Some("Moved model suggestion selection".to_string());
                             self.dirty = true;
                         }
-                        KeyCode::Left | KeyCode::Right if !*editing && *selected == 3 => {
+                        KeyCode::Left | KeyCode::Right if !*editing && *selected == 4 => {
                             *custom_api_format =
                                 if custom_api_format.eq_ignore_ascii_case("anthropic") {
                                     "openai".to_string()
                                 } else {
                                     "anthropic".to_string()
                                 };
+                            apply_api_key_to_env(provider, custom_api_format, api_key);
                             match fetch_model_suggestions(
                                 provider,
                                 custom_base_url.trim(),
@@ -717,7 +751,7 @@ impl TuiApp {
                             self.dirty = true;
                         }
                         KeyCode::Right
-                            if !*editing && *selected == 1 && !model_suggestions.is_empty() =>
+                            if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
                         {
                             *suggestion_index = (*suggestion_index + 1) % model_suggestions.len();
                             *status = Some("Moved model suggestion selection".to_string());
@@ -730,13 +764,15 @@ impl TuiApp {
                         KeyCode::Enter => {
                             if *editing {
                                 match *selected {
-                                    1 => *model = input.clone(),
-                                    2 => *custom_base_url = input.clone(),
+                                    1 => *api_key = input.clone(),
+                                    2 => *model = input.clone(),
+                                    3 => *custom_base_url = input.clone(),
                                     _ => *custom_api_format = input.clone(),
                                 }
                                 *editing = false;
                                 input.clear();
-                                if *selected == 2 || *selected == 3 {
+                                if *selected == 3 || *selected == 4 {
+                                    apply_api_key_to_env(provider, custom_api_format, api_key);
                                     match fetch_model_suggestions(
                                         provider,
                                         custom_base_url.trim(),
@@ -761,7 +797,7 @@ impl TuiApp {
                                 } else {
                                     *status = Some("Field updated locally".to_string());
                                 }
-                            } else if *selected == 1 && !model_suggestions.is_empty() {
+                            } else if *selected == 2 && !model_suggestions.is_empty() {
                                 let suggestion = &model_suggestions[*suggestion_index];
                                 if model != suggestion {
                                     *model = suggestion.clone();
@@ -779,6 +815,7 @@ impl TuiApp {
                                     *suggestion_index = 0;
                                     *status = Some("Switched provider to auto".to_string());
                                 } else {
+                                    apply_api_key_to_env(provider, custom_api_format, api_key);
                                     match fetch_model_suggestions(
                                         provider,
                                         custom_base_url.trim(),
@@ -806,8 +843,9 @@ impl TuiApp {
                             } else {
                                 *editing = true;
                                 match *selected {
-                                    1 => input.clone_from(model),
-                                    2 => input.clone_from(custom_base_url),
+                                    1 => input.clone_from(api_key),
+                                    2 => input.clone_from(model),
+                                    3 => input.clone_from(custom_base_url),
                                     _ => input.clone_from(custom_api_format),
                                 }
                                 *status = Some("Editing field".to_string());
@@ -820,8 +858,9 @@ impl TuiApp {
                             } else {
                                 *editing = true;
                                 match *selected {
-                                    1 => input.clone_from(model),
-                                    2 => input.clone_from(custom_base_url),
+                                    1 => input.clone_from(api_key),
+                                    2 => input.clone_from(model),
+                                    3 => input.clone_from(custom_base_url),
                                     _ => input.clone_from(custom_api_format),
                                 }
                                 *status = Some("Editing field".to_string());
@@ -879,6 +918,30 @@ impl TuiApp {
                             .find_map(Result::err);
                             match persist_error {
                                 None => {
+                                    let (slot, env_var) = provider_key_slot(
+                                        provider.as_str(),
+                                        custom_api_format.as_str(),
+                                    );
+                                    if api_key.trim().is_empty() {
+                                        let mut store = load_credential_store();
+                                        let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
+                                        store.remove_key(slot);
+                                        let _ = store.save(&cred_path);
+                                        unsafe {
+                                            std::env::remove_var(env_var);
+                                        }
+                                    } else {
+                                        let mut store = load_credential_store();
+                                        let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
+                                        store.set_key(slot, api_key.trim());
+                                        store
+                                            .save(&cred_path)
+                                            .map_err(|e| format!("Failed to save credentials: {e}"))
+                                            .ok();
+                                        unsafe {
+                                            std::env::set_var(env_var, api_key.trim());
+                                        }
+                                    }
                                     let user_settings =
                                         Settings::load_tier(SettingsTier::User, &cwd);
                                     let project_settings =
@@ -963,6 +1026,13 @@ impl TuiApp {
                                         &local_settings,
                                         Some("default"),
                                     );
+                                    *api_key_source = if std::env::var(env_var).is_ok() {
+                                        "env".to_string()
+                                    } else if !api_key.trim().is_empty() {
+                                        "credentials".to_string()
+                                    } else {
+                                        "unset".to_string()
+                                    };
                                     system_notice = Some(format!(
                                         "Config applied to current session from {} settings: provider {}, model {}",
                                         tier_value.label(),
@@ -980,7 +1050,41 @@ impl TuiApp {
                             }
                             self.dirty = true;
                         }
+                        KeyCode::Char('t') | KeyCode::Char('T') if !*editing => {
+                            let cwd = std::env::current_dir()
+                                .map(|p| p.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            let mut settings = Settings::load_merged(&cwd);
+                            settings.model_provider = Some(provider.clone());
+                            settings.custom_base_url = if custom_base_url.trim().is_empty() {
+                                None
+                            } else {
+                                Some(custom_base_url.trim().to_string())
+                            };
+                            settings.custom_api_format = if custom_api_format.trim().is_empty() {
+                                None
+                            } else {
+                                Some(custom_api_format.trim().to_string())
+                            };
+                            if !api_key.trim().is_empty() {
+                                let (_, env_var) = provider_key_slot(
+                                    provider.as_str(),
+                                    custom_api_format.as_str(),
+                                );
+                                unsafe {
+                                    std::env::set_var(env_var, api_key.trim());
+                                }
+                            }
+                            let provider_type = crate::resolve_provider(&settings);
+                            let provider_impl = crate::build_provider(&provider_type, &settings);
+                            *status = Some(match provider_impl.verify_key() {
+                                Ok(msg) => format!("Connection OK: {msg}"),
+                                Err(err) => format!("Connection failed: {err}"),
+                            });
+                            self.dirty = true;
+                        }
                         KeyCode::Char('r') | KeyCode::Char('R') if !*editing => {
+                            apply_api_key_to_env(provider, custom_api_format, api_key);
                             match fetch_model_suggestions(
                                 provider,
                                 custom_base_url.trim(),
@@ -1003,7 +1107,7 @@ impl TuiApp {
                         }
                         KeyCode::Char(c)
                             if !*editing
-                                && *selected == 1
+                                && *selected == 2
                                 && ('1'..='8').contains(&c)
                                 && !model_suggestions.is_empty() =>
                         {
@@ -1964,6 +2068,39 @@ fn provider_display_name(provider: &str) -> &'static str {
         "gemini" | "google" => "Gemini",
         "custom" => "Custom",
         _ => "Auto",
+    }
+}
+
+fn provider_key_slot<'a>(provider: &'a str, api_format: &'a str) -> (&'static str, &'static str) {
+    match provider.to_ascii_lowercase().as_str() {
+        "claude" | "anthropic" => ("anthropic", "ANTHROPIC_API_KEY"),
+        "openai" => ("openai", "OPENAI_API_KEY"),
+        "gemini" | "google" => ("gemini", "GEMINI_API_KEY"),
+        "custom" => {
+            if api_format.eq_ignore_ascii_case("anthropic")
+                || api_format.eq_ignore_ascii_case("claude")
+            {
+                ("anthropic", "ANTHROPIC_API_KEY")
+            } else {
+                ("openai", "OPENAI_API_KEY")
+            }
+        }
+        _ => ("anthropic", "ANTHROPIC_API_KEY"),
+    }
+}
+
+fn load_credential_store() -> nocode_core::storage::credentials::CredentialStore {
+    let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
+    nocode_core::storage::credentials::CredentialStore::load(&cred_path).unwrap_or_default()
+}
+
+fn apply_api_key_to_env(provider: &str, api_format: &str, api_key: &str) {
+    if api_key.trim().is_empty() {
+        return;
+    }
+    let (_, env_var) = provider_key_slot(provider, api_format);
+    unsafe {
+        std::env::set_var(env_var, api_key.trim());
     }
 }
 
