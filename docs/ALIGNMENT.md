@@ -1,6 +1,6 @@
 # nocode vs Claude Code 功能对齐清单
 
-> 更新时间：2026-04-11（v0.2.15 — Phase 16 命令层补全，741 tests）
+> 更新时间：2026-04-11（v0.2.16 — MCP tool dispatch, WebSocket server, 741+ tests）
 > 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (108 .rs files, 734 tests)
 > 审计方法：逐文件源码验证，不接受 "注册即完成"
 
@@ -61,7 +61,7 @@
 | Glob | ✅ | ✅ mtime sorted | ✅ 完成 |
 | Grep | ✅ | ✅ rg flags (-B/-A/-C/-n/-i/type/offset/multiline) | ✅ 完成 |
 | ListMcpResources | ✅ | ✅ server filter | ✅ 完成 |
-| Mcp (generic) | ✅ | 🔶 返回错误提示用 mcp: prefix | 🔶 路由由 GlobalToolRegistry 承担 |
+| Mcp (generic) | ✅ | ✅ McpManager.call_tool() + GlobalToolRegistry mcp: prefix | ✅ 完成 |
 | NotebookEdit | ✅ | ✅ replace/insert/delete cells | ✅ 完成 |
 | ReadMcpResource | ✅ | ✅ resources/read via McpClient | ✅ 完成 |
 | TaskOutput | ✅ | ✅ task_id/block/timeout | ✅ 完成 |
@@ -69,7 +69,7 @@
 | TodoWrite | ✅ | ✅ batch write/replace | ✅ 完成 |
 | WebFetch | ✅ | ✅ HTML strip + prompt context | ✅ 完成 |
 | WebSearch | ✅ | ✅ DuckDuckGo + domain filter | ✅ 完成 |
-| **合计** | **21 tools** | **20 ✅ + 1 🔶** | **95% 端到端可用** |
+| **合计** | **21 tools** | **21 ✅** | **100% 端到端可用** |
 
 ### 额外工具（非默认注册）
 
@@ -185,8 +185,8 @@
 | Remote bridge (HTTP) | ✅ | ✅ /v1/query + agentic loop | ✅ 完成 |
 | Session registry | ✅ | ✅ SessionRegistry + meta.json | ✅ 完成 |
 | Session resume | ✅ | ✅ JSONL + meta.json | ✅ 完成 |
-| WebSocket 长连接 | ✅ | 🔶 WsMessage + WsConnectionRegistry 骨架在 | 🔶 需验证闭环 |
-| Reconnect / heartbeat | ✅ | 🔶 ConnectionRegistry 骨架在 | 🔶 需验证闭环 |
+| WebSocket 长连接 | ✅ | ✅ run_ws_server + tokio-tungstenite accept loop + WsMessage dispatch | ✅ 完成 |
+| Reconnect / heartbeat | ✅ | ✅ per-connection heartbeat + check_timeouts + WsState::Reconnecting | ✅ 完成 |
 | Permission callback | ✅ | ✅ wire 已通 | ✅ 完成 |
 | Bridge event streaming | ✅ | ✅ BridgeEventWire | ✅ 完成 |
 
@@ -350,7 +350,7 @@
 
 | 维度 | Claude Code | nocode | 端到端可用率 |
 |------|------------|--------|-------------|
-| Base Tools (21) | 21 | 20 ✅ + 1 🔶 | **95%** |
+| Base Tools (21) | 21 | 21 ✅ | **100%** |
 | Extra Tools | ~15 | 8 ✅ + 0 ❌ stub | **100%** |
 | Providers | 1 (Claude) | 5 (Claude/OpenAI/Gemini/Foundry/Custom) | 超集 |
 | Slash Commands | ~103 | ~31 ✅ + ~0 🔶 + ~0 ❌ | **~100%** |
@@ -378,7 +378,7 @@
 | /voice | ✅ 完成 | ❌ Stub | "recording not yet implemented" |
 | /ide | ✅ 完成 | ❌ Stub | 无法从 TUI 启停 |
 | DreamConsolidator | ✅ 完成 | ✅ 完成 | 确认端到端可用 |
-| Tool parity | 86% | 95% | 3 stub tools 升级为真实功能 |
+| Tool parity | 86% | 100% | 全部 21 base tools 端到端 |
 
 ### 按优先级排列的剩余缺口
 
