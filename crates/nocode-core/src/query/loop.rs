@@ -426,6 +426,8 @@ pub fn run_agentic_loop_with_cancel(
         }
     }
 
+    observer.on_model_event(&ModelStreamEvent::Complete);
+
     Ok(LoopResult {
         messages,
         stop_reason: final_stop_reason,

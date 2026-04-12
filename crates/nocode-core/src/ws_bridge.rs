@@ -28,6 +28,8 @@ pub enum WsMessage {
     Query { id: String, content: String },
     /// Server streams a text delta.
     Delta { id: String, text: String },
+    /// Server streams thinking/reasoning content.
+    Thinking { id: String, thinking: String },
     /// Server signals tool use start.
     ToolStart { id: String, tool_name: String },
     /// Server signals tool use result.
@@ -35,6 +37,20 @@ pub enum WsMessage {
         id: String,
         content: String,
         is_error: bool,
+    },
+    /// Server sends token usage updates.
+    Usage {
+        id: String,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_write_tokens: u64,
+    },
+    /// Server surfaces a retryable or terminal stream error.
+    StreamError {
+        id: String,
+        message: String,
+        retryable: bool,
     },
     /// Server signals query complete.
     Complete { id: String, stop_reason: String },
@@ -67,6 +83,10 @@ impl LoopObserver for WsEventObserver {
                 id: self.query_id.clone(),
                 text: text.clone(),
             }),
+            ModelStreamEvent::ThinkingDelta { thinking } => Some(WsMessage::Thinking {
+                id: self.query_id.clone(),
+                thinking: thinking.clone(),
+            }),
             ModelStreamEvent::ToolUseStart { name, .. } => Some(WsMessage::ToolStart {
                 id: self.query_id.clone(),
                 tool_name: name.clone(),
@@ -80,6 +100,18 @@ impl LoopObserver for WsEventObserver {
                 id: tool_use_id.clone(),
                 content: content.clone(),
                 is_error: *is_error,
+            }),
+            ModelStreamEvent::UsageUpdate { usage } => Some(WsMessage::Usage {
+                id: self.query_id.clone(),
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                cache_read_tokens: usage.cache_read_input_tokens,
+                cache_write_tokens: usage.cache_creation_input_tokens,
+            }),
+            ModelStreamEvent::StreamError { message, retryable } => Some(WsMessage::StreamError {
+                id: self.query_id.clone(),
+                message: message.clone(),
+                retryable: *retryable,
             }),
             _ => None,
         };
@@ -510,6 +542,10 @@ mod tests {
                 id: "q1".into(),
                 text: "world".into(),
             },
+            WsMessage::Thinking {
+                id: "q1".into(),
+                thinking: "ponder".into(),
+            },
             WsMessage::ToolStart {
                 id: "q1".into(),
                 tool_name: "Bash".into(),
@@ -518,6 +554,18 @@ mod tests {
                 id: "q1".into(),
                 content: "ok".into(),
                 is_error: false,
+            },
+            WsMessage::Usage {
+                id: "q1".into(),
+                input_tokens: 1,
+                output_tokens: 2,
+                cache_read_tokens: 3,
+                cache_write_tokens: 4,
+            },
+            WsMessage::StreamError {
+                id: "q1".into(),
+                message: "retry".into(),
+                retryable: true,
             },
             WsMessage::Complete {
                 id: "q1".into(),
@@ -780,9 +828,13 @@ mod tests {
             *calls += 1;
 
             if *calls == 1 {
-                let tool_use = ContentBlock::tool_use("tool-1", "Bash", serde_json::json!({
-                    "command": "echo ws-stream"
-                }));
+                let tool_use = ContentBlock::tool_use(
+                    "tool-1",
+                    "Bash",
+                    serde_json::json!({
+                        "command": "echo ws-stream"
+                    }),
+                );
                 on_event(StreamEvent::ContentBlockStart {
                     index: 0,
                     content_block: tool_use.clone(),
@@ -802,11 +854,31 @@ mod tests {
                     text: "done".to_string(),
                 },
             });
+            on_event(StreamEvent::ContentBlockDelta {
+                index: 1,
+                delta: crate::provider::types::StreamDelta::ThinkingDelta {
+                    thinking: "considering".to_string(),
+                },
+            });
+            on_event(StreamEvent::MessageDelta {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage {
+                    input_tokens: 11,
+                    output_tokens: 22,
+                    cache_read_input_tokens: 33,
+                    cache_creation_input_tokens: 44,
+                },
+            });
             Ok(CreateMessageResponse {
                 id: "resp-2".to_string(),
                 content: vec![ContentBlock::text("done")],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
+                usage: Usage {
+                    input_tokens: 11,
+                    output_tokens: 22,
+                    cache_read_input_tokens: 33,
+                    cache_creation_input_tokens: 44,
+                },
                 model: request.model.clone(),
             })
         }
@@ -910,6 +982,35 @@ mod tests {
         };
         assert!(matches!(
             fourth,
+            WsMessage::Thinking { ref id, ref thinking }
+                if id == "q-stream" && thinking == "considering"
+        ));
+
+        let fifth = match stream.next().await.unwrap().unwrap() {
+            WsFrame::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
+            other => panic!("unexpected message: {other:?}"),
+        };
+        assert!(matches!(
+            fifth,
+            WsMessage::Usage {
+                ref id,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+            } if id == "q-stream"
+                && input_tokens == 11
+                && output_tokens == 22
+                && cache_read_tokens == 33
+                && cache_write_tokens == 44
+        ));
+
+        let sixth = match stream.next().await.unwrap().unwrap() {
+            WsFrame::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
+            other => panic!("unexpected message: {other:?}"),
+        };
+        assert!(matches!(
+            sixth,
             WsMessage::Complete { ref id, ref stop_reason }
                 if id == "q-stream" && stop_reason == "end_turn"
         ));
