@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use crate::status_hud::StatusHud;
-use crate::tui_app::Overlay;
+use crate::tui_app::{Overlay, provider_auth_help, provider_endpoint_help};
 
 /// Draw the active overlay on top of the main UI.
 pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame, area: Rect) {
@@ -277,6 +277,8 @@ Use /agent-create <name> <prompt> to spawn one."
                 "Controls: ↑/↓ select  Enter apply/edit  E manual edit  / filter models  X clear/reset  T test  S save  R refresh  Esc close/cancel".to_string(),
                 "Paste works while editing a field.".to_string(),
                 "Tip: leave a field empty to clear it.".to_string(),
+                format!("Auth hint: {}", provider_auth_help(provider, custom_api_format)),
+                format!("Endpoint hint: {}", provider_endpoint_help(provider, custom_api_format)),
                 String::new(),
                 format!(
                     "Provider preview: {}",
@@ -300,7 +302,7 @@ Use /agent-create <name> <prompt> to spawn one."
             if !model_suggestions.is_empty() {
                 lines.push(String::new());
                 lines.push(
-                    "Model suggestions (auto-loaded; ←/→ move, PgUp/PgDn scroll, Enter/1-8 apply):"
+                    "Model suggestions (auto-loaded; ←/→ move, Home/End jump, PgUp/PgDn scroll, Enter/1-8 apply):"
                         .to_string(),
                 );
                 let visible = model_suggestions
@@ -332,6 +334,9 @@ Use /agent-create <name> <prompt> to spawn one."
                         model_suggestions.len() - shown_end
                     ));
                 }
+            } else if !model_filter.is_empty() {
+                lines.push(String::new());
+                lines.push(format!("No model suggestions match filter: {model_filter}"));
             }
             if let Some(status) = status {
                 lines.push(String::new());

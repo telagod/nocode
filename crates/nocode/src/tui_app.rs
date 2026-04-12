@@ -808,6 +808,23 @@ impl TuiApp {
                             *status = Some("Scrolled model suggestions down".to_string());
                             self.dirty = true;
                         }
+                        KeyCode::Home
+                            if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
+                        {
+                            *suggestion_index = 0;
+                            *suggestion_scroll = 0;
+                            *status = Some("Jumped to first model suggestion".to_string());
+                            self.dirty = true;
+                        }
+                        KeyCode::End
+                            if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
+                        {
+                            let max_index = model_suggestions.len().saturating_sub(1);
+                            *suggestion_index = max_index;
+                            *suggestion_scroll = max_index.saturating_sub(7);
+                            *status = Some("Jumped to last model suggestion".to_string());
+                            self.dirty = true;
+                        }
                         KeyCode::Tab if !*editing => {
                             *tier = (*tier + 1) % 3;
                             self.dirty = true;
@@ -957,33 +974,97 @@ impl TuiApp {
                             self.dirty = true;
                         }
                         KeyCode::Char('x') | KeyCode::Char('X') if !*editing => {
+                            let cwd = std::env::current_dir()
+                                .map(|p| p.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            let selected_tier = match *tier {
+                                0 => SettingsTier::User,
+                                1 => SettingsTier::Project,
+                                _ => SettingsTier::Local,
+                            };
                             match *selected {
                                 0 => {
-                                    *provider = "auto".to_string();
-                                    *provider_source = "local edit".to_string();
+                                    let (value, source) = restore_setting_from_source(
+                                        "model_provider",
+                                        selected_tier,
+                                        &cwd,
+                                    );
+                                    *provider = value;
+                                    *provider_source = source;
+                                    let (value, source) =
+                                        restore_api_key_from_source(provider, custom_api_format);
+                                    *api_key = value;
+                                    *api_key_source = source;
                                 }
                                 1 => {
-                                    api_key.clear();
-                                    *api_key_source = "unset".to_string();
+                                    let (value, source) =
+                                        restore_api_key_from_source(provider, custom_api_format);
+                                    *api_key = value;
+                                    *api_key_source = source;
                                 }
                                 2 => {
-                                    model.clear();
-                                    *model_source = "local edit".to_string();
+                                    let (value, source) =
+                                        restore_setting_from_source("model", selected_tier, &cwd);
+                                    *model = value;
+                                    *model_source = source;
+                                    *model_filter = String::new();
+                                    *model_suggestions =
+                                        apply_model_filter(all_model_suggestions, model_filter);
+                                    *suggestion_index = 0;
+                                    *suggestion_scroll = 0;
                                 }
                                 3 => {
-                                    custom_base_url.clear();
-                                    *custom_base_url_source = "local edit".to_string();
+                                    let (value, source) = restore_setting_from_source(
+                                        "custom_base_url",
+                                        selected_tier,
+                                        &cwd,
+                                    );
+                                    *custom_base_url = value;
+                                    *custom_base_url_source = source;
                                 }
                                 _ => {
-                                    *custom_api_format = "openai".to_string();
-                                    *custom_api_format_source = "local edit".to_string();
+                                    let (value, source) = restore_setting_from_source(
+                                        "custom_api_format",
+                                        selected_tier,
+                                        &cwd,
+                                    );
+                                    *custom_api_format = value;
+                                    *custom_api_format_source = source;
                                 }
                             }
-                            if *selected == 2 {
-                                *status = Some("Cleared current model value".to_string());
-                            } else {
-                                *status = Some("Reset current field locally".to_string());
+                            if *selected == 0 || *selected >= 3 {
+                                if provider == "auto" {
+                                    all_model_suggestions.clear();
+                                    model_suggestions.clear();
+                                    *suggestion_index = 0;
+                                    *suggestion_scroll = 0;
+                                } else {
+                                    apply_api_key_to_env(provider, custom_api_format, api_key);
+                                    match fetch_model_suggestions(
+                                        provider,
+                                        custom_base_url.trim(),
+                                        custom_api_format.trim(),
+                                    ) {
+                                        Ok(models) => {
+                                            *all_model_suggestions = models;
+                                            *model_suggestions = apply_model_filter(
+                                                all_model_suggestions,
+                                                model_filter,
+                                            );
+                                            *suggestion_index = 0;
+                                            *suggestion_scroll = 0;
+                                        }
+                                        Err(_) => {
+                                            all_model_suggestions.clear();
+                                            model_suggestions.clear();
+                                            *suggestion_index = 0;
+                                            *suggestion_scroll = 0;
+                                        }
+                                    }
+                                }
                             }
+                            *status =
+                                Some("Reverted current field to inherited source".to_string());
                             self.dirty = true;
                         }
                         KeyCode::Char('s') | KeyCode::Char('S') if !*editing => {
@@ -2240,6 +2321,144 @@ fn apply_api_key_to_env(provider: &str, api_format: &str, api_key: &str) {
     let (_, env_var) = provider_key_slot(provider, api_format);
     unsafe {
         std::env::set_var(env_var, api_key.trim());
+    }
+}
+
+fn load_settings_triplet(cwd: &str) -> (Settings, Settings, Settings) {
+    (
+        Settings::load_tier(SettingsTier::User, cwd),
+        Settings::load_tier(SettingsTier::Project, cwd),
+        Settings::load_tier(SettingsTier::Local, cwd),
+    )
+}
+
+fn merged_without_tier(selected_tier: SettingsTier, cwd: &str) -> Settings {
+    let (user, project, local) = load_settings_triplet(cwd);
+    match selected_tier {
+        SettingsTier::User => Settings::default().merge(project).merge(local),
+        SettingsTier::Project => user.merge(Settings::default()).merge(local),
+        SettingsTier::Local => user.merge(project).merge(Settings::default()),
+    }
+}
+
+fn restore_setting_from_source(
+    key: &str,
+    selected_tier: SettingsTier,
+    cwd: &str,
+) -> (String, String) {
+    let (user, project, local) = load_settings_triplet(cwd);
+    let merged = merged_without_tier(selected_tier, cwd);
+    let source_without_tier = |env_var: &str, fallback: Option<&str>| -> String {
+        if std::env::var(env_var).is_ok() {
+            "env".to_string()
+        } else if selected_tier != SettingsTier::Local && local.get_key(key).is_some() {
+            "local".to_string()
+        } else if selected_tier != SettingsTier::Project && project.get_key(key).is_some() {
+            "project".to_string()
+        } else if selected_tier != SettingsTier::User && user.get_key(key).is_some() {
+            "user".to_string()
+        } else {
+            fallback.unwrap_or("default").to_string()
+        }
+    };
+    match key {
+        "model_provider" => {
+            if let Ok(value) = std::env::var("NOCODE_MODEL_PROVIDER") {
+                return (value, "env".to_string());
+            }
+            if local.get_key(key).is_some() && selected_tier != SettingsTier::Local {
+                return (
+                    merged.model_provider.unwrap_or_else(|| "auto".to_string()),
+                    "local".to_string(),
+                );
+            }
+            if project.get_key(key).is_some() && selected_tier != SettingsTier::Project {
+                return (
+                    merged.model_provider.unwrap_or_else(|| "auto".to_string()),
+                    "project".to_string(),
+                );
+            }
+            if user.get_key(key).is_some() && selected_tier != SettingsTier::User {
+                return (
+                    merged.model_provider.unwrap_or_else(|| "auto".to_string()),
+                    "user".to_string(),
+                );
+            }
+            if merged.custom_base_url.is_some() || merged.custom_api_format.is_some() {
+                return ("custom".to_string(), "derived".to_string());
+            }
+            ("auto".to_string(), "default".to_string())
+        }
+        "model" => (
+            std::env::var("NOCODE_MODEL")
+                .ok()
+                .or(merged.model)
+                .unwrap_or_default(),
+            source_without_tier("NOCODE_MODEL", None),
+        ),
+        "custom_base_url" => (
+            std::env::var("NOCODE_CUSTOM_BASE_URL")
+                .ok()
+                .or(merged.custom_base_url)
+                .unwrap_or_default(),
+            source_without_tier("NOCODE_CUSTOM_BASE_URL", None),
+        ),
+        "custom_api_format" => (
+            std::env::var("NOCODE_CUSTOM_API_FORMAT")
+                .ok()
+                .or(merged.custom_api_format)
+                .unwrap_or_else(|| "openai".to_string()),
+            source_without_tier("NOCODE_CUSTOM_API_FORMAT", Some("default")),
+        ),
+        _ => (String::new(), "default".to_string()),
+    }
+}
+
+fn restore_api_key_from_source(provider: &str, api_format: &str) -> (String, String) {
+    let store = load_credential_store();
+    let (slot, env_var) = provider_key_slot(provider, api_format);
+    if let Ok(value) = std::env::var(env_var) {
+        return (value, "env".to_string());
+    }
+    if let Some(value) = store.get_key(slot) {
+        return (value, "credentials".to_string());
+    }
+    (String::new(), "unset".to_string())
+}
+
+pub(crate) fn provider_auth_help(provider: &str, api_format: &str) -> &'static str {
+    match provider.to_ascii_lowercase().as_str() {
+        "claude" | "anthropic" => "Paste an Anthropic key; T verifies against the Messages API.",
+        "openai" => "Paste an OpenAI key; R loads /v1/models and T verifies access.",
+        "gemini" | "google" => "Paste a Gemini key; R loads v1beta/models and T checks API access.",
+        "custom" => {
+            if api_format.eq_ignore_ascii_case("anthropic") {
+                "Custom Anthropic-compatible: use an Anthropic-style key plus a compatible base URL."
+            } else {
+                "Custom OpenAI-compatible: use an OpenAI-style key plus a compatible base URL."
+            }
+        }
+        _ => "Auto mode inherits whichever configured provider is available first.",
+    }
+}
+
+pub(crate) fn provider_endpoint_help(provider: &str, api_format: &str) -> &'static str {
+    match provider.to_ascii_lowercase().as_str() {
+        "custom" => {
+            if api_format.eq_ignore_ascii_case("anthropic") {
+                "Endpoint mode: custom Anthropic-compatible (/v1/models, anthropic-version header)."
+            } else {
+                "Endpoint mode: custom OpenAI-compatible (/v1/models)."
+            }
+        }
+        "claude" | "anthropic" => {
+            "Official Anthropic endpoint is used; custom endpoint fields are hidden."
+        }
+        "openai" => "Official OpenAI endpoint is used; custom endpoint fields are hidden.",
+        "gemini" | "google" => {
+            "Official Gemini endpoint is used; custom endpoint fields are hidden."
+        }
+        _ => "Auto mode uses the first available configured provider endpoint.",
     }
 }
 
