@@ -135,9 +135,13 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             input,
             status,
             provider,
+            provider_source,
             model,
+            model_source,
             custom_base_url,
+            custom_base_url_source,
             custom_api_format,
+            custom_api_format_source,
             model_suggestions,
         } => {
             let tier_label = match tier {
@@ -160,24 +164,28 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                 "Editable configuration".to_string(),
                 String::new(),
                 format!(
-                    "{} Provider:     {}",
+                    "{} Provider:     {} ({})",
                     active(0, *selected),
-                    provider
+                    provider,
+                    provider_source
                 ),
                 format!(
-                    "{} Model:        {}",
+                    "{} Model:        {} ({})",
                     active(1, *selected),
-                    field_value(1, *selected, *editing, input, model)
+                    field_value(1, *selected, *editing, input, model),
+                    model_source
                 ),
                 format!(
-                    "{} Custom URL:   {}",
+                    "{} Custom URL:   {} ({})",
                     active(2, *selected),
-                    field_value(2, *selected, *editing, input, custom_base_url)
+                    field_value(2, *selected, *editing, input, custom_base_url),
+                    custom_base_url_source
                 ),
                 format!(
-                    "{} Custom API:   {}",
+                    "{} Custom API:   {} ({})",
                     active(3, *selected),
-                    field_value(3, *selected, *editing, input, custom_api_format)
+                    field_value(3, *selected, *editing, input, custom_api_format),
+                    custom_api_format_source
                 ),
                 String::new(),
                 format!("Save tier: {tier_label}  [Tab to cycle]"),

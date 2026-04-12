@@ -22,6 +22,14 @@ impl SettingsTier {
             Self::Local => Path::new(cwd).join(".nocode/settings.local.json"),
         }
     }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Project => "project",
+            Self::Local => "local",
+        }
+    }
 }
 
 /// Runtime configuration merged from 3 tiers.
@@ -85,6 +93,11 @@ impl Settings {
         self.save_to(&path)
     }
 
+    /// Load settings from a specific tier at the given cwd.
+    pub fn load_tier(tier: SettingsTier, cwd: &str) -> Self {
+        Self::load_from(&tier.path_for(cwd))
+    }
+
     /// Merge another settings on top (later wins for non-None scalars,
     /// maps merged key-by-key, vecs replaced wholesale).
     pub fn merge(mut self, other: Self) -> Self {
@@ -138,6 +151,43 @@ impl Settings {
     ) -> Result<(), String> {
         self.set_key(key, value)?;
         self.save_tier(tier, cwd)
+    }
+
+    /// Clear a single key in memory (does not persist).
+    pub fn clear_key(&mut self, key: &str) -> Result<(), String> {
+        match key {
+            "model_provider" => self.model_provider = None,
+            "model" => self.model = None,
+            "permission_mode" => self.permission_mode = None,
+            "max_turns" => self.max_turns = None,
+            "max_tokens" => self.max_tokens = None,
+            "custom_base_url" => self.custom_base_url = None,
+            "custom_api_format" => self.custom_api_format = None,
+            "system_prompt" => self.system_prompt = None,
+            "reasoning_effort" => self.reasoning_effort = None,
+            "telemetry_enabled" => self.telemetry_enabled = None,
+            _ => {
+                return Err(format!(
+                    "Unknown setting key: '{key}'. Supported: model_provider, model, permission_mode, max_turns, max_tokens, custom_base_url, custom_api_format, system_prompt, reasoning_effort, telemetry_enabled"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Persist a single scalar key to one tier without rewriting merged settings.
+    pub fn persist_key_value(
+        key: &str,
+        value: Option<&str>,
+        tier: SettingsTier,
+        cwd: &str,
+    ) -> Result<(), String> {
+        let mut settings = Self::load_tier(tier, cwd);
+        match value {
+            Some(value) => settings.set_key(key, value)?,
+            None => settings.clear_key(key)?,
+        }
+        settings.save_tier(tier, cwd)
     }
 
     /// Set a single key-value pair in memory (does not persist).
@@ -310,5 +360,40 @@ mod tests {
         let b = Settings::default();
         let merged = a.merge(b);
         assert!(merged.sandbox.as_ref().unwrap().enabled);
+    }
+
+    #[test]
+    fn persist_key_value_only_updates_target_tier_key() {
+        let cwd = tempfile::tempdir().unwrap();
+        let cwd_str = cwd.path().to_string_lossy().into_owned();
+
+        let user = Settings {
+            model: Some("user-model".to_string()),
+            custom_api_format: Some("openai".to_string()),
+            ..Default::default()
+        };
+        user.save_tier(SettingsTier::User, &cwd_str).unwrap();
+
+        let project = Settings {
+            custom_base_url: Some("https://project.example".to_string()),
+            ..Default::default()
+        };
+        project.save_tier(SettingsTier::Project, &cwd_str).unwrap();
+
+        Settings::persist_key_value(
+            "model",
+            Some("project-model"),
+            SettingsTier::Project,
+            &cwd_str,
+        )
+        .unwrap();
+
+        let saved_project = Settings::load_tier(SettingsTier::Project, &cwd_str);
+        assert_eq!(saved_project.model.as_deref(), Some("project-model"));
+        assert_eq!(
+            saved_project.custom_base_url.as_deref(),
+            Some("https://project.example")
+        );
+        assert!(saved_project.custom_api_format.is_none());
     }
 }

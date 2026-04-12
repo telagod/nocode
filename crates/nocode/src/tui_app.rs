@@ -72,9 +72,13 @@ pub(crate) enum Overlay {
         input: String,
         status: Option<String>,
         provider: String,
+        provider_source: String,
         model: String,
+        model_source: String,
         custom_base_url: String,
+        custom_base_url_source: String,
         custom_api_format: String,
+        custom_api_format_source: String,
         model_suggestions: Vec<String>,
     },
     Memory,
@@ -102,6 +106,9 @@ impl TuiApp {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
         let settings = Settings::load_merged(&cwd);
+        let user_settings = Settings::load_tier(SettingsTier::User, &cwd);
+        let project_settings = Settings::load_tier(SettingsTier::Project, &cwd);
+        let local_settings = Settings::load_tier(SettingsTier::Local, &cwd);
         let custom_base_url = settings.custom_base_url.clone().unwrap_or_default();
         let custom_api_format = settings
             .custom_api_format
@@ -134,9 +141,41 @@ impl TuiApp {
             input: String::new(),
             status,
             provider,
+            provider_source: setting_source_label(
+                "model_provider",
+                "NOCODE_MODEL_PROVIDER",
+                &user_settings,
+                &project_settings,
+                &local_settings,
+                (!custom_base_url.is_empty() || !custom_api_format.is_empty()).then_some("derived"),
+            ),
             model: settings.model.unwrap_or_default(),
+            model_source: setting_source_label(
+                "model",
+                "NOCODE_MODEL",
+                &user_settings,
+                &project_settings,
+                &local_settings,
+                None,
+            ),
             custom_base_url,
+            custom_base_url_source: setting_source_label(
+                "custom_base_url",
+                "NOCODE_CUSTOM_BASE_URL",
+                &user_settings,
+                &project_settings,
+                &local_settings,
+                None,
+            ),
             custom_api_format,
+            custom_api_format_source: setting_source_label(
+                "custom_api_format",
+                "NOCODE_CUSTOM_API_FORMAT",
+                &user_settings,
+                &project_settings,
+                &local_settings,
+                Some("default"),
+            ),
             model_suggestions,
         };
         self.dirty = true;
@@ -569,9 +608,13 @@ impl TuiApp {
                     ref mut input,
                     ref mut status,
                     ref mut provider,
+                    ref mut provider_source,
                     ref mut model,
+                    ref mut model_source,
                     ref mut custom_base_url,
+                    ref mut custom_base_url_source,
                     ref mut custom_api_format,
+                    ref mut custom_api_format_source,
                     ref mut model_suggestions,
                 } = self.overlay
                 {
@@ -794,25 +837,54 @@ impl TuiApp {
                                 1 => SettingsTier::Project,
                                 _ => SettingsTier::Local,
                             };
-                            let mut settings = Settings::load_merged(&cwd);
-                            settings.model_provider = Some(provider.clone());
-                            settings.model = if model.trim().is_empty() {
-                                None
-                            } else {
-                                Some(model.trim().to_string())
-                            };
-                            settings.custom_base_url = if custom_base_url.trim().is_empty() {
-                                None
-                            } else {
-                                Some(custom_base_url.trim().to_string())
-                            };
-                            settings.custom_api_format = if custom_api_format.trim().is_empty() {
-                                None
-                            } else {
-                                Some(custom_api_format.trim().to_string())
-                            };
-                            match settings.save_tier(tier_value, &cwd) {
-                                Ok(()) => {
+                            let persist_error = [
+                                Settings::persist_key_value(
+                                    "model_provider",
+                                    Some(provider.trim()),
+                                    tier_value,
+                                    &cwd,
+                                ),
+                                Settings::persist_key_value(
+                                    "model",
+                                    if model.trim().is_empty() {
+                                        None
+                                    } else {
+                                        Some(model.trim())
+                                    },
+                                    tier_value,
+                                    &cwd,
+                                ),
+                                Settings::persist_key_value(
+                                    "custom_base_url",
+                                    if custom_base_url.trim().is_empty() {
+                                        None
+                                    } else {
+                                        Some(custom_base_url.trim())
+                                    },
+                                    tier_value,
+                                    &cwd,
+                                ),
+                                Settings::persist_key_value(
+                                    "custom_api_format",
+                                    if custom_api_format.trim().is_empty() {
+                                        None
+                                    } else {
+                                        Some(custom_api_format.trim())
+                                    },
+                                    tier_value,
+                                    &cwd,
+                                ),
+                            ]
+                            .into_iter()
+                            .find_map(Result::err);
+                            match persist_error {
+                                None => {
+                                    let user_settings =
+                                        Settings::load_tier(SettingsTier::User, &cwd);
+                                    let project_settings =
+                                        Settings::load_tier(SettingsTier::Project, &cwd);
+                                    let local_settings =
+                                        Settings::load_tier(SettingsTier::Local, &cwd);
                                     let provider_name = provider_display_name(provider);
                                     if provider == "custom" {
                                         unsafe {
@@ -857,8 +929,43 @@ impl TuiApp {
                                     *status = Some(format!(
                                         "Saved configuration; current provider {provider_name}"
                                     ));
+                                    *provider_source = setting_source_label(
+                                        "model_provider",
+                                        "NOCODE_MODEL_PROVIDER",
+                                        &user_settings,
+                                        &project_settings,
+                                        &local_settings,
+                                        (!custom_base_url.is_empty()
+                                            || !custom_api_format.is_empty())
+                                        .then_some("derived"),
+                                    );
+                                    *model_source = setting_source_label(
+                                        "model",
+                                        "NOCODE_MODEL",
+                                        &user_settings,
+                                        &project_settings,
+                                        &local_settings,
+                                        None,
+                                    );
+                                    *custom_base_url_source = setting_source_label(
+                                        "custom_base_url",
+                                        "NOCODE_CUSTOM_BASE_URL",
+                                        &user_settings,
+                                        &project_settings,
+                                        &local_settings,
+                                        None,
+                                    );
+                                    *custom_api_format_source = setting_source_label(
+                                        "custom_api_format",
+                                        "NOCODE_CUSTOM_API_FORMAT",
+                                        &user_settings,
+                                        &project_settings,
+                                        &local_settings,
+                                        Some("default"),
+                                    );
                                     system_notice = Some(format!(
-                                        "Config applied to current session: provider {}, model {}",
+                                        "Config applied to current session from {} settings: provider {}, model {}",
+                                        tier_value.label(),
                                         provider_name,
                                         if model.trim().is_empty() {
                                             "(inherit)".to_string()
@@ -867,7 +974,7 @@ impl TuiApp {
                                         }
                                     ));
                                 }
-                                Err(e) => {
+                                Some(e) => {
                                     *status = Some(format!("Save failed: {e}"));
                                 }
                             }
@@ -1858,6 +1965,29 @@ fn provider_display_name(provider: &str) -> &'static str {
         "custom" => "Custom",
         _ => "Auto",
     }
+}
+
+fn setting_source_label(
+    key: &str,
+    env_var: &str,
+    user_settings: &Settings,
+    project_settings: &Settings,
+    local_settings: &Settings,
+    fallback: Option<&str>,
+) -> String {
+    if std::env::var(env_var).is_ok() {
+        return "env".to_string();
+    }
+    if local_settings.get_key(key).is_some() {
+        return "local".to_string();
+    }
+    if project_settings.get_key(key).is_some() {
+        return "project".to_string();
+    }
+    if user_settings.get_key(key).is_some() {
+        return "user".to_string();
+    }
+    fallback.unwrap_or("default").to_string()
 }
 
 fn fetch_model_suggestions(
