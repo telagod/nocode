@@ -382,6 +382,7 @@ impl TuiApp {
         // 2. Status line (search overrides when active)
         let status_text = self
             .search_status()
+            .or_else(|| self.slash_command_hint())
             .unwrap_or_else(|| self.hud.render_line());
         let status = StatusBar::new(&status_text);
         frame.render_widget(status, chunks[1]);
@@ -1092,6 +1093,25 @@ impl TuiApp {
         let count = self.search_matches.len();
         let idx = if count > 0 { self.search_index + 1 } else { 0 };
         Some(format!("Search: {} ({}/{})", self.search_query, idx, count))
+    }
+
+    pub(crate) fn slash_command_hint(&self) -> Option<String> {
+        if !self.input.trim_start().starts_with('/') {
+            return None;
+        }
+        let registry = CommandRegistry::with_defaults();
+        let suggestions = registry.recommend(&self.input, 4);
+        if suggestions.is_empty() {
+            return Some("Commands: no matches".to_string());
+        }
+        let parts: Vec<String> = suggestions
+            .into_iter()
+            .map(|cmd| match cmd.argument_hint {
+                Some(hint) => format!("/{} {} — {}", cmd.name, hint, cmd.summary),
+                None => format!("/{} — {}", cmd.name, cmd.summary),
+            })
+            .collect();
+        Some(format!("Commands: {}", parts.join("  ·  ")))
     }
 
     fn history_prev(&mut self) {

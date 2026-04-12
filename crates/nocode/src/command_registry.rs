@@ -448,6 +448,39 @@ impl CommandRegistry {
         })
     }
 
+    /// Return command recommendations for a slash input prefix.
+    pub fn recommend(&self, input: &str, max_results: usize) -> Vec<&CommandEntry> {
+        let trimmed = input.trim();
+        if !trimmed.starts_with('/') {
+            return Vec::new();
+        }
+
+        let prefix = trimmed
+            .trim_start_matches('/')
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_lowercase();
+
+        let mut exact_prefix = Vec::new();
+        let mut summary_matches = Vec::new();
+
+        for cmd in &self.commands {
+            let name_match = cmd.name.starts_with(&prefix)
+                || cmd.aliases.iter().any(|alias| alias.starts_with(&prefix));
+            let summary_match = prefix.is_empty() || cmd.summary.to_lowercase().contains(&prefix);
+            if name_match || prefix.is_empty() {
+                exact_prefix.push(cmd);
+            } else if summary_match {
+                summary_matches.push(cmd);
+            }
+        }
+
+        exact_prefix.extend(summary_matches);
+        exact_prefix.truncate(max_results);
+        exact_prefix
+    }
+
     /// Get all commands for help display.
     pub fn all_commands(&self) -> &[CommandEntry] {
         &self.commands
