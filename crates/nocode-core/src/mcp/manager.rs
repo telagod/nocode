@@ -273,7 +273,7 @@ impl McpManager {
         &mut self,
         server: &str,
         tool_name: &str,
-        arguments: &std::collections::HashMap<String, String>,
+        arguments: &serde_json::Value,
     ) -> Result<crate::mcp::client::McpToolResult, String> {
         let entry = self
             .servers

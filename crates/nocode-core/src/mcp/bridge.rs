@@ -2,7 +2,6 @@
 
 use crate::mcp::client::{McpClient, McpTool, McpToolResult};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Mutex;
 
 /// Bridges MCP server tools into the native Tool interface.
@@ -40,11 +39,7 @@ impl McpBridge {
     }
 
     /// Call a tool by its original (unprefixed) name.
-    pub fn call_tool(
-        &self,
-        name: &str,
-        arguments: &HashMap<String, String>,
-    ) -> Result<McpToolResult, String> {
+    pub fn call_tool(&self, name: &str, arguments: &Value) -> Result<McpToolResult, String> {
         let mut client = self.client.lock().map_err(|e| format!("lock error: {e}"))?;
         client.call_tool(name, arguments)
     }

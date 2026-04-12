@@ -144,22 +144,6 @@ pub fn init_global_tool_registry(base: ToolRegistry) {
     *guard = GlobalToolRegistry::new(base);
 }
 
-fn input_to_string_map(input: &serde_json::Value) -> HashMap<String, String> {
-    input
-        .as_object()
-        .map(|obj| {
-            obj.iter()
-                .filter_map(|(key, value)| match value {
-                    serde_json::Value::String(text) => Some((key.clone(), text.clone())),
-                    serde_json::Value::Bool(flag) => Some((key.clone(), flag.to_string())),
-                    serde_json::Value::Number(num) => Some((key.clone(), num.to_string())),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 pub fn refresh_global_mcp_bridged_tools() {
     let global = global_tool_registry();
     let mut registry = global.lock().unwrap_or_else(|e| e.into_inner());
@@ -181,10 +165,9 @@ pub fn refresh_global_mcp_bridged_tools() {
             prefixed_name,
             definition,
             Box::new(move |input| {
-                let args = input_to_string_map(input);
                 let manager = global_mcp_manager();
                 let mut manager = manager.lock().unwrap_or_else(|e| e.into_inner());
-                match manager.call_tool(&server_name, &original_name, &args) {
+                match manager.call_tool(&server_name, &original_name, input) {
                     Ok(result) if result.is_error => ToolOutput::error(result.content),
                     Ok(result) => ToolOutput::success(result.content),
                     Err(err) => ToolOutput::error(err),

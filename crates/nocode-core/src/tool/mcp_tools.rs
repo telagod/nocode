@@ -2,7 +2,6 @@
 
 use crate::tool::{Tool, ToolOutput};
 use serde_json::{Value, json};
-use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // ListMcpResources
@@ -136,15 +135,7 @@ impl Tool for McpTool {
             if let Some(tool_name) = tool_name {
                 let mgr = crate::mcp::manager::global_mcp_manager();
                 let mut guard = mgr.lock().unwrap_or_else(|e| e.into_inner());
-                let args_map: HashMap<String, String> = input
-                    .get("arguments")
-                    .and_then(|v| v.as_object())
-                    .map(|obj| {
-                        obj.iter()
-                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let arguments = input.get("arguments").cloned().unwrap_or_else(|| json!({}));
                 let entry = guard.get_entry(server);
                 let has_entry = entry.is_some();
                 let is_connected =
@@ -155,7 +146,7 @@ impl Tool for McpTool {
                 if !is_connected {
                     return ToolOutput::error(format!("MCP server '{server}' is not connected"));
                 }
-                return match guard.call_tool(server, tool_name, &args_map) {
+                return match guard.call_tool(server, tool_name, &arguments) {
                     Ok(result) if result.is_error => ToolOutput::error(result.content),
                     Ok(result) => ToolOutput::success(result.content),
                     Err(e) => ToolOutput::error(e),

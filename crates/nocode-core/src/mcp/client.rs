@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -117,19 +116,11 @@ impl McpClient {
     }
 
     /// Call a tool on the MCP server.
-    pub fn call_tool(
-        &mut self,
-        name: &str,
-        arguments: &HashMap<String, String>,
-    ) -> Result<McpToolResult, String> {
-        let args_value: Value = arguments
-            .iter()
-            .map(|(k, v)| (k.clone(), Value::String(v.clone())))
-            .collect::<serde_json::Map<String, Value>>()
-            .into();
-
-        let response =
-            self.request("tools/call", json!({"name": name, "arguments": args_value}))?;
+    pub fn call_tool(&mut self, name: &str, arguments: &Value) -> Result<McpToolResult, String> {
+        let response = self.request(
+            "tools/call",
+            json!({"name": name, "arguments": arguments.clone()}),
+        )?;
 
         let content = response
             .get("content")
@@ -284,6 +275,7 @@ impl Drop for McpClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn mcp_tool_serialization_roundtrip() {
@@ -332,5 +324,57 @@ mod tests {
         assert!(result.is_err());
         let err = result.err().unwrap();
         assert!(err.contains("failed to spawn"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn call_tool_preserves_nested_json_arguments() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let script_path = dir.path().join("mock_mcp.py");
+        std::fs::write(
+            &script_path,
+            r#"#!/usr/bin/env python3
+import json, sys
+for line in sys.stdin:
+    req = json.loads(line)
+    method = req.get("method")
+    rid = req.get("id")
+    if method == "initialize":
+        print(json.dumps({"jsonrpc":"2.0","id":rid,"result":{}}), flush=True)
+    elif method == "notifications/initialized":
+        continue
+    elif method == "tools/list":
+        print(json.dumps({"jsonrpc":"2.0","id":rid,"result":{"tools":[{"name":"echo_args","description":"Echo nested args","inputSchema":{"type":"object"}}]}}), flush=True)
+    elif method == "tools/call":
+        args = req.get("params", {}).get("arguments", {})
+        print(json.dumps({"jsonrpc":"2.0","id":rid,"result":{"content":[{"type":"text","text":json.dumps(args, sort_keys=True)}],"isError":False}}), flush=True)
+    else:
+        print(json.dumps({"jsonrpc":"2.0","id":rid,"error":{"code":-32601,"message":"unknown"}}), flush=True)
+"#,
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).unwrap();
+
+        let mut client = McpClient::spawn(script_path.to_str().unwrap(), &[]).unwrap();
+        let tools = client.list_tools().unwrap();
+        assert_eq!(tools.len(), 1);
+
+        let nested_args = json!({
+            "title": "issue",
+            "labels": ["bug", "p1"],
+            "meta": {"priority": 1, "urgent": true}
+        });
+        let result = client.call_tool("echo_args", &nested_args).unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains(r#""labels": ["bug", "p1"]"#));
+        assert!(
+            result
+                .content
+                .contains(r#""meta": {"priority": 1, "urgent": true}"#)
+        );
     }
 }
