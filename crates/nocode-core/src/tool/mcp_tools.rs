@@ -122,6 +122,26 @@ impl Tool for McpTool {
     fn input_schema(&self) -> Value {
         json!({
             "type": "object",
+            "properties": {
+                "server": {
+                    "type": "string",
+                    "description": "MCP server name when calling the generic MCP dispatcher"
+                },
+                "tool_name": {
+                    "type": "string",
+                    "description": "Tool name on the MCP server"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Either the MCP tool name or a prefixed mcp:server:tool name"
+                },
+                "arguments": {
+                    "type": "object",
+                    "description": "Structured arguments passed through to the MCP tool",
+                    "additionalProperties": true,
+                    "properties": {}
+                }
+            },
             "additionalProperties": true
         })
     }
@@ -225,5 +245,14 @@ mod tests {
         let result = tool.execute(&json!({"server": "nonexistent_xyz", "tool_name": "test"}));
         assert!(result.is_error);
         assert!(result.content.contains("not registered"));
+    }
+
+    #[test]
+    fn mcp_generic_schema_has_properties() {
+        let tool = McpTool;
+        let schema = tool.input_schema();
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"].is_object());
+        assert!(schema["properties"]["arguments"].is_object());
     }
 }
