@@ -68,6 +68,7 @@ pub(crate) enum Overlay {
         selected: usize,
         tier: usize,
         suggestion_index: usize,
+        suggestion_scroll: usize,
         editing: bool,
         input: String,
         status: Option<String>,
@@ -145,6 +146,7 @@ impl TuiApp {
             selected: 0,
             tier: 0,
             suggestion_index: 0,
+            suggestion_scroll: 0,
             editing: false,
             input: String::new(),
             status,
@@ -620,6 +622,7 @@ impl TuiApp {
                     ref mut selected,
                     ref mut tier,
                     ref mut suggestion_index,
+                    ref mut suggestion_scroll,
                     ref mut editing,
                     ref mut input,
                     ref mut status,
@@ -636,6 +639,7 @@ impl TuiApp {
                     ref mut model_suggestions,
                 } = self.overlay
                 {
+                    let field_count = if provider == "custom" { 5 } else { 3 };
                     match key.code {
                         KeyCode::Esc => {
                             if *editing {
@@ -654,7 +658,7 @@ impl TuiApp {
                             self.dirty = true;
                         }
                         KeyCode::Down if !*editing => {
-                            if *selected < 4 {
+                            if *selected + 1 < field_count {
                                 *selected += 1;
                             }
                             self.dirty = true;
@@ -662,6 +666,9 @@ impl TuiApp {
                         KeyCode::Left | KeyCode::Right if !*editing && *selected == 0 => {
                             *provider =
                                 cycle_provider(provider, matches!(key.code, KeyCode::Right));
+                            if provider != "custom" && *selected > 2 {
+                                *selected = 2;
+                            }
                             let (slot, env_var) =
                                 provider_key_slot(provider.as_str(), custom_api_format.as_str());
                             let store = load_credential_store();
@@ -690,6 +697,7 @@ impl TuiApp {
                                     Ok(models) => {
                                         *model_suggestions = models;
                                         *suggestion_index = 0;
+                                        *suggestion_scroll = 0;
                                         *status = Some(format!(
                                             "Switched provider to custom; fetched {} model suggestion(s)",
                                             model_suggestions.len()
@@ -698,6 +706,7 @@ impl TuiApp {
                                     Err(e) => {
                                         model_suggestions.clear();
                                         *suggestion_index = 0;
+                                        *suggestion_scroll = 0;
                                         *status = Some(format!(
                                             "Switched provider to custom; model refresh failed: {e}"
                                         ));
@@ -713,6 +722,9 @@ impl TuiApp {
                                 *suggestion_index -= 1;
                             } else {
                                 *suggestion_index = model_suggestions.len().saturating_sub(1);
+                            }
+                            if *suggestion_index < *suggestion_scroll {
+                                *suggestion_scroll = *suggestion_index;
                             }
                             *status = Some("Moved model suggestion selection".to_string());
                             self.dirty = true;
@@ -733,6 +745,7 @@ impl TuiApp {
                                 Ok(models) => {
                                     *model_suggestions = models;
                                     *suggestion_index = 0;
+                                    *suggestion_scroll = 0;
                                     *status = Some(format!(
                                         "Switched API format to {}; fetched {} model suggestion(s)",
                                         custom_api_format,
@@ -742,6 +755,7 @@ impl TuiApp {
                                 Err(e) => {
                                     model_suggestions.clear();
                                     *suggestion_index = 0;
+                                    *suggestion_scroll = 0;
                                     *status = Some(format!(
                                         "Switched API format to {}; model refresh failed: {e}",
                                         custom_api_format
@@ -754,7 +768,28 @@ impl TuiApp {
                             if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
                         {
                             *suggestion_index = (*suggestion_index + 1) % model_suggestions.len();
+                            if *suggestion_index >= *suggestion_scroll + 8 {
+                                *suggestion_scroll = suggestion_index.saturating_sub(7);
+                            }
                             *status = Some("Moved model suggestion selection".to_string());
+                            self.dirty = true;
+                        }
+                        KeyCode::PageUp
+                            if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
+                        {
+                            *suggestion_index = (*suggestion_index).saturating_sub(8);
+                            *suggestion_scroll = (*suggestion_scroll).saturating_sub(8);
+                            *status = Some("Scrolled model suggestions up".to_string());
+                            self.dirty = true;
+                        }
+                        KeyCode::PageDown
+                            if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
+                        {
+                            let max_index = model_suggestions.len().saturating_sub(1);
+                            *suggestion_index = (*suggestion_index + 8).min(max_index);
+                            *suggestion_scroll =
+                                (*suggestion_scroll + 8).min(max_index.saturating_sub(7));
+                            *status = Some("Scrolled model suggestions down".to_string());
                             self.dirty = true;
                         }
                         KeyCode::Tab if !*editing => {
@@ -781,6 +816,7 @@ impl TuiApp {
                                         Ok(models) => {
                                             *model_suggestions = models;
                                             *suggestion_index = 0;
+                                            *suggestion_scroll = 0;
                                             *status = Some(format!(
                                                 "Field updated; fetched {} model suggestion(s)",
                                                 model_suggestions.len()
@@ -789,6 +825,7 @@ impl TuiApp {
                                         Err(e) => {
                                             model_suggestions.clear();
                                             *suggestion_index = 0;
+                                            *suggestion_scroll = 0;
                                             *status = Some(format!(
                                                 "Field updated; model refresh failed: {e}"
                                             ));
@@ -813,6 +850,7 @@ impl TuiApp {
                                 if provider == "auto" {
                                     model_suggestions.clear();
                                     *suggestion_index = 0;
+                                    *suggestion_scroll = 0;
                                     *status = Some("Switched provider to auto".to_string());
                                 } else {
                                     apply_api_key_to_env(provider, custom_api_format, api_key);
@@ -824,6 +862,7 @@ impl TuiApp {
                                         Ok(models) => {
                                             *model_suggestions = models;
                                             *suggestion_index = 0;
+                                            *suggestion_scroll = 0;
                                             *status = Some(format!(
                                                 "Switched provider to {}; fetched {} model suggestion(s)",
                                                 provider,
@@ -833,6 +872,7 @@ impl TuiApp {
                                         Err(e) => {
                                             model_suggestions.clear();
                                             *suggestion_index = 0;
+                                            *suggestion_scroll = 0;
                                             *status = Some(format!(
                                                 "Switched provider to {}; model refresh failed: {e}",
                                                 provider
@@ -1093,6 +1133,7 @@ impl TuiApp {
                                 Ok(models) => {
                                     *model_suggestions = models;
                                     *suggestion_index = 0;
+                                    *suggestion_scroll = 0;
                                     *status = Some(format!(
                                         "Fetched {} model suggestion(s)",
                                         model_suggestions.len()
@@ -1100,6 +1141,7 @@ impl TuiApp {
                                 }
                                 Err(e) => {
                                     model_suggestions.clear();
+                                    *suggestion_scroll = 0;
                                     *status = Some(format!("Model refresh failed: {e}"));
                                 }
                             }
@@ -1113,8 +1155,11 @@ impl TuiApp {
                         {
                             let idx = (c as usize) - ('1' as usize);
                             if idx < model_suggestions.len().min(8) {
-                                *suggestion_index = idx;
-                                *model = model_suggestions[idx].clone();
+                                let actual_idx = *suggestion_scroll + idx;
+                                if actual_idx < model_suggestions.len() {
+                                    *suggestion_index = actual_idx;
+                                    *model = model_suggestions[actual_idx].clone();
+                                }
                                 *status = Some(format!("Applied model suggestion: {}", model));
                             }
                             self.dirty = true;

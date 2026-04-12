@@ -131,6 +131,7 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             selected,
             tier,
             suggestion_index,
+            suggestion_scroll,
             editing,
             input,
             status,
@@ -146,6 +147,7 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             custom_api_format_source,
             model_suggestions,
         } => {
+            let is_custom_provider = provider == "custom";
             let tier_label = match tier {
                 0 => "user",
                 1 => "project",
@@ -198,27 +200,11 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                     field_value(2, *selected, *editing, input, model),
                     model_source
                 ),
-                format!(
-                    "{} Custom URL:   {} ({})",
-                    active(3, *selected),
-                    field_value(3, *selected, *editing, input, custom_base_url),
-                    custom_base_url_source
-                ),
-                format!(
-                    "{} Custom API:   {} ({})",
-                    active(4, *selected),
-                    field_value(4, *selected, *editing, input, custom_api_format),
-                    custom_api_format_source
-                ),
                 String::new(),
                 format!("Save tier: {tier_label}  [Tab to cycle]"),
                 format!(
                     "Quick provider toggle: {}",
                     if *selected == 0 { "←/→ or Enter" } else { "select Provider field" }
-                ),
-                format!(
-                    "Quick API toggle: {}",
-                    if *selected == 4 { "←/→" } else { "select Custom API field" }
                 ),
                 "Controls: ↑/↓ select  Enter apply/edit  E manual edit  T test  S save  R refresh  Esc close/cancel".to_string(),
                 "Paste works while editing a field.".to_string(),
@@ -243,17 +229,75 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                 ),
                 "Default launch mode: TUI".to_string(),
             ];
+            if is_custom_provider {
+                lines.splice(
+                    5..5,
+                    [
+                        format!(
+                            "{} Custom URL:   {} ({})",
+                            active(3, *selected),
+                            field_value(3, *selected, *editing, input, custom_base_url),
+                            custom_base_url_source
+                        ),
+                        format!(
+                            "{} Custom API:   {} ({})",
+                            active(4, *selected),
+                            field_value(4, *selected, *editing, input, custom_api_format),
+                            custom_api_format_source
+                        ),
+                    ],
+                );
+                lines.insert(
+                    10,
+                    format!(
+                        "Quick API toggle: {}",
+                        if *selected == 4 {
+                            "←/→"
+                        } else {
+                            "select Custom API field"
+                        }
+                    ),
+                );
+            } else {
+                lines.insert(
+                    10,
+                    "Custom endpoint fields hidden until Provider = custom".to_string(),
+                );
+            }
             if !model_suggestions.is_empty() {
                 lines.push(String::new());
                 lines.push(
-                    "Model suggestions (auto-loaded; ←/→ move, Enter/1-8 apply):".to_string(),
+                    "Model suggestions (auto-loaded; ←/→ move, PgUp/PgDn scroll, Enter/1-8 apply):"
+                        .to_string(),
                 );
-                for (idx, suggestion) in model_suggestions.iter().take(8).enumerate() {
-                    let marker = if idx == *suggestion_index { ">" } else { " " };
-                    lines.push(format!("  {marker} {}. {suggestion}", idx + 1));
+                let visible = model_suggestions
+                    .iter()
+                    .enumerate()
+                    .skip(*suggestion_scroll)
+                    .take(8);
+                for (actual_idx, suggestion) in visible {
+                    let marker = if actual_idx == *suggestion_index {
+                        ">"
+                    } else {
+                        " "
+                    };
+                    lines.push(format!(
+                        "  {marker} {}. {suggestion}",
+                        actual_idx - *suggestion_scroll + 1
+                    ));
                 }
-                if model_suggestions.len() > 8 {
-                    lines.push(format!("  ... and {} more", model_suggestions.len() - 8));
+                let shown_end = (*suggestion_scroll + 8).min(model_suggestions.len());
+                lines.push(format!(
+                    "  showing {}-{} of {}",
+                    *suggestion_scroll + 1,
+                    shown_end,
+                    model_suggestions.len()
+                ));
+                if shown_end < model_suggestions.len() {
+                    lines.push(format!(
+                        "  ... and {} more",
+                        model_suggestions.len() - shown_end
+                    ));
                 }
             }
             if let Some(status) = status {
