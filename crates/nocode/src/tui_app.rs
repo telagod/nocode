@@ -66,12 +66,14 @@ pub(crate) enum Overlay {
     Config {
         selected: usize,
         tier: usize,
+        suggestion_index: usize,
         editing: bool,
         input: String,
         status: Option<String>,
         model: String,
         custom_base_url: String,
         custom_api_format: String,
+        model_suggestions: Vec<String>,
     },
     Memory,
     Cost,
@@ -101,6 +103,7 @@ impl TuiApp {
         self.overlay = Overlay::Config {
             selected: 0,
             tier: 0,
+            suggestion_index: 0,
             editing: false,
             input: String::new(),
             status: None,
@@ -109,6 +112,7 @@ impl TuiApp {
             custom_api_format: settings
                 .custom_api_format
                 .unwrap_or_else(|| "openai".to_string()),
+            model_suggestions: Vec::new(),
         };
         self.dirty = true;
     }
@@ -534,12 +538,14 @@ impl TuiApp {
                 if let Overlay::Config {
                     ref mut selected,
                     ref mut tier,
+                    ref mut suggestion_index,
                     ref mut editing,
                     ref mut input,
                     ref mut status,
                     ref mut model,
                     ref mut custom_base_url,
                     ref mut custom_api_format,
+                    ref mut model_suggestions,
                 } = self.overlay
                 {
                     match key.code {
@@ -565,6 +571,24 @@ impl TuiApp {
                             }
                             self.dirty = true;
                         }
+                        KeyCode::Left
+                            if !*editing && *selected == 0 && !model_suggestions.is_empty() =>
+                        {
+                            if *suggestion_index > 0 {
+                                *suggestion_index -= 1;
+                            } else {
+                                *suggestion_index = model_suggestions.len().saturating_sub(1);
+                            }
+                            *status = Some("Moved model suggestion selection".to_string());
+                            self.dirty = true;
+                        }
+                        KeyCode::Right
+                            if !*editing && *selected == 0 && !model_suggestions.is_empty() =>
+                        {
+                            *suggestion_index = (*suggestion_index + 1) % model_suggestions.len();
+                            *status = Some("Moved model suggestion selection".to_string());
+                            self.dirty = true;
+                        }
                         KeyCode::Tab if !*editing => {
                             *tier = (*tier + 1) % 3;
                             self.dirty = true;
@@ -578,7 +602,30 @@ impl TuiApp {
                                 }
                                 *editing = false;
                                 input.clear();
-                                *status = Some("Field updated locally".to_string());
+                                if *selected == 1 || *selected == 2 {
+                                    match fetch_model_suggestions(
+                                        custom_base_url.trim(),
+                                        custom_api_format.trim(),
+                                    ) {
+                                        Ok(models) => {
+                                            *model_suggestions = models;
+                                            *suggestion_index = 0;
+                                            *status = Some(format!(
+                                                "Field updated; fetched {} model suggestion(s)",
+                                                model_suggestions.len()
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            model_suggestions.clear();
+                                            *suggestion_index = 0;
+                                            *status = Some(format!(
+                                                "Field updated; model refresh failed: {e}"
+                                            ));
+                                        }
+                                    }
+                                } else {
+                                    *status = Some("Field updated locally".to_string());
+                                }
                             } else {
                                 *editing = true;
                                 match *selected {
@@ -617,16 +664,77 @@ impl TuiApp {
                             };
                             match settings.save_tier(tier_value, &cwd) {
                                 Ok(()) => {
-                                    self.hud.model_name = if model.trim().is_empty() {
-                                        self.hud.model_name.clone()
+                                    if model.trim().is_empty() {
+                                        unsafe {
+                                            std::env::remove_var("NOCODE_MODEL");
+                                        }
                                     } else {
-                                        model.trim().to_string()
-                                    };
-                                    *status = Some("Saved configuration".to_string());
+                                        unsafe {
+                                            std::env::set_var("NOCODE_MODEL", model.trim());
+                                        }
+                                        self.hud.model_name = model.trim().to_string();
+                                    }
+                                    if custom_base_url.trim().is_empty() {
+                                        unsafe {
+                                            std::env::remove_var("NOCODE_CUSTOM_BASE_URL");
+                                            std::env::remove_var("NOCODE_CUSTOM_API_FORMAT");
+                                            std::env::remove_var("NOCODE_MODEL_PROVIDER");
+                                        }
+                                    } else {
+                                        unsafe {
+                                            std::env::set_var(
+                                                "NOCODE_CUSTOM_BASE_URL",
+                                                custom_base_url.trim(),
+                                            );
+                                            std::env::set_var(
+                                                "NOCODE_CUSTOM_API_FORMAT",
+                                                custom_api_format.trim(),
+                                            );
+                                            std::env::set_var("NOCODE_MODEL_PROVIDER", "custom");
+                                        }
+                                    }
+                                    *status = Some(
+                                        "Saved configuration and applied to current session"
+                                            .to_string(),
+                                    );
                                 }
                                 Err(e) => {
                                     *status = Some(format!("Save failed: {e}"));
                                 }
+                            }
+                            self.dirty = true;
+                        }
+                        KeyCode::Char('r') | KeyCode::Char('R') if !*editing => {
+                            match fetch_model_suggestions(
+                                custom_base_url.trim(),
+                                custom_api_format.trim(),
+                            ) {
+                                Ok(models) => {
+                                    *model_suggestions = models;
+                                    *suggestion_index = 0;
+                                    *status = Some(format!(
+                                        "Fetched {} model suggestion(s)",
+                                        model_suggestions.len()
+                                    ));
+                                }
+                                Err(e) => {
+                                    model_suggestions.clear();
+                                    *status = Some(format!("Model refresh failed: {e}"));
+                                }
+                            }
+                            self.dirty = true;
+                        }
+                        KeyCode::Char(c)
+                            if !*editing
+                                && *selected == 0
+                                && ('1'..='8').contains(&c)
+                                && !model_suggestions.is_empty() =>
+                        {
+                            let idx = (c as usize) - ('1' as usize);
+                            if idx < model_suggestions.len().min(8) {
+                                *suggestion_index = idx;
+                                *model = model_suggestions[idx].clone();
+                                *status = Some(format!("Applied model suggestion: {}", model));
                             }
                             self.dirty = true;
                         }
@@ -1158,6 +1266,18 @@ impl TuiApp {
     }
 
     fn handle_paste(&mut self, text: &str) {
+        if let Overlay::Config {
+            editing: true,
+            input,
+            status,
+            ..
+        } = &mut self.overlay
+        {
+            input.push_str(text);
+            *status = Some("Pasted into config field".to_string());
+            self.dirty = true;
+            return;
+        }
         self.input.insert_str(self.cursor_pos, text);
         self.cursor_pos += text.len();
         self.dirty = true;
@@ -1227,7 +1347,7 @@ pub(crate) fn run_app_loop(
     let mut event_rx: Option<mpsc::Receiver<TuiEvent>> = None;
     let mut is_busy = false;
 
-    let provider: Arc<dyn Provider> = Arc::from(provider);
+    let _provider: Arc<dyn Provider> = Arc::from(provider);
     let mut registry_slot: Option<ToolRegistry> = Some(registry);
 
     loop {
@@ -1435,11 +1555,11 @@ pub(crate) fn run_app_loop(
                                 let (tx, rx) = mpsc::channel();
                                 event_rx = Some(rx);
 
-                                let p = Arc::clone(&provider);
                                 let r = registry_slot.take().expect("registry available");
                                 let msgs = messages.clone();
+                                let current_model = app.hud.model_name.clone();
                                 let cfg = LoopConfig {
-                                    model: model.to_string(),
+                                    model: current_model.clone(),
                                     max_tokens,
                                     max_turns,
                                     system: system.clone(),
@@ -1458,11 +1578,17 @@ pub(crate) fn run_app_loop(
                                     if let Some(ask_tool) = r.get_as::<nocode_core::tool::interactive_tools::AskUserQuestionTool>("AskUserQuestion") {
                                         ask_tool.set_prompter(Box::new(q_bridge));
                                     }
+                                    let cwd = std::env::current_dir()
+                                        .map(|p| p.to_string_lossy().into_owned())
+                                        .unwrap_or_default();
+                                    let settings = Settings::load_merged(&cwd);
+                                    let provider_type = crate::resolve_provider(&settings);
+                                    let provider = crate::build_provider(&provider_type, &settings);
                                     let executor =
                                         ToolExecutor::new(&r).with_prompter(&perm_bridge);
                                     let mut observer = ChannelObserver { tx };
                                     let result = r#loop::run_agentic_loop(
-                                        p.as_ref(),
+                                        provider.as_ref(),
                                         &executor,
                                         &cfg,
                                         msgs,
@@ -1529,6 +1655,155 @@ fn next_word_boundary(s: &str, pos: usize) -> usize {
         p += 1;
     }
     p.min(s.len())
+}
+
+fn fetch_model_suggestions(
+    custom_base_url: &str,
+    custom_api_format: &str,
+) -> Result<Vec<String>, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("HTTP client build failed: {e}"))?;
+
+    let format = if custom_api_format.is_empty() {
+        "openai"
+    } else {
+        custom_api_format
+    };
+
+    if !custom_base_url.is_empty() {
+        if format.eq_ignore_ascii_case("openai") {
+            let key = std::env::var("OPENAI_API_KEY")
+                .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
+                .map_err(|_| "Set OPENAI_API_KEY (or compatible key) first".to_string())?;
+            let body = client
+                .get(format!(
+                    "{}/v1/models",
+                    custom_base_url.trim_end_matches('/')
+                ))
+                .bearer_auth(key)
+                .send()
+                .map_err(|e| format!("Request failed: {e}"))?
+                .text()
+                .map_err(|e| format!("Read failed: {e}"))?;
+            let json: serde_json::Value =
+                serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))?;
+            let mut models: Vec<String> = json["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|item| item["id"].as_str().map(ToString::to_string))
+                .collect();
+            models.sort();
+            models.dedup();
+            return Ok(models);
+        }
+
+        if format.eq_ignore_ascii_case("anthropic") || format.eq_ignore_ascii_case("claude") {
+            let key = std::env::var("ANTHROPIC_API_KEY")
+                .or_else(|_| std::env::var("OPENAI_API_KEY"))
+                .map_err(|_| "Set ANTHROPIC_API_KEY (or compatible key) first".to_string())?;
+            let body = client
+                .get(format!(
+                    "{}/v1/models",
+                    custom_base_url.trim_end_matches('/')
+                ))
+                .header("x-api-key", key)
+                .header("anthropic-version", "2024-06-01")
+                .send()
+                .map_err(|e| format!("Request failed: {e}"))?
+                .text()
+                .map_err(|e| format!("Read failed: {e}"))?;
+            let json: serde_json::Value =
+                serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))?;
+            let mut models: Vec<String> = json["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|item| item["id"].as_str().map(ToString::to_string))
+                .collect();
+            models.sort();
+            models.dedup();
+            return Ok(models);
+        }
+
+        return Err(format!("Unsupported custom API format: {format}"));
+    }
+
+    if std::env::var("OPENAI_API_KEY").is_ok() {
+        let key = std::env::var("OPENAI_API_KEY").map_err(|e| e.to_string())?;
+        let body = client
+            .get("https://api.openai.com/v1/models")
+            .bearer_auth(key)
+            .send()
+            .map_err(|e| format!("Request failed: {e}"))?
+            .text()
+            .map_err(|e| format!("Read failed: {e}"))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let mut models: Vec<String> = json["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["id"].as_str().map(ToString::to_string))
+            .collect();
+        models.sort();
+        models.dedup();
+        return Ok(models);
+    }
+
+    if std::env::var("GEMINI_API_KEY").is_ok() {
+        let key = std::env::var("GEMINI_API_KEY").map_err(|e| e.to_string())?;
+        let body = client
+            .get(format!(
+                "https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+            ))
+            .send()
+            .map_err(|e| format!("Request failed: {e}"))?
+            .text()
+            .map_err(|e| format!("Read failed: {e}"))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let mut models: Vec<String> = json["models"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                item["name"]
+                    .as_str()
+                    .map(|s| s.trim_start_matches("models/").to_string())
+            })
+            .collect();
+        models.sort();
+        models.dedup();
+        return Ok(models);
+    }
+
+    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+        let key = std::env::var("ANTHROPIC_API_KEY").map_err(|e| e.to_string())?;
+        let body = client
+            .get("https://api.anthropic.com/v1/models")
+            .header("x-api-key", key)
+            .header("anthropic-version", "2024-06-01")
+            .send()
+            .map_err(|e| format!("Request failed: {e}"))?
+            .text()
+            .map_err(|e| format!("Read failed: {e}"))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let mut models: Vec<String> = json["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["id"].as_str().map(ToString::to_string))
+            .collect();
+        models.sort();
+        models.dedup();
+        return Ok(models);
+    }
+
+    Err("No provider credentials found to fetch models".to_string())
 }
 
 fn prev_word_boundary(s: &str, pos: usize) -> usize {

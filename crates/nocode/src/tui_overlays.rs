@@ -130,12 +130,14 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
         Overlay::Config {
             selected,
             tier,
+            suggestion_index,
             editing,
             input,
             status,
             model,
             custom_base_url,
             custom_api_format,
+            model_suggestions,
         } => {
             let tier_label = match tier {
                 0 => "user",
@@ -173,7 +175,8 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                 ),
                 String::new(),
                 format!("Save tier: {tier_label}  [Tab to cycle]"),
-                "Controls: ↑/↓ select  Enter edit/apply  S save  Esc close/cancel".to_string(),
+                "Controls: ↑/↓ select  Enter edit/apply  S save  R refresh models  Esc close/cancel".to_string(),
+                "Paste works while editing a field.".to_string(),
                 "Tip: leave a field empty to clear it.".to_string(),
                 String::new(),
                 format!(
@@ -193,6 +196,17 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                 ),
                 "Default launch mode: TUI".to_string(),
             ];
+            if !model_suggestions.is_empty() {
+                lines.push(String::new());
+                lines.push("Model suggestions (←/→ move, 1-8 apply):".to_string());
+                for (idx, suggestion) in model_suggestions.iter().take(8).enumerate() {
+                    let marker = if idx == *suggestion_index { ">" } else { " " };
+                    lines.push(format!("  {marker} {}. {suggestion}", idx + 1));
+                }
+                if model_suggestions.len() > 8 {
+                    lines.push(format!("  ... and {} more", model_suggestions.len() - 8));
+                }
+            }
             if let Some(status) = status {
                 lines.push(String::new());
                 lines.push(format!("Status: {status}"));
