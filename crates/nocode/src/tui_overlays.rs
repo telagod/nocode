@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use crate::status_hud::StatusHud;
-use crate::tui_app::{Overlay, provider_auth_help, provider_endpoint_help};
+use crate::tui_app::{Overlay, preset_label, provider_auth_help, provider_endpoint_help};
 
 /// Draw the active overlay on top of the main UI.
 pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame, area: Rect) {
@@ -151,29 +151,31 @@ Use /agent-create <name> <prompt> to spawn one."
             let overlay_w = OverlayBlock::new("Agents", &text);
             frame.render_widget(overlay_w, area);
         }
-        Overlay::Config {
-            selected,
-            tier,
-            suggestion_index,
-            suggestion_scroll,
-            filtering_models,
-            editing,
-            input,
-            status,
-            provider,
-            provider_source,
-            api_key,
-            api_key_source,
-            model,
-            model_source,
-            custom_base_url,
-            custom_base_url_source,
-            custom_api_format,
-            custom_api_format_source,
-            model_filter,
-            all_model_suggestions: _,
-            model_suggestions,
-        } => {
+        Overlay::Config(cs) => {
+            let crate::tui_app::ConfigState {
+                selected,
+                tier,
+                suggestion_index,
+                suggestion_scroll,
+                filtering_models,
+                editing,
+                input,
+                status,
+                provider,
+                provider_source,
+                api_key,
+                api_key_source,
+                model,
+                model_source,
+                custom_base_url,
+                custom_base_url_source,
+                custom_api_format,
+                custom_api_format_source,
+                model_filter,
+                all_model_suggestions: _,
+                model_suggestions,
+                preset_index,
+            } = cs.as_ref();
             let is_custom_provider = provider == "custom";
             let tier_label = match tier {
                 0 => "user",
@@ -241,7 +243,11 @@ Use /agent-create <name> <prompt> to spawn one."
                 ),
                 format!("  Filter:       {filter_value}"),
                 String::new(),
-                "[Endpoint]".to_string(),
+                if is_custom_provider {
+                    format!("[Endpoint — {} preset]", preset_label(*preset_index))
+                } else {
+                    "[Endpoint]".to_string()
+                },
             ];
             if is_custom_provider {
                 lines.push(format!(
@@ -274,10 +280,25 @@ Use /agent-create <name> <prompt> to spawn one."
                         "select Custom API field"
                     }
                 ),
-                "Controls: ↑/↓ select  Enter apply/edit  E manual edit  / filter models  X clear/reset  T test  S save  R refresh  Esc close/cancel".to_string(),
+                if is_custom_provider {
+                    "Controls: ↑/↓ select  Enter apply/edit  E edit  / filter  X reset  P preset  T test  S save  R refresh  Esc close".to_string()
+                } else {
+                    "Controls: ↑/↓ select  Enter apply/edit  E edit  / filter  X reset  T test  S save  R refresh  Esc close".to_string()
+                },
                 "Paste works while editing a field.".to_string(),
                 "Tip: leave a field empty to clear it.".to_string(),
-                format!("Auth hint: {}", provider_auth_help(provider, custom_api_format)),
+                format!("Auth hint: {}", if is_custom_provider {
+                    if let Some(idx) = preset_index {
+                        crate::tui_app::CUSTOM_PRESETS.get(*idx).map_or(
+                            provider_auth_help(provider, custom_api_format),
+                            |p| p.auth_hint,
+                        )
+                    } else {
+                        provider_auth_help(provider, custom_api_format)
+                    }
+                } else {
+                    provider_auth_help(provider, custom_api_format)
+                }),
                 format!("Endpoint hint: {}", provider_endpoint_help(provider, custom_api_format)),
                 String::new(),
                 format!(

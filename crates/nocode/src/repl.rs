@@ -123,9 +123,6 @@ pub fn run_repl(
                 CommandAction::Init => {
                     repl_cmd_init();
                 }
-                CommandAction::Login => {
-                    repl_cmd_login();
-                }
                 CommandAction::History => {
                     println!("(input history available in TUI mode)");
                 }
@@ -198,7 +195,19 @@ pub fn run_repl(
                     let settings = nocode_core::config::settings::Settings::load_merged(&cwd);
                     let config =
                         nocode_core::config::runtime::RuntimeConfig::from_settings(&settings, &cwd);
+                    let provider_str = settings.model_provider.as_deref().unwrap_or("auto");
+                    println!("Provider: {provider_str}");
                     println!("Model: {}", config.model);
+                    if let Some(ref url) = config.custom_base_url
+                        && !url.is_empty()
+                    {
+                        println!("Custom URL: {url}");
+                    }
+                    if let Some(ref fmt) = config.custom_api_format
+                        && !fmt.is_empty()
+                    {
+                        println!("API format: {fmt}");
+                    }
                     println!("Permission mode: {}", config.permission_mode);
                     println!("Max turns: {}", config.max_turns);
                     println!("Max tokens: {}", config.max_tokens);
@@ -206,6 +215,9 @@ pub fn run_repl(
                         "Sandbox: {}",
                         if config.sandbox.enabled { "on" } else { "off" }
                     );
+                    println!();
+                    println!("Tip: use TUI mode (nocode --tui) for interactive /config editing.");
+                    println!("     Or set API keys: export ANTHROPIC_API_KEY=sk-ant-...");
                 }
                 CommandAction::Memory => {
                     let query = args.as_deref().unwrap_or("");
@@ -768,16 +780,6 @@ fn repl_cmd_init() {
         Ok(()) => println!("Created {claude_md_path}"),
         Err(e) => eprintln!("Failed to create CLAUDE.md: {e}"),
     }
-}
-
-fn repl_cmd_login() {
-    println!("Configure API keys via environment variables:");
-    println!();
-    println!("  export ANTHROPIC_API_KEY=sk-ant-...");
-    println!("  export OPENAI_API_KEY=sk-...");
-    println!("  export GEMINI_API_KEY=AI...");
-    println!();
-    println!("Or add to ~/.nocode/settings.json");
 }
 
 struct ReplObserver {

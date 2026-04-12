@@ -30,7 +30,6 @@ pub enum CommandAction {
     Permissions,
     Cost,
     Init,
-    Login,
     Plan,
     Review,
     Skills,
@@ -150,8 +149,8 @@ impl CommandRegistry {
             },
             CommandEntry {
                 name: "config",
-                aliases: &["settings"],
-                summary: "Show current configuration",
+                aliases: &["settings", "login"],
+                summary: "Show or edit configuration (alias: /login, /settings)",
                 argument_hint: None,
                 action: CommandAction::Config,
             },
@@ -231,13 +230,6 @@ impl CommandRegistry {
                 summary: "Initialize CLAUDE.md in current project",
                 argument_hint: None,
                 action: CommandAction::Init,
-            },
-            CommandEntry {
-                name: "login",
-                aliases: &[],
-                summary: "Configure API key",
-                argument_hint: None,
-                action: CommandAction::Login,
             },
             CommandEntry {
                 name: "plan",

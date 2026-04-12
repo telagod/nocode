@@ -25,7 +25,7 @@ CI runs fmt → clippy → test on every push/PR to main (`.github/workflows/ci.
 
 ## Workspace Layout
 
-Two-crate Cargo workspace (edition 2024, clippy all+pedantic+nursery, unsafe forbidden):
+Two-crate Cargo workspace (edition 2024, clippy all+pedantic+nursery):
 
 ```
 crates/nocode-core/   — library (86 modules), all core logic

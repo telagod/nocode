@@ -132,13 +132,6 @@ pub(crate) fn handle_slash_command(
             cmd_init(app);
             SlashResult::Handled
         }
-        CommandAction::Login => {
-            app.open_config_overlay();
-            app.push_system(
-                "Opened /config. Select API Key to paste a key, press T to test, R to refresh models, then S to save.",
-            );
-            SlashResult::Handled
-        }
         CommandAction::Plan => {
             cmd_plan(app, args.as_deref());
             SlashResult::Handled

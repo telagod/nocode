@@ -35,6 +35,68 @@ use unicode_width::UnicodeWidthChar;
 const LOG_LIMIT: usize = 256;
 
 // ---------------------------------------------------------------------------
+// Custom provider presets
+// ---------------------------------------------------------------------------
+
+pub(crate) struct ProviderPreset {
+    pub name: &'static str,
+    pub base_url: &'static str,
+    pub api_format: &'static str,
+    pub auth_hint: &'static str,
+}
+
+pub(crate) static CUSTOM_PRESETS: &[ProviderPreset] = &[
+    ProviderPreset {
+        name: "Ollama",
+        base_url: "http://localhost:11434/v1",
+        api_format: "openai",
+        auth_hint: "No API key needed for local Ollama",
+    },
+    ProviderPreset {
+        name: "vLLM",
+        base_url: "http://localhost:8000/v1",
+        api_format: "openai",
+        auth_hint: "Use --api-key flag if set on server",
+    },
+    ProviderPreset {
+        name: "LiteLLM",
+        base_url: "http://localhost:4000/v1",
+        api_format: "openai",
+        auth_hint: "Set LITELLM_API_KEY or use proxy key",
+    },
+    ProviderPreset {
+        name: "LocalAI",
+        base_url: "http://localhost:8080/v1",
+        api_format: "openai",
+        auth_hint: "Optional, depends on config",
+    },
+    ProviderPreset {
+        name: "LM Studio",
+        base_url: "http://localhost:1234/v1",
+        api_format: "openai",
+        auth_hint: "No key required for local LM Studio",
+    },
+];
+
+/// Detect which preset matches the current custom URL, if any.
+pub(crate) fn detect_preset(base_url: &str) -> Option<usize> {
+    let normalized = base_url.trim().trim_end_matches('/');
+    CUSTOM_PRESETS.iter().position(|p| {
+        p.base_url
+            .trim_end_matches('/')
+            .eq_ignore_ascii_case(normalized)
+    })
+}
+
+/// Get the preset name for display, or "Manual" if no preset matches.
+pub(crate) fn preset_label(index: Option<usize>) -> &'static str {
+    match index {
+        Some(i) if i < CUSTOM_PRESETS.len() => CUSTOM_PRESETS[i].name,
+        _ => "Manual",
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Vim input mode
 // ---------------------------------------------------------------------------
 
@@ -54,6 +116,34 @@ impl InputMode {
     }
 }
 
+/// All mutable state for the config overlay, extracted to keep `Overlay` small.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ConfigState {
+    pub selected: usize,
+    pub tier: usize,
+    pub suggestion_index: usize,
+    pub suggestion_scroll: usize,
+    pub filtering_models: bool,
+    pub editing: bool,
+    pub input: String,
+    pub status: Option<String>,
+    pub provider: String,
+    pub provider_source: String,
+    pub api_key: String,
+    pub api_key_source: String,
+    pub model: String,
+    pub model_source: String,
+    pub custom_base_url: String,
+    pub custom_base_url_source: String,
+    pub custom_api_format: String,
+    pub custom_api_format_source: String,
+    pub model_filter: String,
+    pub all_model_suggestions: Vec<String>,
+    pub model_suggestions: Vec<String>,
+    /// Active preset index for custom provider, None = manual.
+    pub preset_index: Option<usize>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[allow(dead_code)]
 pub(crate) enum Overlay {
@@ -64,29 +154,7 @@ pub(crate) enum Overlay {
     Sessions,
     Mcp,
     Agents,
-    Config {
-        selected: usize,
-        tier: usize,
-        suggestion_index: usize,
-        suggestion_scroll: usize,
-        filtering_models: bool,
-        editing: bool,
-        input: String,
-        status: Option<String>,
-        provider: String,
-        provider_source: String,
-        api_key: String,
-        api_key_source: String,
-        model: String,
-        model_source: String,
-        custom_base_url: String,
-        custom_base_url_source: String,
-        custom_api_format: String,
-        custom_api_format_source: String,
-        model_filter: String,
-        all_model_suggestions: Vec<String>,
-        model_suggestions: Vec<String>,
-    },
+    Config(Box<ConfigState>),
     Memory,
     Cost,
     Permission {
@@ -145,7 +213,8 @@ impl TuiApp {
                 Some(format!("Model suggestions unavailable: {e}")),
             ),
         };
-        self.overlay = Overlay::Config {
+        let detected_preset = detect_preset(&custom_base_url);
+        self.overlay = Overlay::Config(Box::new(ConfigState {
             selected: 0,
             tier: 0,
             suggestion_index: 0,
@@ -201,7 +270,8 @@ impl TuiApp {
             model_filter: String::new(),
             all_model_suggestions: model_suggestions.clone(),
             model_suggestions,
-        };
+            preset_index: detected_preset,
+        }));
         self.dirty = true;
     }
 }
@@ -622,32 +692,33 @@ impl TuiApp {
 
         // Overlay open — handle keys
         if self.overlay.is_open() {
-            if matches!(self.overlay, Overlay::Config { .. }) {
+            if matches!(self.overlay, Overlay::Config(_)) {
                 let mut system_notice: Option<String> = None;
-                if let Overlay::Config {
-                    ref mut selected,
-                    ref mut tier,
-                    ref mut suggestion_index,
-                    ref mut suggestion_scroll,
-                    ref mut filtering_models,
-                    ref mut editing,
-                    ref mut input,
-                    ref mut status,
-                    ref mut provider,
-                    ref mut provider_source,
-                    ref mut api_key,
-                    ref mut api_key_source,
-                    ref mut model,
-                    ref mut model_source,
-                    ref mut custom_base_url,
-                    ref mut custom_base_url_source,
-                    ref mut custom_api_format,
-                    ref mut custom_api_format_source,
-                    ref mut model_filter,
-                    ref mut all_model_suggestions,
-                    ref mut model_suggestions,
-                } = self.overlay
-                {
+                if let Overlay::Config(ref mut cs) = self.overlay {
+                    let ConfigState {
+                        ref mut selected,
+                        ref mut tier,
+                        ref mut suggestion_index,
+                        ref mut suggestion_scroll,
+                        ref mut filtering_models,
+                        ref mut editing,
+                        ref mut input,
+                        ref mut status,
+                        ref mut provider,
+                        ref mut provider_source,
+                        ref mut api_key,
+                        ref mut api_key_source,
+                        ref mut model,
+                        ref mut model_source,
+                        ref mut custom_base_url,
+                        ref mut custom_base_url_source,
+                        ref mut custom_api_format,
+                        ref mut custom_api_format_source,
+                        ref mut model_filter,
+                        ref mut all_model_suggestions,
+                        ref mut model_suggestions,
+                        ref mut preset_index,
+                    } = **cs;
                     let field_count = if provider == "custom" { 5 } else { 3 };
                     match key.code {
                         KeyCode::Esc => {
@@ -679,6 +750,12 @@ impl TuiApp {
                             if provider != "custom" && *selected > 2 {
                                 *selected = 2;
                             }
+                            // Update preset detection on provider change
+                            *preset_index = if provider == "custom" {
+                                detect_preset(custom_base_url)
+                            } else {
+                                None
+                            };
                             let (slot, env_var) =
                                 provider_key_slot(provider.as_str(), custom_api_format.as_str());
                             let store = load_credential_store();
@@ -750,6 +827,8 @@ impl TuiApp {
                                 } else {
                                     "anthropic".to_string()
                                 };
+                            // Re-detect preset after format toggle
+                            *preset_index = detect_preset(custom_base_url);
                             apply_api_key_to_env(provider, custom_api_format, api_key);
                             match fetch_model_suggestions(
                                 provider,
@@ -850,6 +929,8 @@ impl TuiApp {
                                         _ => *custom_api_format = input.clone(),
                                     }
                                     if *selected == 3 || *selected == 4 {
+                                        // Re-detect preset after manual edit
+                                        *preset_index = detect_preset(custom_base_url);
                                         apply_api_key_to_env(provider, custom_api_format, api_key);
                                         match fetch_model_suggestions(
                                             provider,
@@ -1033,6 +1114,12 @@ impl TuiApp {
                                 }
                             }
                             if *selected == 0 || *selected >= 3 {
+                                // Re-detect preset after field reset
+                                *preset_index = if provider == "custom" {
+                                    detect_preset(custom_base_url)
+                                } else {
+                                    None
+                                };
                                 if provider == "auto" {
                                     all_model_suggestions.clear();
                                     model_suggestions.clear();
@@ -1306,6 +1393,57 @@ impl TuiApp {
                                     model_suggestions.clear();
                                     *suggestion_scroll = 0;
                                     *status = Some(format!("Model refresh failed: {e}"));
+                                }
+                            }
+                            self.dirty = true;
+                        }
+                        KeyCode::Char('p') | KeyCode::Char('P')
+                            if !*editing && provider == "custom" =>
+                        {
+                            // Cycle through presets: None → 0 → 1 → ... → N-1 → None
+                            let next = match *preset_index {
+                                None => Some(0),
+                                Some(i) if i + 1 < CUSTOM_PRESETS.len() => Some(i + 1),
+                                Some(_) => None,
+                            };
+                            *preset_index = next;
+                            if let Some(idx) = next {
+                                let preset = &CUSTOM_PRESETS[idx];
+                                *custom_base_url = preset.base_url.to_string();
+                                *custom_api_format = preset.api_format.to_string();
+                                *custom_base_url_source = "preset".to_string();
+                                *custom_api_format_source = "preset".to_string();
+                                *status = Some(format!(
+                                    "Applied {} preset: {} ({})",
+                                    preset.name, preset.base_url, preset.api_format
+                                ));
+                            } else {
+                                *custom_base_url = String::new();
+                                *custom_api_format = "openai".to_string();
+                                *custom_base_url_source = "unset".to_string();
+                                *custom_api_format_source = "default".to_string();
+                                *status =
+                                    Some("Switched to manual endpoint configuration".to_string());
+                            }
+                            // Refresh model suggestions for new endpoint
+                            apply_api_key_to_env(provider, custom_api_format, api_key);
+                            match fetch_model_suggestions(
+                                provider,
+                                custom_base_url.trim(),
+                                custom_api_format.trim(),
+                            ) {
+                                Ok(models) => {
+                                    *all_model_suggestions = models;
+                                    *model_suggestions =
+                                        apply_model_filter(all_model_suggestions, model_filter);
+                                    *suggestion_index = 0;
+                                    *suggestion_scroll = 0;
+                                }
+                                Err(_) => {
+                                    all_model_suggestions.clear();
+                                    model_suggestions.clear();
+                                    *suggestion_index = 0;
+                                    *suggestion_scroll = 0;
                                 }
                             }
                             self.dirty = true;
@@ -1858,15 +1996,11 @@ impl TuiApp {
     }
 
     fn handle_paste(&mut self, text: &str) {
-        if let Overlay::Config {
-            editing: true,
-            input,
-            status,
-            ..
-        } = &mut self.overlay
+        if let Overlay::Config(ref mut cs) = self.overlay
+            && cs.editing
         {
-            input.push_str(text);
-            *status = Some("Pasted into config field".to_string());
+            cs.input.push_str(text);
+            cs.status = Some("Pasted into config field".to_string());
             self.dirty = true;
             return;
         }
@@ -2698,4 +2832,131 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
     }
 
     Err("No clipboard tool found (tried xclip, xsel, wl-copy, pbcopy, clip.exe)".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // detect_preset
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn detect_preset_exact_match() {
+        assert_eq!(detect_preset("http://localhost:11434/v1"), Some(0)); // Ollama
+        assert_eq!(detect_preset("http://localhost:8000/v1"), Some(1)); // vLLM
+        assert_eq!(detect_preset("http://localhost:4000/v1"), Some(2)); // LiteLLM
+        assert_eq!(detect_preset("http://localhost:8080/v1"), Some(3)); // LocalAI
+        assert_eq!(detect_preset("http://localhost:1234/v1"), Some(4)); // LM Studio
+    }
+
+    #[test]
+    fn detect_preset_trailing_slash() {
+        assert_eq!(detect_preset("http://localhost:11434/v1/"), Some(0));
+        assert_eq!(detect_preset("http://localhost:8000/v1/"), Some(1));
+    }
+
+    #[test]
+    fn detect_preset_whitespace() {
+        assert_eq!(detect_preset("  http://localhost:11434/v1  "), Some(0));
+        assert_eq!(detect_preset("\thttp://localhost:8000/v1\n"), Some(1));
+    }
+
+    #[test]
+    fn detect_preset_case_insensitive() {
+        assert_eq!(detect_preset("HTTP://LOCALHOST:11434/V1"), Some(0));
+        assert_eq!(detect_preset("Http://Localhost:8000/V1"), Some(1));
+    }
+
+    #[test]
+    fn detect_preset_no_match() {
+        assert_eq!(detect_preset("http://localhost:9999/v1"), None);
+        assert_eq!(detect_preset("https://api.openai.com/v1"), None);
+        assert_eq!(detect_preset(""), None);
+        assert_eq!(detect_preset("  "), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // preset_label
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn preset_label_valid_indices() {
+        assert_eq!(preset_label(Some(0)), "Ollama");
+        assert_eq!(preset_label(Some(1)), "vLLM");
+        assert_eq!(preset_label(Some(2)), "LiteLLM");
+        assert_eq!(preset_label(Some(3)), "LocalAI");
+        assert_eq!(preset_label(Some(4)), "LM Studio");
+    }
+
+    #[test]
+    fn preset_label_manual_cases() {
+        assert_eq!(preset_label(None), "Manual");
+        assert_eq!(preset_label(Some(999)), "Manual");
+        assert_eq!(preset_label(Some(usize::MAX)), "Manual");
+    }
+
+    // -----------------------------------------------------------------------
+    // CUSTOM_PRESETS invariants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn presets_have_unique_urls() {
+        let urls: Vec<&str> = CUSTOM_PRESETS.iter().map(|p| p.base_url).collect();
+        for (i, url) in urls.iter().enumerate() {
+            for (j, other) in urls.iter().enumerate() {
+                if i != j {
+                    assert_ne!(
+                        url.to_ascii_lowercase(),
+                        other.to_ascii_lowercase(),
+                        "Duplicate preset URL: {url}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn presets_have_valid_api_format() {
+        let valid = ["openai", "anthropic"];
+        for preset in CUSTOM_PRESETS {
+            assert!(
+                valid.contains(&preset.api_format),
+                "Invalid api_format '{}' in preset '{}'",
+                preset.api_format,
+                preset.name
+            );
+        }
+    }
+
+    #[test]
+    fn presets_not_empty() {
+        assert!(!CUSTOM_PRESETS.is_empty(), "Preset list must not be empty");
+        for preset in CUSTOM_PRESETS {
+            assert!(!preset.name.is_empty(), "Preset name must not be empty");
+            assert!(
+                !preset.base_url.is_empty(),
+                "Preset base_url must not be empty"
+            );
+            assert!(
+                !preset.auth_hint.is_empty(),
+                "Preset auth_hint must not be empty"
+            );
+        }
+    }
+
+    #[test]
+    fn detect_preset_roundtrip() {
+        // Every preset's own URL should be detected back to its index.
+        for (i, preset) in CUSTOM_PRESETS.iter().enumerate() {
+            assert_eq!(
+                detect_preset(preset.base_url),
+                Some(i),
+                "Preset '{}' at index {} failed roundtrip",
+                preset.name,
+                i
+            );
+        }
+    }
 }
