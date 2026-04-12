@@ -147,14 +147,13 @@ impl Tool for McpTool {
                     .unwrap_or_default();
                 let entry = guard.get_entry(server);
                 let has_entry = entry.is_some();
-                let is_connected = entry.is_some_and(|e| e.phase == crate::mcp::manager::McpPhase::Connected);
+                let is_connected =
+                    entry.is_some_and(|e| e.phase == crate::mcp::manager::McpPhase::Connected);
                 if !has_entry {
                     return ToolOutput::error(format!("MCP server '{server}' not registered"));
                 }
                 if !is_connected {
-                    return ToolOutput::error(format!(
-                        "MCP server '{server}' is not connected"
-                    ));
+                    return ToolOutput::error(format!("MCP server '{server}' is not connected"));
                 }
                 return match guard.call_tool(server, tool_name, &args_map) {
                     Ok(result) if result.is_error => ToolOutput::error(result.content),

@@ -154,14 +154,16 @@ impl Settings {
             "system_prompt" => self.system_prompt = Some(value.to_string()),
             "reasoning_effort" => self.reasoning_effort = Some(value.to_string()),
             "telemetry_enabled" => {
-                self.telemetry_enabled = Some(value.parse().map_err(|_| {
-                    "telemetry_enabled must be true or false"
-                })?)
+                self.telemetry_enabled = Some(
+                    value
+                        .parse()
+                        .map_err(|_| "telemetry_enabled must be true or false")?,
+                )
             }
             _ => {
                 return Err(format!(
                     "Unknown setting key: '{key}'. Supported: model, permission_mode, max_turns, max_tokens, custom_base_url, custom_api_format, system_prompt, reasoning_effort, telemetry_enabled"
-                ))
+                ));
             }
         }
         Ok(())

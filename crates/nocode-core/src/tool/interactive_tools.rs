@@ -1,5 +1,6 @@
 //! Interactive tools — AskUserQuestion, Config, NotebookEdit.
 
+use crate::config::settings::{Settings, SettingsTier};
 use crate::tool::permission::{AutoFirstOptionPrompter, QuestionPrompter};
 use crate::tool::{Tool, ToolOutput};
 use serde_json::{Value, json};
@@ -126,37 +127,34 @@ impl Tool for AskUserQuestionTool {
 
 pub struct ConfigTool;
 
-impl Tool for ConfigTool {
-    fn name(&self) -> &str {
-        "Config"
+fn parse_settings_tier(value: Option<&str>) -> Result<SettingsTier, String> {
+    match value.unwrap_or("project") {
+        "user" => Ok(SettingsTier::User),
+        "project" => Ok(SettingsTier::Project),
+        "local" => Ok(SettingsTier::Local),
+        other => Err(format!(
+            "Unknown config tier: {other}. Use user, project, or local."
+        )),
     }
-    fn description(&self) -> &str {
-        "View or modify configuration settings."
+}
+
+fn stringify_config_value(value: &Value) -> Result<String, String> {
+    match value {
+        Value::String(text) => Ok(text.clone()),
+        Value::Bool(flag) => Ok(flag.to_string()),
+        Value::Number(num) => Ok(num.to_string()),
+        _ => Err("Config value must be a string, number, or boolean".to_string()),
     }
-    fn input_schema(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["get", "set", "list"],
-                    "description": "Action to perform (default: list)"
-                },
-                "key": { "type": "string", "description": "Setting key (for get/set)" },
-                "value": { "description": "New value (for set)" }
-            }
-        })
-    }
-    fn execute(&self, input: &Value) -> ToolOutput {
+}
+
+impl ConfigTool {
+    fn execute_with_cwd(&self, input: &Value, cwd: &str) -> ToolOutput {
         let action = input["action"].as_str().unwrap_or("list");
-        let cwd = std::env::current_dir()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| String::from("."));
 
         match action {
             "list" => {
-                let settings = crate::config::settings::Settings::load_merged(&cwd);
-                let config = crate::config::runtime::RuntimeConfig::from_settings(&settings, &cwd);
+                let settings = Settings::load_merged(cwd);
+                let config = crate::config::runtime::RuntimeConfig::from_settings(&settings, cwd);
                 ToolOutput::success(
                     json!({
                         "model": config.model,
@@ -170,6 +168,7 @@ impl Tool for ConfigTool {
                             || !config.hooks.post_tool_use.is_empty()
                             || !config.hooks.on_submit.is_empty(),
                         "sandbox_enabled": config.sandbox.enabled,
+                        "set_keys": settings.list_set_keys(),
                     })
                     .to_string(),
                 )
@@ -178,8 +177,8 @@ impl Tool for ConfigTool {
                 let Some(key) = input["key"].as_str() else {
                     return ToolOutput::error("Missing required parameter: key");
                 };
-                let settings = crate::config::settings::Settings::load_merged(&cwd);
-                let config = crate::config::runtime::RuntimeConfig::from_settings(&settings, &cwd);
+                let settings = Settings::load_merged(cwd);
+                let config = crate::config::runtime::RuntimeConfig::from_settings(&settings, cwd);
                 let value = match key {
                     "model" => json!(config.model),
                     "permission_mode" => json!(config.permission_mode),
@@ -200,31 +199,66 @@ impl Tool for ConfigTool {
                 if value.is_null() {
                     return ToolOutput::error("Missing required parameter: value");
                 }
+                let tier = match parse_settings_tier(input["tier"].as_str()) {
+                    Ok(tier) => tier,
+                    Err(e) => return ToolOutput::error(e),
+                };
+                let value = match stringify_config_value(value) {
+                    Ok(value) => value,
+                    Err(e) => return ToolOutput::error(e),
+                };
 
-                let settings_path = format!("{cwd}/.nocode/settings.json");
-                let mut settings: serde_json::Map<String, Value> =
-                    std::fs::read_to_string(&settings_path)
-                        .ok()
-                        .and_then(|s| serde_json::from_str(&s).ok())
-                        .unwrap_or_default();
-
-                settings.insert(key.to_string(), value.clone());
-
-                // Ensure directory exists
-                let _ = std::fs::create_dir_all(format!("{cwd}/.nocode"));
-                match std::fs::write(
-                    &settings_path,
-                    serde_json::to_string_pretty(&settings).unwrap_or_default(),
-                ) {
+                let path = tier.path_for(cwd);
+                let mut settings = Settings::load_from(&path);
+                match settings.set_and_persist(key, &value, tier, cwd) {
                     Ok(()) => ToolOutput::success(
-                        json!({"key": key, "value": value, "written_to": settings_path})
-                            .to_string(),
+                        json!({
+                            "key": key,
+                            "value": value,
+                            "tier": input["tier"].as_str().unwrap_or("project"),
+                            "written_to": path,
+                        })
+                        .to_string(),
                     ),
-                    Err(e) => ToolOutput::error(format!("Failed to write settings: {e}")),
+                    Err(e) => ToolOutput::error(e),
                 }
             }
             _ => ToolOutput::error(format!("Unknown action: {action}. Use get, set, or list.")),
         }
+    }
+}
+
+impl Tool for ConfigTool {
+    fn name(&self) -> &str {
+        "Config"
+    }
+    fn description(&self) -> &str {
+        "View or modify configuration settings."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["get", "set", "list"],
+                    "description": "Action to perform (default: list)"
+                },
+                "key": { "type": "string", "description": "Setting key (for get/set)" },
+                "value": { "description": "New value (for set)" },
+                "tier": {
+                    "type": "string",
+                    "enum": ["user", "project", "local"],
+                    "description": "Settings tier to read/write for set operations (default: project)"
+                }
+            }
+        })
+    }
+    fn execute(&self, input: &Value) -> ToolOutput {
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| String::from("."));
+        self.execute_with_cwd(input, &cwd)
     }
 }
 
@@ -358,6 +392,7 @@ impl Tool for NotebookEditTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn ask_user_question_missing_questions() {
@@ -437,6 +472,69 @@ mod tests {
         let tool = ConfigTool;
         let result = tool.execute(&json!({"action": "get", "key": "nonexistent_xyz"}));
         assert!(result.is_error);
+    }
+
+    #[test]
+    fn config_set_persists_to_project_tier() {
+        let tool = ConfigTool;
+        let dir = tempdir().unwrap();
+        let result = tool.execute_with_cwd(
+            &json!({
+                "action": "set",
+                "key": "model",
+                "value": "gpt-5",
+                "tier": "project"
+            }),
+            dir.path().to_str().unwrap(),
+        );
+        assert!(!result.is_error);
+        let settings = Settings::load_from(&dir.path().join(".nocode/settings.json"));
+        assert_eq!(settings.model.as_deref(), Some("gpt-5"));
+    }
+
+    #[test]
+    fn config_set_rejects_invalid_tier() {
+        let tool = ConfigTool;
+        let result = tool.execute(&json!({
+            "action": "set",
+            "key": "model",
+            "value": "gpt-5",
+            "tier": "unknown"
+        }));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn config_set_rejects_non_scalar_value() {
+        let tool = ConfigTool;
+        let result = tool.execute(&json!({
+            "action": "set",
+            "key": "model",
+            "value": {"nested": true}
+        }));
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn config_list_reports_set_keys() {
+        let dir = tempdir().unwrap();
+        let settings = Settings {
+            model: Some("gpt-5".to_string()),
+            max_turns: Some(42),
+            ..Default::default()
+        };
+        settings
+            .save_to(&dir.path().join(".nocode/settings.json"))
+            .unwrap();
+
+        let tool = ConfigTool;
+        let result =
+            tool.execute_with_cwd(&json!({"action": "list"}), dir.path().to_str().unwrap());
+
+        assert!(!result.is_error);
+        assert!(result.content.contains("set_keys"));
+        assert!(result.content.contains("gpt-5"));
+        assert!(result.content.contains("42"));
     }
 
     #[test]

@@ -254,7 +254,8 @@ pub async fn run_ws_server(config: WsBridgeConfig, handler: QueryHandler) -> Res
     let registry = global_ws_registry().clone();
     let hb_registry = registry.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(heartbeat_interval));
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(heartbeat_interval));
         loop {
             interval.tick().await;
             let mut guard = hb_registry.lock().unwrap_or_else(|e| e.into_inner());
@@ -428,6 +429,9 @@ pub async fn run_ws_server(config: WsBridgeConfig, handler: QueryHandler) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::{SinkExt, StreamExt};
+    use tokio::time::{Duration, sleep};
+    use tokio_tungstenite::{connect_async, tungstenite::Message};
 
     #[test]
     fn ws_message_serde_roundtrip() {
@@ -565,5 +569,76 @@ mod tests {
         conn.record_pong();
         assert!(conn.last_ping > 0);
         assert!(conn.last_pong > 0);
+    }
+
+    fn free_bind_addr() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        addr.to_string()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ws_server_handles_query_and_ping() {
+        let bind_addr = free_bind_addr();
+        let config = WsBridgeConfig {
+            bind_addr: bind_addr.clone(),
+            heartbeat_interval_secs: 1,
+            connection_timeout_secs: 30,
+            ..Default::default()
+        };
+        let handler: QueryHandler = Arc::new(|query| format!("echo:{query}"));
+        let server = tokio::spawn(run_ws_server(config, handler));
+
+        let ws_url = format!("ws://{bind_addr}");
+        let mut connected = None;
+        for _ in 0..20 {
+            match connect_async(&ws_url).await {
+                Ok((stream, _)) => {
+                    connected = Some(stream);
+                    break;
+                }
+                Err(_) => sleep(Duration::from_millis(25)).await,
+            }
+        }
+        let mut stream = connected.expect("ws server should accept a client");
+
+        let query = serde_json::to_string(&WsMessage::Query {
+            id: "q-1".into(),
+            content: "hello".into(),
+        })
+        .unwrap();
+        stream.send(Message::Text(query.into())).await.unwrap();
+
+        let delta = match stream.next().await.unwrap().unwrap() {
+            Message::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
+            other => panic!("unexpected message: {other:?}"),
+        };
+        assert!(matches!(
+            delta,
+            WsMessage::Delta { ref id, ref text } if id == "q-1" && text == "echo:hello"
+        ));
+
+        let complete = match stream.next().await.unwrap().unwrap() {
+            Message::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
+            other => panic!("unexpected message: {other:?}"),
+        };
+        assert!(matches!(
+            complete,
+            WsMessage::Complete { ref id, ref stop_reason }
+                if id == "q-1" && stop_reason == "end_turn"
+        ));
+
+        let ping = serde_json::to_string(&WsMessage::Ping { timestamp: 123 }).unwrap();
+        stream.send(Message::Text(ping.into())).await.unwrap();
+
+        let pong = match stream.next().await.unwrap().unwrap() {
+            Message::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
+            other => panic!("unexpected message: {other:?}"),
+        };
+        assert!(matches!(pong, WsMessage::Pong { timestamp: 123 }));
+
+        server.abort();
+        let _ = server.await;
     }
 }

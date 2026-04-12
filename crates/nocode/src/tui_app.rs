@@ -227,7 +227,11 @@ impl TuiApp {
         } else {
             content.to_string()
         };
-        let kind = if is_error { ChatMessageKind::Error } else { ChatMessageKind::Tool };
+        let kind = if is_error {
+            ChatMessageKind::Error
+        } else {
+            ChatMessageKind::Tool
+        };
         self.chat_messages.push(ChatMessage::plain(
             kind,
             &format!("{prefix} {name} {display}"),

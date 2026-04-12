@@ -34,6 +34,7 @@ use nocode_core::config::settings::Settings;
 use nocode_core::message::Message;
 use nocode_core::prompt::assembly::{self, TruncationBudget};
 use nocode_core::provider::Provider;
+use nocode_core::provider::ProviderBox;
 use nocode_core::provider::claude::ClaudeProvider;
 use nocode_core::provider::gemini::GeminiProvider;
 use nocode_core::provider::openai::OpenAiProvider;
@@ -107,6 +108,19 @@ fn main() {
 
     if let Some(prompt) = extract_arg(&args, "--bridge-remote-once") {
         run_bridge_remote_once(&prompt);
+        return;
+    }
+
+    if let Some(bind_addr) = extract_arg(&args, "--ws-server") {
+        run_ws_server_mode(
+            ProviderBox::from_arc(Arc::from(provider_box)),
+            &cwd,
+            &system_blocks,
+            &model,
+            max_tokens,
+            max_turns,
+            &bind_addr,
+        );
         return;
     }
 
@@ -364,6 +378,33 @@ fn run_bridge_once(
         eprintln!("Usage: nocode --bridge-once \"<prompt>\"");
         return;
     }
+    match execute_prompt(
+        provider,
+        registry,
+        system_blocks,
+        model,
+        max_tokens,
+        max_turns,
+        prompt,
+    ) {
+        Ok(text) => {
+            if !text.is_empty() {
+                println!("{text}");
+            }
+        }
+        Err(e) => eprintln!("Error: {e}"),
+    }
+}
+
+fn execute_prompt(
+    provider: &dyn Provider,
+    registry: &ToolRegistry,
+    system_blocks: &[nocode_core::message::SystemBlock],
+    model: &str,
+    max_tokens: u32,
+    max_turns: u32,
+    prompt: &str,
+) -> Result<String, String> {
     let messages = vec![Message::user_text(prompt)];
     let executor = ToolExecutor::new(registry);
     let config = LoopConfig {
@@ -375,19 +416,17 @@ fn run_bridge_once(
         parallel_tool_execution: true,
     };
     let mut observer = NoopObserver;
-    match r#loop::run_agentic_loop(provider, &executor, &config, messages, &mut observer) {
-        Ok(result) => {
-            for msg in &result.messages {
-                if msg.role == nocode_core::message::Role::Assistant {
-                    let text = msg.text_content();
-                    if !text.is_empty() {
-                        println!("{text}");
-                    }
-                }
-            }
-        }
-        Err(e) => eprintln!("Error: {e}"),
-    }
+    let result = r#loop::run_agentic_loop(provider, &executor, &config, messages, &mut observer)
+        .map_err(|e| e.to_string())?;
+
+    Ok(result
+        .messages
+        .iter()
+        .filter(|msg| msg.role == nocode_core::message::Role::Assistant)
+        .map(|msg| msg.text_content())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n"))
 }
 
 fn run_bridge_remote_once(prompt: &str) {
@@ -444,6 +483,61 @@ fn run_bridge_remote_once(prompt: &str) {
             }
         }
         Err(e) => eprintln!("Failed to connect to bridge at {url}: {e}"),
+    }
+}
+
+fn run_ws_server_mode(
+    provider: ProviderBox,
+    cwd: &str,
+    system_blocks: &[nocode_core::message::SystemBlock],
+    model: &str,
+    max_tokens: u32,
+    max_turns: u32,
+    bind_addr: &str,
+) {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("Failed to start tokio runtime for ws server: {e}");
+            return;
+        }
+    };
+
+    let cwd = cwd.to_string();
+    let system = system_blocks.to_vec();
+    let model = model.to_string();
+    let provider = provider.clone();
+    let config = nocode_core::ws_bridge::WsBridgeConfig {
+        bind_addr: bind_addr.to_string(),
+        ..Default::default()
+    };
+
+    let handler: nocode_core::ws_bridge::QueryHandler = Arc::new(move |prompt: &str| {
+        let registry = ToolRegistry::with_defaults(&cwd);
+        match execute_prompt(
+            provider.as_ref(),
+            &registry,
+            &system,
+            &model,
+            max_tokens,
+            max_turns,
+            prompt,
+        ) {
+            Ok(text) => text,
+            Err(e) => format!("Error: {e}"),
+        }
+    });
+
+    eprintln!(
+        "nocode WebSocket bridge v{} — {}",
+        env!("CARGO_PKG_VERSION"),
+        bind_addr
+    );
+    if let Err(e) = runtime.block_on(nocode_core::ws_bridge::run_ws_server(config, handler)) {
+        eprintln!("WebSocket bridge error: {e}");
     }
 }
 
@@ -793,6 +887,7 @@ fn print_help() {
          \x20 --status                  System diagnostics\n\
          \x20 --bridge-once \"prompt\"    Single-turn local execution\n\
          \x20 --bridge-remote-once \"p\"  Single-turn HTTP bridge\n\
+         \x20 --ws-server <addr>        WebSocket bridge server\n\
          \x20 --ide-server              IDE server mode\n\
          \x20 --mcp-server              MCP server mode\n\
          \x20 --process-agent-daemon    Background agent daemon\n\
