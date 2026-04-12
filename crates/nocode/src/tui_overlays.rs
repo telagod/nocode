@@ -133,9 +133,26 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let settings = Settings::load_merged(&cwd);
+            let provider = if std::env::var("NOCODE_MODEL_PROVIDER")
+                .ok()
+                .is_some_and(|p| !p.is_empty())
+            {
+                std::env::var("NOCODE_MODEL_PROVIDER").unwrap_or_default()
+            } else if settings.custom_base_url.is_some() || settings.custom_api_format.is_some() {
+                "custom".to_string()
+            } else if std::env::var("GEMINI_API_KEY").is_ok() {
+                "gemini".to_string()
+            } else if std::env::var("OPENAI_API_KEY").is_ok() {
+                "openai".to_string()
+            } else if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+                "anthropic".to_string()
+            } else {
+                "default".to_string()
+            };
             let mut lines = vec![
                 "Configuration:".to_string(),
                 String::new(),
+                format!("  Provider:     {provider}"),
                 format!(
                     "  Model:        {}",
                     settings.model.unwrap_or_else(|| "default".to_string())
@@ -145,6 +162,14 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                 format!(
                     "  Permission:   {}",
                     settings.permission_mode.as_deref().unwrap_or("ask")
+                ),
+                format!(
+                    "  Custom URL:   {}",
+                    settings.custom_base_url.as_deref().unwrap_or("(not set)")
+                ),
+                format!(
+                    "  Custom API:   {}",
+                    settings.custom_api_format.as_deref().unwrap_or("(not set)")
                 ),
             ];
             if let Some(ref prompt) = settings.system_prompt {
@@ -160,8 +185,9 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             lines.push("  3. .nocode/settings.local.json (local)".to_string());
             lines.push(String::new());
             lines.push(
-                "Environment overrides: NOCODE_MODEL, NOCODE_SYSTEM_PROMPT, etc.".to_string(),
+                "Environment overrides: NOCODE_MODEL, NOCODE_MODEL_PROVIDER, NOCODE_CUSTOM_BASE_URL, NOCODE_CUSTOM_API_FORMAT, etc.".to_string(),
             );
+            lines.push("Default launch mode: TUI".to_string());
             let config_text = lines.join("\n");
             let overlay_w = OverlayBlock::new("Configuration", &config_text);
             frame.render_widget(overlay_w, area);

@@ -30,7 +30,7 @@ mod tui_theme;
 #[allow(dead_code)]
 mod tui_widgets;
 
-use nocode_core::config::settings::Settings;
+use nocode_core::config::settings::{Settings, SettingsTier};
 use nocode_core::message::Message;
 use nocode_core::prompt::assembly::{self, TruncationBudget};
 use nocode_core::provider::Provider;
@@ -46,6 +46,7 @@ use nocode_core::tool::global_registry::{
     initialize_runtime_global_registry, tool_definitions_for_model,
 };
 use std::env;
+use std::io::IsTerminal;
 use std::sync::Arc;
 
 fn main() {
@@ -66,7 +67,7 @@ fn main() {
         .to_string_lossy()
         .into_owned();
 
-    let settings = Settings::load_merged(&cwd);
+    let mut settings = Settings::load_merged(&cwd);
 
     // Load stored credentials into env (if no API keys set)
     let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
@@ -76,7 +77,8 @@ fn main() {
 
     // Onboarding: check if any API key is available
     if !has_any_api_key() && !args.iter().any(|a| a == "--status" || a == "--help") {
-        run_onboarding();
+        run_onboarding(&cwd);
+        settings = Settings::load_merged(&cwd);
     }
 
     let provider_type = resolve_provider(&settings);
@@ -148,7 +150,21 @@ fn main() {
         return;
     }
 
-    if args.iter().any(|a| a == "--tui") {
+    if args.iter().any(|a| a == "--repl") {
+        repl::run_repl(
+            nocode_core::provider::ProviderBox::from_arc(Arc::from(provider_box)),
+            &registry,
+            &system_blocks,
+            &model,
+            max_tokens,
+            max_turns,
+        );
+        return;
+    }
+
+    if args.iter().any(|a| a == "--tui")
+        || (std::io::stdin().is_terminal() && std::io::stdout().is_terminal())
+    {
         if let Err(e) = tui::run_tui(
             provider_box,
             registry,
@@ -162,7 +178,7 @@ fn main() {
         return;
     }
 
-    // Default: REPL mode (also --repl)
+    // Fallback: REPL mode for non-interactive environments.
     repl::run_repl(
         nocode_core::provider::ProviderBox::from_arc(Arc::from(provider_box)),
         &registry,
@@ -182,9 +198,31 @@ fn has_any_api_key() -> bool {
         || env::var("NOCODE_MODEL_PROVIDER").is_ok()
 }
 
-fn run_onboarding() {
+fn prompt_line(prompt: &str) -> Option<String> {
     use std::io::{self, Write};
 
+    print!("{prompt}");
+    let _ = io::stdout().flush();
+    let mut value = String::new();
+    if io::stdin().read_line(&mut value).is_err() {
+        return None;
+    }
+    Some(value.trim().to_string())
+}
+
+fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
+    let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
+    let mut store =
+        nocode_core::storage::credentials::CredentialStore::load(&cred_path).unwrap_or_default();
+    store.set_key(provider, key);
+    store
+        .save(&cred_path)
+        .map_err(|e| format!("Failed to save credentials: {e}"))?;
+    println!("  Key saved to {}", cred_path.display());
+    Ok(())
+}
+
+fn run_onboarding(cwd: &str) {
     println!();
     println!("  Welcome to nocode v{}!", env!("CARGO_PKG_VERSION"));
     println!();
@@ -194,73 +232,116 @@ fn run_onboarding() {
     println!("    1) Anthropic (Claude)");
     println!("    2) OpenAI");
     println!("    3) Google (Gemini)");
-    println!("    4) Skip (set env vars manually)");
+    println!("    4) Custom (OpenAI-compatible)");
+    println!("    5) Custom (Anthropic-compatible)");
+    println!("    6) Skip (set env vars manually)");
     println!();
-    print!("  Choice [1-4]: ");
-    let _ = io::stdout().flush();
-
-    let mut choice = String::new();
-    if io::stdin().read_line(&mut choice).is_err() {
+    let Some(choice) = prompt_line("  Choice [1-6]: ") else {
         return;
-    }
+    };
 
-    let (provider, env_var, prompt_text) = match choice.trim() {
+    let (provider, env_var, prompt_text, custom_format) = match choice.trim() {
         "1" => (
             "anthropic",
             "ANTHROPIC_API_KEY",
             "Anthropic API key (sk-ant-...)",
+            None,
         ),
-        "2" => ("openai", "OPENAI_API_KEY", "OpenAI API key (sk-...)"),
-        "3" => ("gemini", "GEMINI_API_KEY", "Gemini API key"),
+        "2" => ("openai", "OPENAI_API_KEY", "OpenAI API key (sk-...)", None),
+        "3" => ("gemini", "GEMINI_API_KEY", "Gemini API key", None),
+        "4" => (
+            "openai",
+            "OPENAI_API_KEY",
+            "API key for your OpenAI-compatible endpoint",
+            Some("openai"),
+        ),
+        "5" => (
+            "anthropic",
+            "ANTHROPIC_API_KEY",
+            "API key for your Anthropic-compatible endpoint",
+            Some("anthropic"),
+        ),
         _ => {
             println!();
             println!("  Set your API key via environment variable:");
             println!("    export ANTHROPIC_API_KEY=sk-ant-...");
             println!("    export OPENAI_API_KEY=sk-...");
             println!("    export GEMINI_API_KEY=...");
+            println!("    export NOCODE_MODEL_PROVIDER=custom");
+            println!("    export NOCODE_CUSTOM_BASE_URL=https://your-endpoint");
+            println!("    export NOCODE_CUSTOM_API_FORMAT=openai");
             println!();
             return;
         }
     };
 
-    print!("  {prompt_text}: ");
-    let _ = io::stdout().flush();
-
-    let mut key = String::new();
-    if io::stdin().read_line(&mut key).is_err() {
+    let Some(key) = prompt_line(&format!("  {prompt_text}: ")) else {
         return;
-    }
-    let key = key.trim();
+    };
     if key.is_empty() {
         println!("  No key entered. Skipping.");
         return;
     }
 
-    // Store encrypted
-    let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
-    let mut store =
-        nocode_core::storage::credentials::CredentialStore::load(&cred_path).unwrap_or_default();
-    store.set_key(provider, key);
-    if let Err(e) = store.save(&cred_path) {
-        eprintln!("  Failed to save credentials: {e}");
-    } else {
-        println!("  Key saved to {}", cred_path.display());
+    if let Err(e) = save_api_key(provider, &key) {
+        eprintln!("  {e}");
+        return;
     }
 
     // Set in current process
     // SAFETY: called during single-threaded startup
     unsafe {
-        env::set_var(env_var, key);
+        env::set_var(env_var, &key);
+    }
+
+    if let Some(format) = custom_format {
+        let Some(base_url) = prompt_line("  Base URL: ") else {
+            return;
+        };
+        if base_url.is_empty() {
+            println!("  Base URL is required for custom providers.");
+            return;
+        }
+
+        let model = prompt_line("  Model name (optional): ").unwrap_or_default();
+        let mut settings = Settings::load_merged(cwd);
+        settings.custom_base_url = Some(base_url.clone());
+        settings.custom_api_format = Some(format.to_string());
+        if !model.is_empty() {
+            settings.model = Some(model.clone());
+        }
+
+        if let Err(e) = settings.save_tier(SettingsTier::User, cwd) {
+            eprintln!("  Failed to save custom settings: {e}");
+            return;
+        }
+
+        // SAFETY: called during single-threaded startup
+        unsafe {
+            env::set_var("NOCODE_MODEL_PROVIDER", "custom");
+            env::set_var("NOCODE_CUSTOM_BASE_URL", &base_url);
+            env::set_var("NOCODE_CUSTOM_API_FORMAT", format);
+            if !model.is_empty() {
+                env::set_var("NOCODE_MODEL", &model);
+            }
+        }
+        println!("  Custom endpoint configured: {base_url}");
     }
     println!("  {} configured. Ready to go!", provider);
     println!();
 }
 
-fn resolve_provider(_settings: &Settings) -> ModelProvider {
+fn resolve_provider(settings: &Settings) -> ModelProvider {
     if let Ok(p) = env::var("NOCODE_MODEL_PROVIDER")
         && let Some(provider) = ModelProvider::parse(&p)
     {
         return provider;
+    }
+    if settings.custom_base_url.is_some() || settings.custom_api_format.is_some() {
+        return ModelProvider::Custom;
+    }
+    if env::var("NOCODE_CUSTOM_BASE_URL").is_ok() || env::var("NOCODE_CUSTOM_API_FORMAT").is_ok() {
+        return ModelProvider::Custom;
     }
     if env::var("ANTHROPIC_API_KEY").is_ok() {
         return ModelProvider::Claude;
@@ -905,8 +986,8 @@ fn print_help() {
          Usage: nocode [OPTIONS]\n\
          \n\
          Modes:\n\
-         \x20 --repl                    Interactive REPL (default)\n\
-         \x20 --tui                     Terminal UI mode\n\
+         \x20 --repl                    Interactive REPL mode\n\
+         \x20 --tui                     Terminal UI mode (default)\n\
          \x20 --status                  System diagnostics\n\
          \x20 --bridge-once \"prompt\"    Single-turn local execution\n\
          \x20 --bridge-remote-once \"p\"  Single-turn HTTP bridge\n\
@@ -935,4 +1016,18 @@ fn print_help() {
          \x20 NOCODE_BRIDGE_BASE_URL    Remote bridge URL\n\
          \x20 NOCODE_BRIDGE_AUTH_TOKEN  Remote bridge auth token"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_provider_prefers_custom_settings() {
+        let settings = Settings {
+            custom_base_url: Some("https://example.invalid".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(resolve_provider(&settings), ModelProvider::Custom);
+    }
 }

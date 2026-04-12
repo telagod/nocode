@@ -155,13 +155,21 @@ fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&str>
 }
 
 fn resolve_worker_provider(
-    _settings: &crate::config::settings::Settings,
+    settings: &crate::config::settings::Settings,
 ) -> crate::provider::types::ModelProvider {
     use crate::provider::types::ModelProvider;
     if let Ok(p) = std::env::var("NOCODE_MODEL_PROVIDER")
         && let Some(provider) = ModelProvider::parse(&p)
     {
         return provider;
+    }
+    if settings.custom_base_url.is_some() || settings.custom_api_format.is_some() {
+        return ModelProvider::Custom;
+    }
+    if std::env::var("NOCODE_CUSTOM_BASE_URL").is_ok()
+        || std::env::var("NOCODE_CUSTOM_API_FORMAT").is_ok()
+    {
+        return ModelProvider::Custom;
     }
     if std::env::var("ANTHROPIC_API_KEY").is_ok() {
         return ModelProvider::Claude;
