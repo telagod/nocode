@@ -127,67 +127,76 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             let overlay_w = OverlayBlock::new("Agents", &text);
             frame.render_widget(overlay_w, area);
         }
-        Overlay::Config => {
-            use nocode_core::config::settings::Settings;
-            let cwd = std::env::current_dir()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let settings = Settings::load_merged(&cwd);
-            let provider = if std::env::var("NOCODE_MODEL_PROVIDER")
-                .ok()
-                .is_some_and(|p| !p.is_empty())
-            {
-                std::env::var("NOCODE_MODEL_PROVIDER").unwrap_or_default()
-            } else if settings.custom_base_url.is_some() || settings.custom_api_format.is_some() {
-                "custom".to_string()
-            } else if std::env::var("GEMINI_API_KEY").is_ok() {
-                "gemini".to_string()
-            } else if std::env::var("OPENAI_API_KEY").is_ok() {
-                "openai".to_string()
-            } else if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-                "anthropic".to_string()
-            } else {
-                "default".to_string()
+        Overlay::Config {
+            selected,
+            tier,
+            editing,
+            input,
+            status,
+            model,
+            custom_base_url,
+            custom_api_format,
+        } => {
+            let tier_label = match tier {
+                0 => "user",
+                1 => "project",
+                _ => "local",
             };
+            let active = |idx: usize, current: usize| if idx == current { ">" } else { " " };
+            let field_value =
+                |idx: usize, current: usize, editing: bool, input: &str, value: &str| {
+                    if idx == current && editing {
+                        format!("{input}_")
+                    } else if value.is_empty() {
+                        "(not set)".to_string()
+                    } else {
+                        value.to_string()
+                    }
+                };
             let mut lines = vec![
-                "Configuration:".to_string(),
+                "Editable configuration".to_string(),
                 String::new(),
-                format!("  Provider:     {provider}"),
                 format!(
-                    "  Model:        {}",
-                    settings.model.unwrap_or_else(|| "default".to_string())
-                ),
-                format!("  Max turns:    {}", settings.max_turns.unwrap_or(10)),
-                format!("  Max tokens:   {}", settings.max_tokens.unwrap_or(16384)),
-                format!(
-                    "  Permission:   {}",
-                    settings.permission_mode.as_deref().unwrap_or("ask")
+                    "{} Model:        {}",
+                    active(0, *selected),
+                    field_value(0, *selected, *editing, input, model)
                 ),
                 format!(
-                    "  Custom URL:   {}",
-                    settings.custom_base_url.as_deref().unwrap_or("(not set)")
+                    "{} Custom URL:   {}",
+                    active(1, *selected),
+                    field_value(1, *selected, *editing, input, custom_base_url)
                 ),
                 format!(
-                    "  Custom API:   {}",
-                    settings.custom_api_format.as_deref().unwrap_or("(not set)")
+                    "{} Custom API:   {}",
+                    active(2, *selected),
+                    field_value(2, *selected, *editing, input, custom_api_format)
                 ),
+                String::new(),
+                format!("Save tier: {tier_label}  [Tab to cycle]"),
+                "Controls: ↑/↓ select  Enter edit/apply  S save  Esc close/cancel".to_string(),
+                "Tip: leave a field empty to clear it.".to_string(),
+                String::new(),
+                format!(
+                    "Provider preview: {}",
+                    if custom_base_url.is_empty() && custom_api_format.is_empty() {
+                        "default".to_string()
+                    } else {
+                        format!(
+                            "custom ({})",
+                            if custom_api_format.is_empty() {
+                                "openai"
+                            } else {
+                                custom_api_format
+                            }
+                        )
+                    }
+                ),
+                "Default launch mode: TUI".to_string(),
             ];
-            if let Some(ref prompt) = settings.system_prompt {
-                lines.push(format!(
-                    "  System prompt: {}...",
-                    &prompt[..prompt.len().min(50)]
-                ));
+            if let Some(status) = status {
+                lines.push(String::new());
+                lines.push(format!("Status: {status}"));
             }
-            lines.push(String::new());
-            lines.push("Config loaded from:".to_string());
-            lines.push("  1. ~/.nocode/settings.json (user)".to_string());
-            lines.push("  2. .nocode/settings.json (project)".to_string());
-            lines.push("  3. .nocode/settings.local.json (local)".to_string());
-            lines.push(String::new());
-            lines.push(
-                "Environment overrides: NOCODE_MODEL, NOCODE_MODEL_PROVIDER, NOCODE_CUSTOM_BASE_URL, NOCODE_CUSTOM_API_FORMAT, etc.".to_string(),
-            );
-            lines.push("Default launch mode: TUI".to_string());
             let config_text = lines.join("\n");
             let overlay_w = OverlayBlock::new("Configuration", &config_text);
             frame.render_widget(overlay_w, area);

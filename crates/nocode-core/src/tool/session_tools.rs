@@ -227,9 +227,18 @@ impl Tool for ExitWorktreeTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn enter_exit_plan_mode_roundtrip() {
+        let _guard = test_lock();
         // Clean slate
         exit_plan_mode();
         assert!(!is_plan_mode());
@@ -250,6 +259,7 @@ mod tests {
 
     #[test]
     fn exit_plan_mode_with_allowed_prompts() {
+        let _guard = test_lock();
         let tool = ExitPlanModeTool;
         let result = tool.execute(&json!({
             "allowedPrompts": [

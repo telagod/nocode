@@ -51,8 +51,7 @@ pub(crate) fn handle_slash_command(
             SlashResult::Handled
         }
         CommandAction::Config => {
-            app.overlay = Overlay::Config;
-            app.dirty = true;
+            app.open_config_overlay();
             SlashResult::Handled
         }
         CommandAction::Memory => {

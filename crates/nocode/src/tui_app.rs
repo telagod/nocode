@@ -15,6 +15,7 @@ use crate::tui_widgets::{
 };
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use nocode_core::config::settings::{Settings, SettingsTier};
 use nocode_core::message::{Message, SystemBlock};
 use nocode_core::provider::Provider;
 use nocode_core::query::r#loop::{self, LoopConfig};
@@ -62,7 +63,16 @@ pub(crate) enum Overlay {
     Sessions,
     Mcp,
     Agents,
-    Config,
+    Config {
+        selected: usize,
+        tier: usize,
+        editing: bool,
+        input: String,
+        status: Option<String>,
+        model: String,
+        custom_base_url: String,
+        custom_api_format: String,
+    },
     Memory,
     Cost,
     Permission {
@@ -79,6 +89,28 @@ pub(crate) enum Overlay {
 impl Overlay {
     fn is_open(&self) -> bool {
         !matches!(self, Self::None)
+    }
+}
+
+impl TuiApp {
+    pub(crate) fn open_config_overlay(&mut self) {
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let settings = Settings::load_merged(&cwd);
+        self.overlay = Overlay::Config {
+            selected: 0,
+            tier: 0,
+            editing: false,
+            input: String::new(),
+            status: None,
+            model: settings.model.unwrap_or_default(),
+            custom_base_url: settings.custom_base_url.unwrap_or_default(),
+            custom_api_format: settings
+                .custom_api_format
+                .unwrap_or_else(|| "openai".to_string()),
+        };
+        self.dirty = true;
     }
 }
 
@@ -497,6 +529,119 @@ impl TuiApp {
 
         // Overlay open — handle keys
         if self.overlay.is_open() {
+            if matches!(self.overlay, Overlay::Config { .. }) {
+                if let Overlay::Config {
+                    ref mut selected,
+                    ref mut tier,
+                    ref mut editing,
+                    ref mut input,
+                    ref mut status,
+                    ref mut model,
+                    ref mut custom_base_url,
+                    ref mut custom_api_format,
+                } = self.overlay
+                {
+                    match key.code {
+                        KeyCode::Esc => {
+                            if *editing {
+                                *editing = false;
+                                input.clear();
+                                *status = Some("Edit cancelled".to_string());
+                            } else {
+                                self.overlay = Overlay::None;
+                            }
+                            self.dirty = true;
+                        }
+                        KeyCode::Up if !*editing => {
+                            if *selected > 0 {
+                                *selected -= 1;
+                            }
+                            self.dirty = true;
+                        }
+                        KeyCode::Down if !*editing => {
+                            if *selected < 2 {
+                                *selected += 1;
+                            }
+                            self.dirty = true;
+                        }
+                        KeyCode::Tab if !*editing => {
+                            *tier = (*tier + 1) % 3;
+                            self.dirty = true;
+                        }
+                        KeyCode::Enter => {
+                            if *editing {
+                                match *selected {
+                                    0 => *model = input.clone(),
+                                    1 => *custom_base_url = input.clone(),
+                                    _ => *custom_api_format = input.clone(),
+                                }
+                                *editing = false;
+                                input.clear();
+                                *status = Some("Field updated locally".to_string());
+                            } else {
+                                *editing = true;
+                                match *selected {
+                                    0 => input.clone_from(model),
+                                    1 => input.clone_from(custom_base_url),
+                                    _ => input.clone_from(custom_api_format),
+                                }
+                                *status = Some("Editing field".to_string());
+                            }
+                            self.dirty = true;
+                        }
+                        KeyCode::Char('s') | KeyCode::Char('S') if !*editing => {
+                            let cwd = std::env::current_dir()
+                                .map(|p| p.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            let tier_value = match *tier {
+                                0 => SettingsTier::User,
+                                1 => SettingsTier::Project,
+                                _ => SettingsTier::Local,
+                            };
+                            let mut settings = Settings::load_merged(&cwd);
+                            settings.model = if model.trim().is_empty() {
+                                None
+                            } else {
+                                Some(model.trim().to_string())
+                            };
+                            settings.custom_base_url = if custom_base_url.trim().is_empty() {
+                                None
+                            } else {
+                                Some(custom_base_url.trim().to_string())
+                            };
+                            settings.custom_api_format = if custom_api_format.trim().is_empty() {
+                                None
+                            } else {
+                                Some(custom_api_format.trim().to_string())
+                            };
+                            match settings.save_tier(tier_value, &cwd) {
+                                Ok(()) => {
+                                    self.hud.model_name = if model.trim().is_empty() {
+                                        self.hud.model_name.clone()
+                                    } else {
+                                        model.trim().to_string()
+                                    };
+                                    *status = Some("Saved configuration".to_string());
+                                }
+                                Err(e) => {
+                                    *status = Some(format!("Save failed: {e}"));
+                                }
+                            }
+                            self.dirty = true;
+                        }
+                        KeyCode::Backspace if *editing => {
+                            input.pop();
+                            self.dirty = true;
+                        }
+                        KeyCode::Char(c) if *editing => {
+                            input.push(c);
+                            self.dirty = true;
+                        }
+                        _ => {}
+                    }
+                }
+                return HandleKeyResult::Continue;
+            }
             // Permission overlay: y/n/a to respond
             if matches!(self.overlay, Overlay::Permission { .. }) {
                 use nocode_core::tool::permission::PermissionDecision;
