@@ -9,6 +9,7 @@ use crate::provider::ProviderBox;
 use crate::query::r#loop::{self, LoopConfig, NoopObserver};
 use crate::tool::ToolRegistry;
 use crate::tool::executor::ToolExecutor;
+use crate::tool::global_registry::{tool_definitions_for_model, tool_names_for_display};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -172,7 +173,7 @@ impl IdeRequestHandler {
                 "hover": true,
             },
             "model": self.model,
-            "tools": self.registry.names(),
+            "tools": tool_names_for_display(&self.registry),
         }))
     }
 
@@ -188,7 +189,7 @@ impl IdeRequestHandler {
             max_tokens: self.max_tokens,
             max_turns: self.max_turns,
             system: self.system_blocks.clone(),
-            tools: self.registry.definitions(),
+            tools: tool_definitions_for_model(&self.registry),
             parallel_tool_execution: true,
         };
         let mut observer = NoopObserver;
@@ -229,7 +230,7 @@ impl IdeRequestHandler {
             "active_queries": 0,
             "bind_addr": self.config.bind_addr,
             "model": self.model,
-            "tools_count": self.registry.names().len(),
+            "tools_count": tool_names_for_display(&self.registry).len(),
         }))
     }
 

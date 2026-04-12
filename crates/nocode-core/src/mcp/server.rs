@@ -10,6 +10,7 @@ use crate::message::SystemBlock;
 use crate::provider::ProviderBox;
 use crate::query::r#loop::{self, LoopConfig, NoopObserver};
 use crate::tool::executor::ToolExecutor;
+use crate::tool::global_registry::{global_tool_registry, tool_definitions_for_model};
 use crate::tool::{ToolOutput, ToolRegistry};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -185,9 +186,7 @@ impl McpServer {
     }
 
     fn handle_tools_list(&self) -> Result<Value, (i64, String)> {
-        let tools: Vec<Value> = self
-            .registry
-            .definitions()
+        let tools: Vec<Value> = tool_definitions_for_model(&self.registry)
             .iter()
             .map(|def| {
                 json!({
@@ -206,12 +205,15 @@ impl McpServer {
             .ok_or((-32602, "Missing 'name' parameter".to_string()))?;
         let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
-        let tool = self
-            .registry
-            .get(name)
-            .ok_or((-32602, format!("Tool '{name}' not found")))?;
-
-        let output: ToolOutput = tool.execute(&arguments);
+        let output: ToolOutput = if let Some(tool) = self.registry.get(name) {
+            tool.execute(&arguments)
+        } else {
+            let global = global_tool_registry();
+            let guard = global.lock().unwrap_or_else(|e| e.into_inner());
+            guard
+                .execute(name, &arguments)
+                .ok_or((-32602, format!("Tool '{name}' not found")))?
+        };
 
         Ok(json!({
             "content": [{"type": "text", "text": output.content}],
@@ -335,7 +337,7 @@ impl McpServer {
             max_tokens: self.max_tokens,
             max_turns: self.max_turns,
             system: self.system_blocks.clone(),
-            tools: self.registry.definitions(),
+            tools: tool_definitions_for_model(&self.registry),
             parallel_tool_execution: true,
         };
         let mut observer = NoopObserver;

@@ -20,6 +20,7 @@ use nocode_core::provider::Provider;
 use nocode_core::query::r#loop::{self, LoopConfig};
 use nocode_core::tool::ToolRegistry;
 use nocode_core::tool::executor::ToolExecutor;
+use nocode_core::tool::global_registry::tool_definitions_for_model;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::widgets::{Block, Borders};
@@ -1019,7 +1020,7 @@ pub(crate) fn run_app_loop(
 ) -> io::Result<()> {
     let mut app = TuiApp::new(model);
     let mut messages: Vec<Message> = Vec::new();
-    let tool_defs = registry.definitions();
+    let tool_defs = tool_definitions_for_model(&registry);
 
     // Auto-generate session ID for persistence
     let session_id = format!(

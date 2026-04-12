@@ -1,5 +1,6 @@
 //! MCP Manager — lifecycle management, health checks, auto-connect.
 
+use crate::config::runtime::McpServerConfig;
 use crate::mcp::client::{McpClient, McpResource, McpTool};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -109,6 +110,14 @@ impl McpManager {
     pub fn register_server(&mut self, name: &str, command: &str, args: Vec<String>) {
         self.servers
             .insert(name.to_string(), McpServerEntry::new(name, command, args));
+    }
+
+    /// Reset all registered servers and load a fresh set from settings.
+    pub fn sync_from_settings(&mut self, servers: &HashMap<String, McpServerConfig>) {
+        self.servers.clear();
+        for (name, cfg) in servers {
+            self.register_server(name, &cfg.command, cfg.args.clone());
+        }
     }
 
     /// Connect to a registered server — spawn, handshake, discover tools.
@@ -408,5 +417,26 @@ mod tests {
         mgr.disconnect("srv").unwrap();
         let servers = mgr.list_servers();
         assert_eq!(servers[0].1, McpPhase::Shutdown);
+    }
+
+    #[test]
+    fn sync_from_settings_replaces_servers() {
+        let mut mgr = McpManager::new();
+        mgr.register_server("old", "echo", vec!["old".to_string()]);
+
+        let mut settings = HashMap::new();
+        settings.insert(
+            "github".to_string(),
+            McpServerConfig {
+                command: "echo".to_string(),
+                args: vec!["new".to_string()],
+                env: HashMap::new(),
+            },
+        );
+
+        mgr.sync_from_settings(&settings);
+        let servers = mgr.list_servers();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].0, "github");
     }
 }

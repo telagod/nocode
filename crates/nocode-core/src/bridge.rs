@@ -12,6 +12,7 @@ use crate::session::control::Session;
 use crate::session::registry::global_session_registry;
 use crate::tool::ToolRegistry;
 use crate::tool::executor::ToolExecutor;
+use crate::tool::global_registry::tool_definitions_for_model;
 use std::io::{BufRead, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
@@ -356,7 +357,7 @@ fn handle_query(stream: &mut TcpStream, req: &HttpRequest, runtime: Option<&Brid
 
     let model_override = body["model"].as_str().unwrap_or(&rt.model);
     let messages = vec![crate::message::Message::user_text(prompt)];
-    let tool_defs = rt.registry.definitions();
+    let tool_defs = tool_definitions_for_model(&rt.registry);
 
     let cfg = LoopConfig {
         model: model_override.to_string(),

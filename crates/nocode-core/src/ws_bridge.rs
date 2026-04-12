@@ -3,9 +3,12 @@
 //! Provides WebSocket transport as an alternative to HTTP polling for bridge clients.
 //! Supports connect/disconnect, heartbeat/ping-pong, message framing, and reconnect.
 
+use crate::query::events::ModelStreamEvent;
+use crate::query::r#loop::LoopObserver;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
+use tokio::sync::mpsc::UnboundedSender;
 
 /// WebSocket connection state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +44,50 @@ pub enum WsMessage {
     Ping { timestamp: i64 },
     /// Heartbeat pong.
     Pong { timestamp: i64 },
+}
+
+pub struct WsEventObserver {
+    query_id: String,
+    tx: UnboundedSender<WsMessage>,
+}
+
+impl WsEventObserver {
+    pub fn new(query_id: impl Into<String>, tx: UnboundedSender<WsMessage>) -> Self {
+        Self {
+            query_id: query_id.into(),
+            tx,
+        }
+    }
+}
+
+impl LoopObserver for WsEventObserver {
+    fn on_model_event(&mut self, event: &ModelStreamEvent) {
+        let outgoing = match event {
+            ModelStreamEvent::TextDelta { text } => Some(WsMessage::Delta {
+                id: self.query_id.clone(),
+                text: text.clone(),
+            }),
+            ModelStreamEvent::ToolUseStart { name, .. } => Some(WsMessage::ToolStart {
+                id: self.query_id.clone(),
+                tool_name: name.clone(),
+            }),
+            ModelStreamEvent::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+                ..
+            } => Some(WsMessage::ToolResult {
+                id: tool_use_id.clone(),
+                content: content.clone(),
+                is_error: *is_error,
+            }),
+            _ => None,
+        };
+
+        if let Some(message) = outgoing {
+            let _ = self.tx.send(message);
+        }
+    }
 }
 
 /// Configuration for WebSocket bridge.
@@ -235,7 +282,8 @@ use tokio_tungstenite::tungstenite::Message;
 
 /// Callback type for handling incoming queries from WS clients.
 /// Receives the query content, returns the full response text.
-pub type QueryHandler = Arc<dyn Fn(&str) -> String + Send + Sync>;
+pub type QueryHandler =
+    Arc<dyn Fn(String, String, UnboundedSender<WsMessage>) -> Result<(), String> + Send + Sync>;
 
 /// Run the WebSocket bridge server.
 ///
@@ -310,6 +358,25 @@ pub async fn run_ws_server(config: WsBridgeConfig, handler: QueryHandler) -> Res
 
             let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
+            async fn send_ws_message(
+                ws_sender: &mut futures::stream::SplitSink<
+                    tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+                    Message,
+                >,
+                registry: &Arc<Mutex<WsConnectionRegistry>>,
+                conn_id: &str,
+                message: &WsMessage,
+            ) {
+                if let Ok(json) = serde_json::to_string(message)
+                    && ws_sender.send(Message::Text(json.into())).await.is_ok()
+                {
+                    let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(conn) = guard.get_mut(conn_id) {
+                        conn.record_send();
+                    }
+                }
+            }
+
             // Heartbeat task for this connection
             let hb_sender = registry.clone();
             let hb_conn_id = conn_id.clone();
@@ -360,33 +427,24 @@ pub async fn run_ws_server(config: WsBridgeConfig, handler: QueryHandler) -> Res
 
                         match ws_msg {
                             WsMessage::Query { id, content } => {
-                                let response = handler(&content);
-
-                                // Send delta + complete
-                                let delta = WsMessage::Delta {
-                                    id: id.clone(),
-                                    text: response,
-                                };
-                                let complete = WsMessage::Complete {
-                                    id: id.clone(),
-                                    stop_reason: "end_turn".to_string(),
-                                };
-
-                                if let Ok(json) = serde_json::to_string(&delta) {
-                                    let _ = ws_sender.send(Message::Text(json.into())).await;
-                                }
-                                if let Ok(json) = serde_json::to_string(&complete) {
-                                    let _ = ws_sender.send(Message::Text(json.into())).await;
-                                }
-
-                                // Record sends
-                                {
-                                    let mut guard =
-                                        registry.lock().unwrap_or_else(|e| e.into_inner());
-                                    if let Some(conn) = guard.get_mut(&conn_id) {
-                                        conn.record_send();
-                                        conn.record_send();
+                                let (event_tx, mut event_rx) =
+                                    tokio::sync::mpsc::unbounded_channel::<WsMessage>();
+                                let handler = handler.clone();
+                                let query_id = id.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    if let Err(err) =
+                                        handler(query_id.clone(), content, event_tx.clone())
+                                    {
+                                        let _ = event_tx.send(WsMessage::Error {
+                                            id: query_id,
+                                            message: err,
+                                        });
                                     }
+                                });
+
+                                while let Some(message) = event_rx.recv().await {
+                                    send_ws_message(&mut ws_sender, &registry, &conn_id, &message)
+                                        .await;
                                 }
                             }
                             WsMessage::Pong { .. } => {
@@ -397,9 +455,7 @@ pub async fn run_ws_server(config: WsBridgeConfig, handler: QueryHandler) -> Res
                             }
                             WsMessage::Ping { timestamp } => {
                                 let pong = WsMessage::Pong { timestamp };
-                                if let Ok(json) = serde_json::to_string(&pong) {
-                                    let _ = ws_sender.send(Message::Text(json.into())).await;
-                                }
+                                send_ws_message(&mut ws_sender, &registry, &conn_id, &pong).await;
                             }
                             _ => {
                                 // Ignore other message types from clients
@@ -429,9 +485,19 @@ pub async fn run_ws_server(config: WsBridgeConfig, handler: QueryHandler) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::{ContentBlock, Message};
+    use crate::provider::Provider;
+    use crate::provider::types::{
+        CreateMessageRequest, CreateMessageResponse, ProviderError, StopReason, StreamEvent, Usage,
+    };
+    use crate::query::r#loop::{self, LoopConfig};
+    use crate::tool::ToolRegistry;
+    use crate::tool::executor::ToolExecutor;
+    use crate::tool::global_registry::tool_definitions_for_model;
     use futures::{SinkExt, StreamExt};
+    use std::sync::Mutex;
     use tokio::time::{Duration, sleep};
-    use tokio_tungstenite::{connect_async, tungstenite::Message};
+    use tokio_tungstenite::{connect_async, tungstenite::Message as WsFrame};
 
     #[test]
     fn ws_message_serde_roundtrip() {
@@ -587,7 +653,30 @@ mod tests {
             connection_timeout_secs: 30,
             ..Default::default()
         };
-        let handler: QueryHandler = Arc::new(|query| format!("echo:{query}"));
+        let handler: QueryHandler = Arc::new(|query_id, query, tx| {
+            tx.send(WsMessage::Delta {
+                id: query_id.clone(),
+                text: format!("echo:{query}"),
+            })
+            .unwrap();
+            tx.send(WsMessage::ToolStart {
+                id: query_id.clone(),
+                tool_name: "EchoTool".to_string(),
+            })
+            .unwrap();
+            tx.send(WsMessage::ToolResult {
+                id: "tool-1".to_string(),
+                content: "ok".to_string(),
+                is_error: false,
+            })
+            .unwrap();
+            tx.send(WsMessage::Complete {
+                id: query_id,
+                stop_reason: "end_turn".to_string(),
+            })
+            .unwrap();
+            Ok(())
+        });
         let server = tokio::spawn(run_ws_server(config, handler));
 
         let ws_url = format!("ws://{bind_addr}");
@@ -608,10 +697,10 @@ mod tests {
             content: "hello".into(),
         })
         .unwrap();
-        stream.send(Message::Text(query.into())).await.unwrap();
+        stream.send(WsFrame::Text(query.into())).await.unwrap();
 
         let delta = match stream.next().await.unwrap().unwrap() {
-            Message::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
+            WsFrame::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
             other => panic!("unexpected message: {other:?}"),
         };
         assert!(matches!(
@@ -619,8 +708,28 @@ mod tests {
             WsMessage::Delta { ref id, ref text } if id == "q-1" && text == "echo:hello"
         ));
 
+        let tool_start = match stream.next().await.unwrap().unwrap() {
+            WsFrame::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
+            other => panic!("unexpected message: {other:?}"),
+        };
+        assert!(matches!(
+            tool_start,
+            WsMessage::ToolStart { ref id, ref tool_name }
+                if id == "q-1" && tool_name == "EchoTool"
+        ));
+
+        let tool_result = match stream.next().await.unwrap().unwrap() {
+            WsFrame::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
+            other => panic!("unexpected message: {other:?}"),
+        };
+        assert!(matches!(
+            tool_result,
+            WsMessage::ToolResult { ref id, ref content, is_error }
+                if id == "tool-1" && content == "ok" && !is_error
+        ));
+
         let complete = match stream.next().await.unwrap().unwrap() {
-            Message::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
+            WsFrame::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
             other => panic!("unexpected message: {other:?}"),
         };
         assert!(matches!(
@@ -630,13 +739,180 @@ mod tests {
         ));
 
         let ping = serde_json::to_string(&WsMessage::Ping { timestamp: 123 }).unwrap();
-        stream.send(Message::Text(ping.into())).await.unwrap();
+        stream.send(WsFrame::Text(ping.into())).await.unwrap();
 
         let pong = match stream.next().await.unwrap().unwrap() {
-            Message::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
+            WsFrame::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
             other => panic!("unexpected message: {other:?}"),
         };
         assert!(matches!(pong, WsMessage::Pong { timestamp: 123 }));
+
+        server.abort();
+        let _ = server.await;
+    }
+
+    struct MockWsProvider {
+        calls: Mutex<u32>,
+    }
+
+    impl MockWsProvider {
+        fn new() -> Self {
+            Self {
+                calls: Mutex::new(0),
+            }
+        }
+    }
+
+    impl Provider for MockWsProvider {
+        fn create_message(
+            &self,
+            _request: &CreateMessageRequest,
+        ) -> Result<CreateMessageResponse, ProviderError> {
+            Err(ProviderError::non_retryable("streaming only"))
+        }
+
+        fn create_message_stream(
+            &self,
+            request: &CreateMessageRequest,
+            on_event: &mut dyn FnMut(StreamEvent),
+        ) -> Result<CreateMessageResponse, ProviderError> {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+
+            if *calls == 1 {
+                let tool_use = ContentBlock::tool_use("tool-1", "Bash", serde_json::json!({
+                    "command": "echo ws-stream"
+                }));
+                on_event(StreamEvent::ContentBlockStart {
+                    index: 0,
+                    content_block: tool_use.clone(),
+                });
+                return Ok(CreateMessageResponse {
+                    id: "resp-1".to_string(),
+                    content: vec![tool_use],
+                    stop_reason: StopReason::ToolUse,
+                    usage: Usage::default(),
+                    model: request.model.clone(),
+                });
+            }
+
+            on_event(StreamEvent::ContentBlockDelta {
+                index: 0,
+                delta: crate::provider::types::StreamDelta::TextDelta {
+                    text: "done".to_string(),
+                },
+            });
+            Ok(CreateMessageResponse {
+                id: "resp-2".to_string(),
+                content: vec![ContentBlock::text("done")],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                model: request.model.clone(),
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ws_server_streams_agentic_loop_events_end_to_end() {
+        let bind_addr = free_bind_addr();
+        let config = WsBridgeConfig {
+            bind_addr: bind_addr.clone(),
+            heartbeat_interval_secs: 1,
+            connection_timeout_secs: 30,
+            ..Default::default()
+        };
+        let handler: QueryHandler = Arc::new(|query_id, query, tx| {
+            let provider = MockWsProvider::new();
+            let registry = ToolRegistry::with_defaults("/tmp");
+            let executor = ToolExecutor::new(&registry);
+            let config = LoopConfig {
+                model: "mock".to_string(),
+                max_tokens: 512,
+                max_turns: 4,
+                system: Vec::new(),
+                tools: tool_definitions_for_model(&registry),
+                parallel_tool_execution: true,
+            };
+            let mut observer = WsEventObserver::new(query_id.clone(), tx.clone());
+            let result = r#loop::run_agentic_loop(
+                &provider,
+                &executor,
+                &config,
+                vec![Message::user_text(query)],
+                &mut observer,
+            )
+            .map_err(|e| e.to_string())?;
+            tx.send(WsMessage::Complete {
+                id: query_id,
+                stop_reason: match result.stop_reason {
+                    StopReason::EndTurn => "end_turn".to_string(),
+                    StopReason::ToolUse => "tool_use".to_string(),
+                    StopReason::MaxTokens => "max_tokens".to_string(),
+                    StopReason::PauseTurn => "pause_turn".to_string(),
+                },
+            })
+            .map_err(|_| "failed to send complete".to_string())
+        });
+        let server = tokio::spawn(run_ws_server(config, handler));
+
+        let ws_url = format!("ws://{bind_addr}");
+        let mut connected = None;
+        for _ in 0..20 {
+            match connect_async(&ws_url).await {
+                Ok((stream, _)) => {
+                    connected = Some(stream);
+                    break;
+                }
+                Err(_) => sleep(Duration::from_millis(25)).await,
+            }
+        }
+        let mut stream = connected.expect("ws server should accept a client");
+
+        let query = serde_json::to_string(&WsMessage::Query {
+            id: "q-stream".into(),
+            content: "stream it".into(),
+        })
+        .unwrap();
+        stream.send(WsFrame::Text(query.into())).await.unwrap();
+
+        let first = match stream.next().await.unwrap().unwrap() {
+            WsFrame::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
+            other => panic!("unexpected message: {other:?}"),
+        };
+        assert!(matches!(
+            first,
+            WsMessage::ToolStart { ref id, ref tool_name }
+                if id == "q-stream" && tool_name == "Bash"
+        ));
+
+        let second = match stream.next().await.unwrap().unwrap() {
+            WsFrame::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
+            other => panic!("unexpected message: {other:?}"),
+        };
+        assert!(matches!(
+            second,
+            WsMessage::ToolResult { ref id, ref content, is_error }
+                if id == "tool-1" && content.contains("ws-stream") && !is_error
+        ));
+
+        let third = match stream.next().await.unwrap().unwrap() {
+            WsFrame::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
+            other => panic!("unexpected message: {other:?}"),
+        };
+        assert!(matches!(
+            third,
+            WsMessage::Delta { ref id, ref text } if id == "q-stream" && text == "done"
+        ));
+
+        let fourth = match stream.next().await.unwrap().unwrap() {
+            WsFrame::Text(text) => serde_json::from_str::<WsMessage>(&text).unwrap(),
+            other => panic!("unexpected message: {other:?}"),
+        };
+        assert!(matches!(
+            fourth,
+            WsMessage::Complete { ref id, ref stop_reason }
+                if id == "q-stream" && stop_reason == "end_turn"
+        ));
 
         server.abort();
         let _ = server.await;

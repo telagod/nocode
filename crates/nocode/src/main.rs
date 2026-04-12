@@ -42,6 +42,9 @@ use nocode_core::provider::types::ModelProvider;
 use nocode_core::query::r#loop::{self, LoopConfig, NoopObserver};
 use nocode_core::tool::ToolRegistry;
 use nocode_core::tool::executor::ToolExecutor;
+use nocode_core::tool::global_registry::{
+    initialize_runtime_global_registry, tool_definitions_for_model,
+};
 use std::env;
 use std::sync::Arc;
 
@@ -84,6 +87,7 @@ fn main() {
     let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
 
     let registry = ToolRegistry::with_defaults(&cwd);
+    initialize_runtime_global_registry(&cwd, &settings);
     let provider_box = build_provider(&provider_type, &settings);
 
     // -- Run mode dispatch --
@@ -412,7 +416,7 @@ fn execute_prompt(
         max_tokens,
         max_turns,
         system: system_blocks.to_vec(),
-        tools: registry.definitions(),
+        tools: tool_definitions_for_model(registry),
         parallel_tool_execution: true,
     };
     let mut observer = NoopObserver;
@@ -515,20 +519,39 @@ fn run_ws_server_mode(
         ..Default::default()
     };
 
-    let handler: nocode_core::ws_bridge::QueryHandler = Arc::new(move |prompt: &str| {
+    let handler: nocode_core::ws_bridge::QueryHandler = Arc::new(move |query_id, prompt, tx| {
         let registry = ToolRegistry::with_defaults(&cwd);
-        match execute_prompt(
-            provider.as_ref(),
-            &registry,
-            &system,
-            &model,
+        let executor = ToolExecutor::new(&registry);
+        let config = LoopConfig {
+            model: model.clone(),
             max_tokens,
             max_turns,
-            prompt,
-        ) {
-            Ok(text) => text,
-            Err(e) => format!("Error: {e}"),
-        }
+            system: system.clone(),
+            tools: tool_definitions_for_model(&registry),
+            parallel_tool_execution: true,
+        };
+        let mut observer =
+            nocode_core::ws_bridge::WsEventObserver::new(query_id.clone(), tx.clone());
+        let result = r#loop::run_agentic_loop(
+            provider.as_ref(),
+            &executor,
+            &config,
+            vec![Message::user_text(&prompt)],
+            &mut observer,
+        )
+        .map_err(|e| e.to_string())?;
+
+        let stop_reason = match result.stop_reason {
+            nocode_core::provider::types::StopReason::EndTurn => "end_turn",
+            nocode_core::provider::types::StopReason::ToolUse => "tool_use",
+            nocode_core::provider::types::StopReason::MaxTokens => "max_tokens",
+            nocode_core::provider::types::StopReason::PauseTurn => "pause_turn",
+        };
+        tx.send(nocode_core::ws_bridge::WsMessage::Complete {
+            id: query_id,
+            stop_reason: stop_reason.to_string(),
+        })
+        .map_err(|_| "failed to send complete event".to_string())
     });
 
     eprintln!(
@@ -827,7 +850,7 @@ fn run_agent_host() {
         max_tokens,
         max_turns,
         system: system_blocks,
-        tools: registry.definitions(),
+        tools: tool_definitions_for_model(&registry),
         parallel_tool_execution: true,
     };
     let mut observer = r#loop::NoopObserver;

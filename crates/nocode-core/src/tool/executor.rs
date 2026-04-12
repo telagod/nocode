@@ -5,7 +5,7 @@ use crate::message::ContentBlock;
 use crate::tool::ToolRegistry;
 use crate::tool::bash_validation;
 use crate::tool::file_safety;
-use crate::tool::global_registry::global_tool_registry;
+use crate::tool::global_registry::{global_tool_registry, tool_definitions_for_model};
 use crate::tool::hook_runner::HookRunner;
 use crate::tool::permission::{PermissionDecision, PermissionMode, PermissionPrompter};
 use crate::tool::session_tools::is_plan_mode;
@@ -345,7 +345,7 @@ impl ToolRunner for DefaultToolExecutor<'_> {
     }
 
     fn definitions(&self) -> Vec<ToolDefinition> {
-        self.executor.registry.definitions()
+        tool_definitions_for_model(self.executor.registry)
     }
 }
 

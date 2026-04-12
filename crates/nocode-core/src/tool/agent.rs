@@ -73,6 +73,9 @@ fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&str>
     use crate::query::r#loop::{self, LoopConfig, NoopObserver};
     use crate::tool::ToolRegistry;
     use crate::tool::executor::ToolExecutor;
+    use crate::tool::global_registry::{
+        initialize_runtime_global_registry, tool_definitions_for_model,
+    };
 
     let registry = global_worker_registry();
 
@@ -100,6 +103,7 @@ fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&str>
         let provider = build_worker_provider(&provider_type, &settings);
 
         let tool_registry = ToolRegistry::with_defaults(&cwd);
+        initialize_runtime_global_registry(&cwd, &settings);
         let system_blocks =
             assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
         let executor = ToolExecutor::new(&tool_registry);
@@ -110,7 +114,7 @@ fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&str>
             max_tokens,
             max_turns,
             system: system_blocks,
-            tools: tool_registry.definitions(),
+            tools: tool_definitions_for_model(&tool_registry),
             parallel_tool_execution: true,
         };
         let mut observer = NoopObserver;

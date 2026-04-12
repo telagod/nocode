@@ -646,6 +646,10 @@ fn cmd_mcp_add(app: &mut TuiApp, args: Option<&str>) {
     guard.register_server(name, command, cmd_args);
     match guard.connect(name) {
         Ok(()) => {
+            drop(guard);
+            nocode_core::tool::global_registry::refresh_global_mcp_bridged_tools();
+            let mgr = nocode_core::mcp::manager::global_mcp_manager();
+            let guard = mgr.lock().unwrap();
             let count = guard.all_tools().iter().filter(|(s, _)| *s == name).count();
             app.push_system(&format!("MCP server '{name}' connected ({count} tools)"));
         }
@@ -662,7 +666,11 @@ fn cmd_mcp_remove(app: &mut TuiApp, args: Option<&str>) {
     let mgr = nocode_core::mcp::manager::global_mcp_manager();
     let mut guard = mgr.lock().unwrap();
     match guard.disconnect(name) {
-        Ok(()) => app.push_system(&format!("MCP server '{name}' disconnected")),
+        Ok(()) => {
+            drop(guard);
+            nocode_core::tool::global_registry::refresh_global_mcp_bridged_tools();
+            app.push_system(&format!("MCP server '{name}' disconnected"));
+        }
         Err(e) => app.push_error(&format!("MCP disconnect failed: {e}")),
     }
 }
@@ -677,7 +685,11 @@ fn cmd_mcp_restart(app: &mut TuiApp, args: Option<&str>) {
     let mut guard = mgr.lock().unwrap();
     let _ = guard.disconnect(name);
     match guard.connect(name) {
-        Ok(()) => app.push_system(&format!("MCP server '{name}' restarted")),
+        Ok(()) => {
+            drop(guard);
+            nocode_core::tool::global_registry::refresh_global_mcp_bridged_tools();
+            app.push_system(&format!("MCP server '{name}' restarted"));
+        }
         Err(e) => app.push_error(&format!("MCP restart failed: {e}")),
     }
 }

@@ -5,6 +5,7 @@ use nocode_core::provider::types::{StreamDelta, StreamEvent};
 use nocode_core::query::r#loop::{self, LoopConfig, LoopObserver};
 use nocode_core::tool::ToolRegistry;
 use nocode_core::tool::executor::ToolExecutor;
+use nocode_core::tool::global_registry::tool_definitions_for_model;
 use nocode_core::tool::permission::{QuestionPrompter, UserAnswer};
 use std::io::{self, BufRead, Write};
 
@@ -586,7 +587,7 @@ pub fn run_repl(
             max_tokens,
             max_turns,
             system: system.to_vec(),
-            tools: registry.definitions(),
+            tools: tool_definitions_for_model(registry),
             parallel_tool_execution: true,
         };
 

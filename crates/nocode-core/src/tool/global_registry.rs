@@ -6,6 +6,8 @@
 //! - MCP tools: "mcp:{server}:{tool}" (e.g. "mcp:github:search_repos")
 //! - Plugin tools: "plugin:{name}:{tool}"
 
+use crate::config::settings::Settings;
+use crate::mcp::manager::global_mcp_manager;
 use crate::provider::types::ToolDefinition;
 use crate::tool::{Tool, ToolOutput, ToolRegistry};
 use std::collections::HashMap;
@@ -55,6 +57,13 @@ impl GlobalToolRegistry {
     /// Remove a bridged tool.
     pub fn remove_bridged(&mut self, name: &str) -> bool {
         self.bridged.remove(name).is_some()
+    }
+
+    /// Remove all bridged tools with the given prefix.
+    pub fn remove_bridged_with_prefix(&mut self, prefix: &str) -> usize {
+        let before = self.bridged.len();
+        self.bridged.retain(|name, _| !name.starts_with(prefix));
+        before - self.bridged.len()
     }
 
     /// Look up a tool by name — checks base first, then bridged.
@@ -135,10 +144,100 @@ pub fn init_global_tool_registry(base: ToolRegistry) {
     *guard = GlobalToolRegistry::new(base);
 }
 
+fn input_to_string_map(input: &serde_json::Value) -> HashMap<String, String> {
+    input
+        .as_object()
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(key, value)| match value {
+                    serde_json::Value::String(text) => Some((key.clone(), text.clone())),
+                    serde_json::Value::Bool(flag) => Some((key.clone(), flag.to_string())),
+                    serde_json::Value::Number(num) => Some((key.clone(), num.to_string())),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn refresh_global_mcp_bridged_tools() {
+    let global = global_tool_registry();
+    let mut registry = global.lock().unwrap_or_else(|e| e.into_inner());
+    registry.remove_bridged_with_prefix("mcp:");
+
+    let manager = global_mcp_manager();
+    let manager = manager.lock().unwrap_or_else(|e| e.into_inner());
+    for (server_name, tool) in manager.all_tools() {
+        let prefixed_name = format!("mcp:{server_name}:{}", tool.name);
+        let original_name = tool.name.clone();
+        let server_name = server_name.to_string();
+        let definition = ToolDefinition {
+            name: prefixed_name.clone(),
+            description: tool.description.clone(),
+            input_schema: tool.input_schema.clone(),
+            cache_control: None,
+        };
+        registry.register_bridged(
+            prefixed_name,
+            definition,
+            Box::new(move |input| {
+                let args = input_to_string_map(input);
+                let manager = global_mcp_manager();
+                let mut manager = manager.lock().unwrap_or_else(|e| e.into_inner());
+                match manager.call_tool(&server_name, &original_name, &args) {
+                    Ok(result) if result.is_error => ToolOutput::error(result.content),
+                    Ok(result) => ToolOutput::success(result.content),
+                    Err(err) => ToolOutput::error(err),
+                }
+            }),
+        );
+    }
+}
+
+pub fn initialize_runtime_global_registry(cwd: &str, settings: &Settings) {
+    init_global_tool_registry(ToolRegistry::with_defaults(cwd));
+
+    let manager = global_mcp_manager();
+    let mut manager = manager.lock().unwrap_or_else(|e| e.into_inner());
+    manager.sync_from_settings(&settings.mcp_servers);
+    let _ = manager.connect_all();
+    drop(manager);
+
+    refresh_global_mcp_bridged_tools();
+}
+
+pub fn tool_definitions_for_model(registry: &ToolRegistry) -> Vec<ToolDefinition> {
+    let global = global_tool_registry();
+    let guard = global.lock().unwrap_or_else(|e| e.into_inner());
+    if !guard.is_empty() {
+        return guard.definitions();
+    }
+    registry.definitions()
+}
+
+pub fn tool_names_for_display(registry: &ToolRegistry) -> Vec<String> {
+    let global = global_tool_registry();
+    let guard = global.lock().unwrap_or_else(|e| e.into_inner());
+    if !guard.is_empty() {
+        return guard.names();
+    }
+    registry.names().into_iter().map(str::to_string).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::runtime::McpServerConfig;
+    use crate::mcp::manager::global_mcp_manager;
     use serde_json::json;
+    use std::sync::{Mutex, OnceLock};
+
+    fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn new_registry_has_no_bridged() {
@@ -148,6 +247,7 @@ mod tests {
 
     #[test]
     fn register_and_execute_bridged() {
+        let _guard = test_lock();
         let mut reg = GlobalToolRegistry::new(ToolRegistry::new());
         let def = ToolDefinition {
             name: "mcp:test:echo".to_string(),
@@ -172,6 +272,7 @@ mod tests {
 
     #[test]
     fn definitions_includes_bridged() {
+        let _guard = test_lock();
         let mut reg = GlobalToolRegistry::new(ToolRegistry::new());
         let def = ToolDefinition {
             name: "plugin:foo:bar".to_string(),
@@ -191,6 +292,7 @@ mod tests {
 
     #[test]
     fn remove_bridged_works() {
+        let _guard = test_lock();
         let mut reg = GlobalToolRegistry::new(ToolRegistry::new());
         let def = ToolDefinition {
             name: "temp".to_string(),
@@ -217,5 +319,68 @@ mod tests {
         assert!(reg.contains("Bash"));
         assert!(reg.contains("FileRead"));
         assert!(reg.len() >= 21);
+    }
+
+    #[test]
+    fn remove_bridged_with_prefix_works() {
+        let _guard = test_lock();
+        let mut reg = GlobalToolRegistry::new(ToolRegistry::new());
+        let def = ToolDefinition {
+            name: "mcp:test:echo".to_string(),
+            description: "Echo".to_string(),
+            input_schema: json!({"type": "object"}),
+            cache_control: None,
+        };
+        reg.register_bridged(
+            "mcp:test:echo",
+            def.clone(),
+            Box::new(|_| ToolOutput::success("ok")),
+        );
+        reg.register_bridged(
+            "plugin:test:echo",
+            def,
+            Box::new(|_| ToolOutput::success("ok")),
+        );
+
+        assert_eq!(reg.remove_bridged_with_prefix("mcp:"), 1);
+        assert!(!reg.contains("mcp:test:echo"));
+        assert!(reg.contains("plugin:test:echo"));
+    }
+
+    #[test]
+    fn tool_names_fallback_to_base_registry() {
+        let _guard = test_lock();
+        let reg = ToolRegistry::with_defaults("/tmp");
+        let names = tool_names_for_display(&reg);
+        assert!(names.iter().any(|name| name == "Bash"));
+    }
+
+    #[test]
+    fn initialize_runtime_global_registry_sets_base_tools() {
+        let _guard = test_lock();
+        let settings = Settings::default();
+        initialize_runtime_global_registry("/tmp", &settings);
+        let reg = ToolRegistry::with_defaults("/tmp");
+        let defs = tool_definitions_for_model(&reg);
+        assert!(defs.iter().any(|def| def.name == "Bash"));
+    }
+
+    #[test]
+    fn initialize_runtime_global_registry_syncs_mcp_settings() {
+        let _guard = test_lock();
+        let mut settings = Settings::default();
+        settings.mcp_servers.insert(
+            "bad".to_string(),
+            McpServerConfig {
+                command: "__nonexistent_cmd__".to_string(),
+                args: Vec::new(),
+                env: HashMap::new(),
+            },
+        );
+        initialize_runtime_global_registry("/tmp", &settings);
+
+        let manager = global_mcp_manager();
+        let manager = manager.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(manager.get_entry("bad").is_some());
     }
 }
