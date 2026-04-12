@@ -175,7 +175,8 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                 ),
                 String::new(),
                 format!("Save tier: {tier_label}  [Tab to cycle]"),
-                "Controls: ↑/↓ select  Enter edit/apply  S save  R refresh models  Esc close/cancel".to_string(),
+                format!("Quick API toggle: {}", if *selected == 2 { "←/→" } else { "select Custom API field" }),
+                "Controls: ↑/↓ select  Enter apply/edit  E manual edit  S save  R refresh  Esc close/cancel".to_string(),
                 "Paste works while editing a field.".to_string(),
                 "Tip: leave a field empty to clear it.".to_string(),
                 String::new(),
@@ -198,7 +199,9 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             ];
             if !model_suggestions.is_empty() {
                 lines.push(String::new());
-                lines.push("Model suggestions (←/→ move, 1-8 apply):".to_string());
+                lines.push(
+                    "Model suggestions (auto-loaded; ←/→ move, Enter/1-8 apply):".to_string(),
+                );
                 for (idx, suggestion) in model_suggestions.iter().take(8).enumerate() {
                     let marker = if idx == *suggestion_index { ">" } else { " " };
                     lines.push(format!("  {marker} {}. {suggestion}", idx + 1));

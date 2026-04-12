@@ -100,19 +100,33 @@ impl TuiApp {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
         let settings = Settings::load_merged(&cwd);
+        let custom_base_url = settings.custom_base_url.unwrap_or_default();
+        let custom_api_format = settings
+            .custom_api_format
+            .unwrap_or_else(|| "openai".to_string());
+        let (model_suggestions, status) =
+            match fetch_model_suggestions(custom_base_url.trim(), custom_api_format.trim()) {
+                Ok(models) if !models.is_empty() => {
+                    let count = models.len();
+                    (models, Some(format!("Loaded {count} model suggestion(s)")))
+                }
+                Ok(models) => (models, Some("No model suggestions returned".to_string())),
+                Err(e) => (
+                    Vec::new(),
+                    Some(format!("Model suggestions unavailable: {e}")),
+                ),
+            };
         self.overlay = Overlay::Config {
             selected: 0,
             tier: 0,
             suggestion_index: 0,
             editing: false,
             input: String::new(),
-            status: None,
+            status,
             model: settings.model.unwrap_or_default(),
-            custom_base_url: settings.custom_base_url.unwrap_or_default(),
-            custom_api_format: settings
-                .custom_api_format
-                .unwrap_or_else(|| "openai".to_string()),
-            model_suggestions: Vec::new(),
+            custom_base_url,
+            custom_api_format,
+            model_suggestions,
         };
         self.dirty = true;
     }
@@ -582,6 +596,37 @@ impl TuiApp {
                             *status = Some("Moved model suggestion selection".to_string());
                             self.dirty = true;
                         }
+                        KeyCode::Left | KeyCode::Right if !*editing && *selected == 2 => {
+                            *custom_api_format =
+                                if custom_api_format.eq_ignore_ascii_case("anthropic") {
+                                    "openai".to_string()
+                                } else {
+                                    "anthropic".to_string()
+                                };
+                            match fetch_model_suggestions(
+                                custom_base_url.trim(),
+                                custom_api_format.trim(),
+                            ) {
+                                Ok(models) => {
+                                    *model_suggestions = models;
+                                    *suggestion_index = 0;
+                                    *status = Some(format!(
+                                        "Switched API format to {}; fetched {} model suggestion(s)",
+                                        custom_api_format,
+                                        model_suggestions.len()
+                                    ));
+                                }
+                                Err(e) => {
+                                    model_suggestions.clear();
+                                    *suggestion_index = 0;
+                                    *status = Some(format!(
+                                        "Switched API format to {}; model refresh failed: {e}",
+                                        custom_api_format
+                                    ));
+                                }
+                            }
+                            self.dirty = true;
+                        }
                         KeyCode::Right
                             if !*editing && *selected == 0 && !model_suggestions.is_empty() =>
                         {
@@ -626,6 +671,17 @@ impl TuiApp {
                                 } else {
                                     *status = Some("Field updated locally".to_string());
                                 }
+                            } else if *selected == 0 && !model_suggestions.is_empty() {
+                                let suggestion = &model_suggestions[*suggestion_index];
+                                if model != suggestion {
+                                    *model = suggestion.clone();
+                                    *status =
+                                        Some(format!("Applied model suggestion: {suggestion}"));
+                                } else {
+                                    *editing = true;
+                                    input.clone_from(model);
+                                    *status = Some("Editing model field".to_string());
+                                }
                             } else {
                                 *editing = true;
                                 match *selected {
@@ -635,6 +691,16 @@ impl TuiApp {
                                 }
                                 *status = Some("Editing field".to_string());
                             }
+                            self.dirty = true;
+                        }
+                        KeyCode::Char('e') | KeyCode::Char('E') if !*editing => {
+                            *editing = true;
+                            match *selected {
+                                0 => input.clone_from(model),
+                                1 => input.clone_from(custom_base_url),
+                                _ => input.clone_from(custom_api_format),
+                            }
+                            *status = Some("Editing field".to_string());
                             self.dirty = true;
                         }
                         KeyCode::Char('s') | KeyCode::Char('S') if !*editing => {
