@@ -69,6 +69,7 @@ pub(crate) enum Overlay {
         tier: usize,
         suggestion_index: usize,
         suggestion_scroll: usize,
+        filtering_models: bool,
         editing: bool,
         input: String,
         status: Option<String>,
@@ -82,6 +83,8 @@ pub(crate) enum Overlay {
         custom_base_url_source: String,
         custom_api_format: String,
         custom_api_format_source: String,
+        model_filter: String,
+        all_model_suggestions: Vec<String>,
         model_suggestions: Vec<String>,
     },
     Memory,
@@ -147,6 +150,7 @@ impl TuiApp {
             tier: 0,
             suggestion_index: 0,
             suggestion_scroll: 0,
+            filtering_models: false,
             editing: false,
             input: String::new(),
             status,
@@ -194,6 +198,8 @@ impl TuiApp {
                 &local_settings,
                 Some("default"),
             ),
+            model_filter: String::new(),
+            all_model_suggestions: model_suggestions.clone(),
             model_suggestions,
         };
         self.dirty = true;
@@ -623,6 +629,7 @@ impl TuiApp {
                     ref mut tier,
                     ref mut suggestion_index,
                     ref mut suggestion_scroll,
+                    ref mut filtering_models,
                     ref mut editing,
                     ref mut input,
                     ref mut status,
@@ -636,6 +643,8 @@ impl TuiApp {
                     ref mut custom_base_url_source,
                     ref mut custom_api_format,
                     ref mut custom_api_format_source,
+                    ref mut model_filter,
+                    ref mut all_model_suggestions,
                     ref mut model_suggestions,
                 } = self.overlay
                 {
@@ -645,6 +654,7 @@ impl TuiApp {
                             if *editing {
                                 *editing = false;
                                 input.clear();
+                                *filtering_models = false;
                                 *status = Some("Edit cancelled".to_string());
                             } else {
                                 self.overlay = Overlay::None;
@@ -684,8 +694,10 @@ impl TuiApp {
                                 "unset".to_string()
                             };
                             if provider == "auto" {
+                                all_model_suggestions.clear();
                                 model_suggestions.clear();
                                 *suggestion_index = 0;
+                                *suggestion_scroll = 0;
                                 *status = Some("Switched provider to auto".to_string());
                             } else {
                                 apply_api_key_to_env(provider, custom_api_format, api_key);
@@ -695,7 +707,9 @@ impl TuiApp {
                                     custom_api_format.trim(),
                                 ) {
                                     Ok(models) => {
-                                        *model_suggestions = models;
+                                        *all_model_suggestions = models;
+                                        *model_suggestions =
+                                            apply_model_filter(all_model_suggestions, model_filter);
                                         *suggestion_index = 0;
                                         *suggestion_scroll = 0;
                                         *status = Some(format!(
@@ -743,7 +757,9 @@ impl TuiApp {
                                 custom_api_format.trim(),
                             ) {
                                 Ok(models) => {
-                                    *model_suggestions = models;
+                                    *all_model_suggestions = models;
+                                    *model_suggestions =
+                                        apply_model_filter(all_model_suggestions, model_filter);
                                     *suggestion_index = 0;
                                     *suggestion_scroll = 0;
                                     *status = Some(format!(
@@ -798,42 +814,60 @@ impl TuiApp {
                         }
                         KeyCode::Enter => {
                             if *editing {
-                                match *selected {
-                                    1 => *api_key = input.clone(),
-                                    2 => *model = input.clone(),
-                                    3 => *custom_base_url = input.clone(),
-                                    _ => *custom_api_format = input.clone(),
+                                if *filtering_models {
+                                    *model_filter = input.clone();
+                                    *model_suggestions =
+                                        apply_model_filter(all_model_suggestions, model_filter);
+                                    *suggestion_index = 0;
+                                    *suggestion_scroll = 0;
+                                    *status = Some(format!(
+                                        "Filtered to {} model suggestion(s)",
+                                        model_suggestions.len()
+                                    ));
+                                    *filtering_models = false;
+                                } else {
+                                    match *selected {
+                                        1 => *api_key = input.clone(),
+                                        2 => *model = input.clone(),
+                                        3 => *custom_base_url = input.clone(),
+                                        _ => *custom_api_format = input.clone(),
+                                    }
+                                    if *selected == 3 || *selected == 4 {
+                                        apply_api_key_to_env(provider, custom_api_format, api_key);
+                                        match fetch_model_suggestions(
+                                            provider,
+                                            custom_base_url.trim(),
+                                            custom_api_format.trim(),
+                                        ) {
+                                            Ok(models) => {
+                                                *all_model_suggestions = models;
+                                                *model_suggestions = apply_model_filter(
+                                                    all_model_suggestions,
+                                                    model_filter,
+                                                );
+                                                *suggestion_index = 0;
+                                                *suggestion_scroll = 0;
+                                                *status = Some(format!(
+                                                    "Field updated; fetched {} model suggestion(s)",
+                                                    model_suggestions.len()
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                all_model_suggestions.clear();
+                                                model_suggestions.clear();
+                                                *suggestion_index = 0;
+                                                *suggestion_scroll = 0;
+                                                *status = Some(format!(
+                                                    "Field updated; model refresh failed: {e}"
+                                                ));
+                                            }
+                                        }
+                                    } else {
+                                        *status = Some("Field updated locally".to_string());
+                                    }
                                 }
                                 *editing = false;
                                 input.clear();
-                                if *selected == 3 || *selected == 4 {
-                                    apply_api_key_to_env(provider, custom_api_format, api_key);
-                                    match fetch_model_suggestions(
-                                        provider,
-                                        custom_base_url.trim(),
-                                        custom_api_format.trim(),
-                                    ) {
-                                        Ok(models) => {
-                                            *model_suggestions = models;
-                                            *suggestion_index = 0;
-                                            *suggestion_scroll = 0;
-                                            *status = Some(format!(
-                                                "Field updated; fetched {} model suggestion(s)",
-                                                model_suggestions.len()
-                                            ));
-                                        }
-                                        Err(e) => {
-                                            model_suggestions.clear();
-                                            *suggestion_index = 0;
-                                            *suggestion_scroll = 0;
-                                            *status = Some(format!(
-                                                "Field updated; model refresh failed: {e}"
-                                            ));
-                                        }
-                                    }
-                                } else {
-                                    *status = Some("Field updated locally".to_string());
-                                }
                             } else if *selected == 2 && !model_suggestions.is_empty() {
                                 let suggestion = &model_suggestions[*suggestion_index];
                                 if model != suggestion {
@@ -848,6 +882,7 @@ impl TuiApp {
                             } else if *selected == 0 {
                                 *provider = cycle_provider(provider, true);
                                 if provider == "auto" {
+                                    all_model_suggestions.clear();
                                     model_suggestions.clear();
                                     *suggestion_index = 0;
                                     *suggestion_scroll = 0;
@@ -860,7 +895,11 @@ impl TuiApp {
                                         custom_api_format.trim(),
                                     ) {
                                         Ok(models) => {
-                                            *model_suggestions = models;
+                                            *all_model_suggestions = models;
+                                            *model_suggestions = apply_model_filter(
+                                                all_model_suggestions,
+                                                model_filter,
+                                            );
                                             *suggestion_index = 0;
                                             *suggestion_scroll = 0;
                                             *status = Some(format!(
@@ -870,6 +909,7 @@ impl TuiApp {
                                             ));
                                         }
                                         Err(e) => {
+                                            all_model_suggestions.clear();
                                             model_suggestions.clear();
                                             *suggestion_index = 0;
                                             *suggestion_scroll = 0;
@@ -904,6 +944,45 @@ impl TuiApp {
                                     _ => input.clone_from(custom_api_format),
                                 }
                                 *status = Some("Editing field".to_string());
+                            }
+                            self.dirty = true;
+                        }
+                        KeyCode::Char('/') | KeyCode::Char('f') | KeyCode::Char('F')
+                            if !*editing && *selected == 2 =>
+                        {
+                            *editing = true;
+                            *filtering_models = true;
+                            input.clone_from(model_filter);
+                            *status = Some("Filtering model suggestions".to_string());
+                            self.dirty = true;
+                        }
+                        KeyCode::Char('x') | KeyCode::Char('X') if !*editing => {
+                            match *selected {
+                                0 => {
+                                    *provider = "auto".to_string();
+                                    *provider_source = "local edit".to_string();
+                                }
+                                1 => {
+                                    api_key.clear();
+                                    *api_key_source = "unset".to_string();
+                                }
+                                2 => {
+                                    model.clear();
+                                    *model_source = "local edit".to_string();
+                                }
+                                3 => {
+                                    custom_base_url.clear();
+                                    *custom_base_url_source = "local edit".to_string();
+                                }
+                                _ => {
+                                    *custom_api_format = "openai".to_string();
+                                    *custom_api_format_source = "local edit".to_string();
+                                }
+                            }
+                            if *selected == 2 {
+                                *status = Some("Cleared current model value".to_string());
+                            } else {
+                                *status = Some("Reset current field locally".to_string());
                             }
                             self.dirty = true;
                         }
@@ -1131,7 +1210,9 @@ impl TuiApp {
                                 custom_api_format.trim(),
                             ) {
                                 Ok(models) => {
-                                    *model_suggestions = models;
+                                    *all_model_suggestions = models;
+                                    *model_suggestions =
+                                        apply_model_filter(all_model_suggestions, model_filter);
                                     *suggestion_index = 0;
                                     *suggestion_scroll = 0;
                                     *status = Some(format!(
@@ -1140,6 +1221,7 @@ impl TuiApp {
                                     ));
                                 }
                                 Err(e) => {
+                                    all_model_suggestions.clear();
                                     model_suggestions.clear();
                                     *suggestion_scroll = 0;
                                     *status = Some(format!("Model refresh failed: {e}"));
@@ -2137,6 +2219,18 @@ fn provider_key_slot<'a>(provider: &'a str, api_format: &'a str) -> (&'static st
 fn load_credential_store() -> nocode_core::storage::credentials::CredentialStore {
     let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
     nocode_core::storage::credentials::CredentialStore::load(&cred_path).unwrap_or_default()
+}
+
+fn apply_model_filter(all_models: &[String], filter: &str) -> Vec<String> {
+    let needle = filter.trim().to_ascii_lowercase();
+    if needle.is_empty() {
+        return all_models.to_vec();
+    }
+    all_models
+        .iter()
+        .filter(|model| model.to_ascii_lowercase().contains(&needle))
+        .cloned()
+        .collect()
 }
 
 fn apply_api_key_to_env(provider: &str, api_format: &str, api_key: &str) {

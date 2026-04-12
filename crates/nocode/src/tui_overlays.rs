@@ -65,9 +65,21 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             let servers = mgr.list_servers();
             let tools = mgr.all_tools();
             let text = if servers.is_empty() {
-                "No MCP servers connected.\n\nConfigure in .nocode/settings.json under \"mcp_servers\".\n\nCommands:\n  /mcp-add <name> <command> [args...]  — Connect a server\n  /mcp-remove <name>                   — Disconnect\n  /mcp-restart <name>                  — Reconnect".to_string()
+                r#"No MCP servers connected.
+
+Configure in .nocode/settings.json under "mcp_servers".
+
+Commands:
+  /mcp-add <name> <command> [args...]  — Connect a server
+  /mcp-remove <name>                   — Disconnect
+  /mcp-restart <name>                  — Reconnect"#
+                    .to_string()
             } else {
-                let mut lines = vec![format!("Connected MCP servers ({}):\n", servers.len())];
+                let mut lines = vec![format!(
+                    "Connected MCP servers ({}):
+",
+                    servers.len()
+                )];
                 for (name, phase, tool_count) in &servers {
                     let status = match phase {
                         nocode_core::mcp::manager::McpPhase::Connected => "●",
@@ -92,7 +104,10 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                         lines.push(format!("  ... and {} more", tools.len() - 30));
                     }
                 }
-                lines.join("\n")
+                lines.join(
+                    "
+",
+                )
             };
             let overlay_w = OverlayBlock::new("MCP Servers", &text);
             frame.render_widget(overlay_w, area);
@@ -103,10 +118,16 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             let reg = reg.lock().unwrap_or_else(|e| e.into_inner());
             let workers = reg.list();
             let text = if workers.is_empty() {
-                "No background agents running.\n\nUse /agent-create <name> <prompt> to spawn one."
+                "No background agents running.
+
+Use /agent-create <name> <prompt> to spawn one."
                     .to_string()
             } else {
-                let mut lines = vec![format!("Background agents ({}):\n", workers.len())];
+                let mut lines = vec![format!(
+                    "Background agents ({}):
+",
+                    workers.len()
+                )];
                 for w in &workers {
                     let state_icon = match w.state {
                         nocode_core::agent::worker::WorkerState::Running => "▶",
@@ -122,7 +143,10 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                 }
                 lines.push(String::new());
                 lines.push("Commands: /agent-create <name> <prompt>".to_string());
-                lines.join("\n")
+                lines.join(
+                    "
+",
+                )
             };
             let overlay_w = OverlayBlock::new("Agents", &text);
             frame.render_widget(overlay_w, area);
@@ -132,6 +156,7 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             tier,
             suggestion_index,
             suggestion_scroll,
+            filtering_models,
             editing,
             input,
             status,
@@ -145,6 +170,8 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             custom_base_url_source,
             custom_api_format,
             custom_api_format_source,
+            model_filter,
+            all_model_suggestions: _,
             model_suggestions,
         } => {
             let is_custom_provider = provider == "custom";
@@ -164,7 +191,7 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                         value.to_string()
                     }
                 };
-            let api_key_value = if *selected == 1 && *editing {
+            let api_key_value = if *selected == 1 && *editing && !*filtering_models {
                 format!("{input}_")
             } else if api_key.is_empty() {
                 "(not set)".to_string()
@@ -179,34 +206,75 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                     .collect();
                 format!("configured (…{tail})")
             };
+            let filter_value = if *selected == 2 && *editing && *filtering_models {
+                format!("{input}_")
+            } else if model_filter.is_empty() {
+                "(none)".to_string()
+            } else {
+                model_filter.clone()
+            };
             let mut lines = vec![
                 "Editable configuration".to_string(),
                 String::new(),
+                "[Provider]".to_string(),
                 format!(
                     "{} Provider:     {} ({})",
                     active(0, *selected),
                     provider,
                     provider_source
                 ),
+                String::new(),
+                "[Auth]".to_string(),
                 format!(
                     "{} API Key:      {} ({})",
                     active(1, *selected),
                     api_key_value,
                     api_key_source
                 ),
+                String::new(),
+                "[Model]".to_string(),
                 format!(
                     "{} Model:        {} ({})",
                     active(2, *selected),
-                    field_value(2, *selected, *editing, input, model),
+                    field_value(2, *selected, *editing && !*filtering_models, input, model),
                     model_source
                 ),
+                format!("  Filter:       {filter_value}"),
+                String::new(),
+                "[Endpoint]".to_string(),
+            ];
+            if is_custom_provider {
+                lines.push(format!(
+                    "{} Custom URL:   {} ({})",
+                    active(3, *selected),
+                    field_value(3, *selected, *editing, input, custom_base_url),
+                    custom_base_url_source
+                ));
+                lines.push(format!(
+                    "{} Custom API:   {} ({})",
+                    active(4, *selected),
+                    field_value(4, *selected, *editing, input, custom_api_format),
+                    custom_api_format_source
+                ));
+            } else {
+                lines.push("  Custom endpoint fields hidden until Provider = custom".to_string());
+            }
+            lines.extend([
                 String::new(),
                 format!("Save tier: {tier_label}  [Tab to cycle]"),
                 format!(
                     "Quick provider toggle: {}",
                     if *selected == 0 { "←/→ or Enter" } else { "select Provider field" }
                 ),
-                "Controls: ↑/↓ select  Enter apply/edit  E manual edit  T test  S save  R refresh  Esc close/cancel".to_string(),
+                format!(
+                    "Quick API toggle: {}",
+                    if is_custom_provider && *selected == 4 {
+                        "←/→"
+                    } else {
+                        "select Custom API field"
+                    }
+                ),
+                "Controls: ↑/↓ select  Enter apply/edit  E manual edit  / filter models  X clear/reset  T test  S save  R refresh  Esc close/cancel".to_string(),
                 "Paste works while editing a field.".to_string(),
                 "Tip: leave a field empty to clear it.".to_string(),
                 String::new(),
@@ -228,42 +296,7 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                     }
                 ),
                 "Default launch mode: TUI".to_string(),
-            ];
-            if is_custom_provider {
-                lines.splice(
-                    5..5,
-                    [
-                        format!(
-                            "{} Custom URL:   {} ({})",
-                            active(3, *selected),
-                            field_value(3, *selected, *editing, input, custom_base_url),
-                            custom_base_url_source
-                        ),
-                        format!(
-                            "{} Custom API:   {} ({})",
-                            active(4, *selected),
-                            field_value(4, *selected, *editing, input, custom_api_format),
-                            custom_api_format_source
-                        ),
-                    ],
-                );
-                lines.insert(
-                    10,
-                    format!(
-                        "Quick API toggle: {}",
-                        if *selected == 4 {
-                            "←/→"
-                        } else {
-                            "select Custom API field"
-                        }
-                    ),
-                );
-            } else {
-                lines.insert(
-                    10,
-                    "Custom endpoint fields hidden until Provider = custom".to_string(),
-                );
-            }
+            ]);
             if !model_suggestions.is_empty() {
                 lines.push(String::new());
                 lines.push(
@@ -304,7 +337,10 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                 lines.push(String::new());
                 lines.push(format!("Status: {status}"));
             }
-            let config_text = lines.join("\n");
+            let config_text = lines.join(
+                "
+",
+            );
             let overlay_w = OverlayBlock::new("Configuration", &config_text);
             frame.render_widget(overlay_w, area);
         }
