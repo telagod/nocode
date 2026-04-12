@@ -70,6 +70,14 @@ fn emit_tool_result_event(
         } else {
             false
         },
+        structured_content: if let ContentBlock::ToolResult {
+            structured_content, ..
+        } = result
+        {
+            structured_content.clone()
+        } else {
+            None
+        },
     });
 }
 

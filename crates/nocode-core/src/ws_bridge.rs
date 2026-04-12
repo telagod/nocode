@@ -37,6 +37,8 @@ pub enum WsMessage {
         id: String,
         content: String,
         is_error: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        structured_content: Option<serde_json::Value>,
     },
     /// Server sends token usage updates.
     Usage {
@@ -95,11 +97,13 @@ impl LoopObserver for WsEventObserver {
                 tool_use_id,
                 content,
                 is_error,
+                structured_content,
                 ..
             } => Some(WsMessage::ToolResult {
                 id: tool_use_id.clone(),
                 content: content.clone(),
                 is_error: *is_error,
+                structured_content: structured_content.clone(),
             }),
             ModelStreamEvent::UsageUpdate { usage } => Some(WsMessage::Usage {
                 id: self.query_id.clone(),
@@ -554,6 +558,7 @@ mod tests {
                 id: "q1".into(),
                 content: "ok".into(),
                 is_error: false,
+                structured_content: Some(serde_json::json!([{"type": "text", "text": "ok"}])),
             },
             WsMessage::Usage {
                 id: "q1".into(),
@@ -716,6 +721,7 @@ mod tests {
                 id: "tool-1".to_string(),
                 content: "ok".to_string(),
                 is_error: false,
+                structured_content: Some(serde_json::json!([{"type": "text", "text": "ok"}])),
             })
             .unwrap();
             tx.send(WsMessage::Complete {
@@ -772,8 +778,16 @@ mod tests {
         };
         assert!(matches!(
             tool_result,
-            WsMessage::ToolResult { ref id, ref content, is_error }
-                if id == "tool-1" && content == "ok" && !is_error
+            WsMessage::ToolResult {
+                ref id,
+                ref content,
+                is_error,
+                structured_content: Some(ref structured_content),
+            }
+                if id == "tool-1"
+                    && content == "ok"
+                    && !is_error
+                    && structured_content.is_array()
         ));
 
         let complete = match stream.next().await.unwrap().unwrap() {
@@ -963,8 +977,15 @@ mod tests {
         };
         assert!(matches!(
             second,
-            WsMessage::ToolResult { ref id, ref content, is_error }
-                if id == "tool-1" && content.contains("ws-stream") && !is_error
+            WsMessage::ToolResult {
+                ref id,
+                ref content,
+                is_error,
+                structured_content: _,
+            }
+                if id == "tool-1"
+                    && content.contains("ws-stream")
+                    && !is_error
         ));
 
         let third = match stream.next().await.unwrap().unwrap() {

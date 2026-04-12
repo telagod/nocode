@@ -89,10 +89,22 @@ impl<'a> ToolExecutor<'a> {
                     if let Some(runner) = self.hook_runner {
                         let _ = runner.run_post_tool_use(name, Some(&output.content));
                     }
-                    if output.is_error {
-                        return ContentBlock::tool_error(id, output.content);
-                    }
-                    return ContentBlock::tool_result(id, output.content);
+                    let crate::tool::ToolOutput {
+                        content,
+                        is_error,
+                        structured_content,
+                    } = output;
+                    let block = match (is_error, structured_content) {
+                        (true, Some(structured)) => {
+                            ContentBlock::tool_error_structured(id, content, structured)
+                        }
+                        (true, None) => ContentBlock::tool_error(id, content),
+                        (false, Some(structured)) => {
+                            ContentBlock::tool_result_structured(id, content, structured)
+                        }
+                        (false, None) => ContentBlock::tool_result(id, content),
+                    };
+                    return block;
                 }
             }
             return ContentBlock::tool_error(id, format!("Tool '{name}' not found"));
@@ -167,10 +179,20 @@ impl<'a> ToolExecutor<'a> {
             let _ = runner.run_post_tool_use(name, Some(&output.content));
         }
 
-        if output.is_error {
-            ContentBlock::tool_error(id, output.content)
-        } else {
-            ContentBlock::tool_result(id, output.content)
+        let crate::tool::ToolOutput {
+            content,
+            is_error,
+            structured_content,
+        } = output;
+        match (is_error, structured_content) {
+            (true, Some(structured)) => {
+                ContentBlock::tool_error_structured(id, content, structured)
+            }
+            (true, None) => ContentBlock::tool_error(id, content),
+            (false, Some(structured)) => {
+                ContentBlock::tool_result_structured(id, content, structured)
+            }
+            (false, None) => ContentBlock::tool_result(id, content),
         }
     }
 
@@ -332,14 +354,20 @@ impl ToolRunner for DefaultToolExecutor<'_> {
         let result = self.executor.execute_tool_use(id, name, input);
         match result {
             ContentBlock::ToolResult {
-                content, is_error, ..
-            } => {
-                if is_error {
-                    crate::tool::ToolOutput::error(content)
-                } else {
-                    crate::tool::ToolOutput::success(content)
+                content,
+                is_error,
+                structured_content,
+                ..
+            } => match (is_error, structured_content) {
+                (true, Some(structured)) => {
+                    crate::tool::ToolOutput::error_with_structured(content, structured)
                 }
-            }
+                (true, None) => crate::tool::ToolOutput::error(content),
+                (false, Some(structured)) => {
+                    crate::tool::ToolOutput::success_with_structured(content, structured)
+                }
+                (false, None) => crate::tool::ToolOutput::success(content),
+            },
             _ => crate::tool::ToolOutput::error("Unexpected result type"),
         }
     }

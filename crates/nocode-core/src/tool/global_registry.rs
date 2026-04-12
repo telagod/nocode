@@ -168,8 +168,16 @@ pub fn refresh_global_mcp_bridged_tools() {
                 let manager = global_mcp_manager();
                 let mut manager = manager.lock().unwrap_or_else(|e| e.into_inner());
                 match manager.call_tool(&server_name, &original_name, input) {
-                    Ok(result) if result.is_error => ToolOutput::error(result.content),
-                    Ok(result) => ToolOutput::success(result.content),
+                    Ok(result) => match (result.is_error, result.structured_content) {
+                        (true, Some(structured)) => {
+                            ToolOutput::error_with_structured(result.content, structured)
+                        }
+                        (true, None) => ToolOutput::error(result.content),
+                        (false, Some(structured)) => {
+                            ToolOutput::success_with_structured(result.content, structured)
+                        }
+                        (false, None) => ToolOutput::success(result.content),
+                    },
                     Err(err) => ToolOutput::error(err),
                 }
             }),

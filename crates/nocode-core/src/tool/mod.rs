@@ -38,6 +38,7 @@ use std::collections::HashMap;
 pub struct ToolOutput {
     pub content: String,
     pub is_error: bool,
+    pub structured_content: Option<Value>,
 }
 
 impl ToolOutput {
@@ -45,6 +46,7 @@ impl ToolOutput {
         Self {
             content: content.into(),
             is_error: false,
+            structured_content: None,
         }
     }
 
@@ -52,6 +54,23 @@ impl ToolOutput {
         Self {
             content: content.into(),
             is_error: true,
+            structured_content: None,
+        }
+    }
+
+    pub fn success_with_structured(content: impl Into<String>, structured_content: Value) -> Self {
+        Self {
+            content: content.into(),
+            is_error: false,
+            structured_content: Some(structured_content),
+        }
+    }
+
+    pub fn error_with_structured(content: impl Into<String>, structured_content: Value) -> Self {
+        Self {
+            content: content.into(),
+            is_error: true,
+            structured_content: Some(structured_content),
         }
     }
 }

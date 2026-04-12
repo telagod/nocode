@@ -2,6 +2,7 @@
 
 use crate::message::ContentBlock;
 use crate::provider::types::Usage;
+use serde_json::Value;
 
 /// High-level events emitted during the agentic loop.
 /// These are the events that TUI/REPL consumers should listen to.
@@ -25,6 +26,7 @@ pub enum ModelStreamEvent {
         name: String,
         content: String,
         is_error: bool,
+        structured_content: Option<Value>,
     },
     /// Stream error (retryable or not).
     StreamError { message: String, retryable: bool },
@@ -42,6 +44,7 @@ impl ModelStreamEvent {
             tool_use_id,
             content,
             is_error,
+            structured_content,
         } = block
         {
             Some(Self::ToolResult {
@@ -49,6 +52,7 @@ impl ModelStreamEvent {
                 name: name.to_string(),
                 content: content.clone(),
                 is_error: *is_error,
+                structured_content: structured_content.clone(),
             })
         } else {
             None

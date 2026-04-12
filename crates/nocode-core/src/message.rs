@@ -40,6 +40,8 @@ pub enum ContentBlock {
         content: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         is_error: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        structured_content: Option<Value>,
     },
 
     #[serde(rename = "thinking")]
@@ -64,6 +66,7 @@ impl ContentBlock {
             tool_use_id: tool_use_id.into(),
             content: content.into(),
             is_error: false,
+            structured_content: None,
         }
     }
 
@@ -72,6 +75,33 @@ impl ContentBlock {
             tool_use_id: tool_use_id.into(),
             content: content.into(),
             is_error: true,
+            structured_content: None,
+        }
+    }
+
+    pub fn tool_result_structured(
+        tool_use_id: impl Into<String>,
+        content: impl Into<String>,
+        structured_content: Value,
+    ) -> Self {
+        Self::ToolResult {
+            tool_use_id: tool_use_id.into(),
+            content: content.into(),
+            is_error: false,
+            structured_content: Some(structured_content),
+        }
+    }
+
+    pub fn tool_error_structured(
+        tool_use_id: impl Into<String>,
+        content: impl Into<String>,
+        structured_content: Value,
+    ) -> Self {
+        Self::ToolResult {
+            tool_use_id: tool_use_id.into(),
+            content: content.into(),
+            is_error: true,
+            structured_content: Some(structured_content),
         }
     }
 

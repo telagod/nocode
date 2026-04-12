@@ -33,6 +33,7 @@ pub struct McpResource {
 pub struct McpToolResult {
     pub content: String,
     pub is_error: bool,
+    pub structured_content: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -126,19 +127,29 @@ impl McpClient {
             .get("content")
             .and_then(Value::as_array)
             .map(|arr| {
-                arr.iter()
+                let text_parts: Vec<&str> = arr
+                    .iter()
                     .filter_map(|item| item.get("text").and_then(Value::as_str))
-                    .collect::<Vec<_>>()
-                    .join("\n")
+                    .collect();
+                if !text_parts.is_empty() {
+                    text_parts.join("\n")
+                } else {
+                    serde_json::to_string_pretty(arr).unwrap_or_default()
+                }
             })
             .unwrap_or_default();
+        let structured_content = response.get("content").cloned();
 
         let is_error = response
             .get("isError")
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
-        Ok(McpToolResult { content, is_error })
+        Ok(McpToolResult {
+            content,
+            is_error,
+            structured_content,
+        })
     }
 
     /// Read a resource from the MCP server by URI.
@@ -356,10 +367,11 @@ for line in sys.stdin:
         )
         .unwrap();
         let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
-        perms.set_mode(0o755);
+        perms.set_mode(0o644);
         std::fs::set_permissions(&script_path, perms).unwrap();
 
-        let mut client = McpClient::spawn(script_path.to_str().unwrap(), &[]).unwrap();
+        let mut client =
+            McpClient::spawn("python3", &[script_path.to_str().unwrap()]).unwrap();
         let tools = client.list_tools().unwrap();
         assert_eq!(tools.len(), 1);
 
@@ -375,6 +387,54 @@ for line in sys.stdin:
             result
                 .content
                 .contains(r#""meta": {"priority": 1, "urgent": true}"#)
+        );
+        assert!(
+            result
+                .structured_content
+                .as_ref()
+                .is_some_and(Value::is_array)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn call_tool_preserves_non_text_structured_content() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let script_path = dir.path().join("mock_mcp_structured.py");
+        std::fs::write(
+            &script_path,
+            r#"#!/usr/bin/env python3
+import json, sys
+for line in sys.stdin:
+    req = json.loads(line)
+    method = req.get("method")
+    rid = req.get("id")
+    if method == "initialize":
+        print(json.dumps({"jsonrpc":"2.0","id":rid,"result":{}}), flush=True)
+    elif method == "notifications/initialized":
+        continue
+    elif method == "tools/list":
+        print(json.dumps({"jsonrpc":"2.0","id":rid,"result":{"tools":[{"name":"structured","description":"Structured","inputSchema":{"type":"object"}}]}}), flush=True)
+    elif method == "tools/call":
+        print(json.dumps({"jsonrpc":"2.0","id":rid,"result":{"content":[{"type":"resource","uri":"file:///tmp/demo.json","mimeType":"application/json"}],"isError":False}}), flush=True)
+"#,
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+        perms.set_mode(0o644);
+        std::fs::set_permissions(&script_path, perms).unwrap();
+
+        let mut client =
+            McpClient::spawn("python3", &[script_path.to_str().unwrap()]).unwrap();
+        let result = client.call_tool("structured", &json!({})).unwrap();
+        assert!(result.content.contains("\"resource\""));
+        assert!(
+            result
+                .structured_content
+                .as_ref()
+                .is_some_and(Value::is_array)
         );
     }
 }
