@@ -4,6 +4,26 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+/// Which tier a settings file belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsTier {
+    User,
+    Project,
+    Local,
+}
+
+impl SettingsTier {
+    /// Directory name and file name for this tier.
+    pub fn path_for(&self, cwd: &str) -> std::path::PathBuf {
+        let home = std::env::var("HOME").unwrap_or_default();
+        match self {
+            Self::User => Path::new(&home).join(".nocode/settings.json"),
+            Self::Project => Path::new(cwd).join(".nocode/settings.json"),
+            Self::Local => Path::new(cwd).join(".nocode/settings.local.json"),
+        }
+    }
+}
+
 /// Runtime configuration merged from 3 tiers.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Settings {
@@ -46,6 +66,23 @@ impl Settings {
             .unwrap_or_default()
     }
 
+    /// Save settings to a JSON file, creating parent directories as needed.
+    pub fn save_to(&self, path: &Path) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {e}"))?;
+        }
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize settings: {e}"))?;
+        fs::write(path, json).map_err(|e| format!("Failed to write settings: {e}"))?;
+        Ok(())
+    }
+
+    /// Save to a specific tier at the given cwd.
+    pub fn save_tier(&self, tier: SettingsTier, cwd: &str) -> Result<(), String> {
+        let path = tier.path_for(cwd);
+        self.save_to(&path)
+    }
+
     /// Merge another settings on top (later wins for non-None scalars,
     /// maps merged key-by-key, vecs replaced wholesale).
     pub fn merge(mut self, other: Self) -> Self {
@@ -85,6 +122,98 @@ impl Settings {
         let project = Self::load_from(&Path::new(cwd).join(".nocode/settings.json"));
         let local = Self::load_from(&Path::new(cwd).join(".nocode/settings.local.json"));
         user.merge(project).merge(local)
+    }
+
+    /// Set a single key-value pair and persist to the given tier.
+    /// Supports dotted key paths like "mcp_servers.github.command".
+    pub fn set_and_persist(
+        &mut self,
+        key: &str,
+        value: &str,
+        tier: SettingsTier,
+        cwd: &str,
+    ) -> Result<(), String> {
+        self.set_key(key, value)?;
+        self.save_tier(tier, cwd)
+    }
+
+    /// Set a single key-value pair in memory (does not persist).
+    /// Supports dotted key paths like "mcp_servers.github.command".
+    pub fn set_key(&mut self, key: &str, value: &str) -> Result<(), String> {
+        match key {
+            "model" => self.model = Some(value.to_string()),
+            "permission_mode" => self.permission_mode = Some(value.to_string()),
+            "max_turns" => {
+                self.max_turns = Some(value.parse().map_err(|_| "max_turns must be a number")?)
+            }
+            "max_tokens" => {
+                self.max_tokens = Some(value.parse().map_err(|_| "max_tokens must be a number")?)
+            }
+            "custom_base_url" => self.custom_base_url = Some(value.to_string()),
+            "custom_api_format" => self.custom_api_format = Some(value.to_string()),
+            "system_prompt" => self.system_prompt = Some(value.to_string()),
+            "reasoning_effort" => self.reasoning_effort = Some(value.to_string()),
+            "telemetry_enabled" => {
+                self.telemetry_enabled = Some(value.parse().map_err(|_| {
+                    "telemetry_enabled must be true or false"
+                })?)
+            }
+            _ => {
+                return Err(format!(
+                    "Unknown setting key: '{key}'. Supported: model, permission_mode, max_turns, max_tokens, custom_base_url, custom_api_format, system_prompt, reasoning_effort, telemetry_enabled"
+                ))
+            }
+        }
+        Ok(())
+    }
+
+    /// Get a single key's current effective value.
+    pub fn get_key(&self, key: &str) -> Option<String> {
+        match key {
+            "model" => self.model.clone(),
+            "permission_mode" => self.permission_mode.clone(),
+            "max_turns" => self.max_turns.map(|v| v.to_string()),
+            "max_tokens" => self.max_tokens.map(|v| v.to_string()),
+            "custom_base_url" => self.custom_base_url.clone(),
+            "custom_api_format" => self.custom_api_format.clone(),
+            "system_prompt" => self.system_prompt.clone(),
+            "reasoning_effort" => self.reasoning_effort.clone(),
+            "telemetry_enabled" => self.telemetry_enabled.map(|v| v.to_string()),
+            _ => None,
+        }
+    }
+
+    /// List all set keys and their values.
+    pub fn list_set_keys(&self) -> Vec<(String, String)> {
+        let mut result = Vec::new();
+        if let Some(v) = &self.model {
+            result.push(("model".into(), v.clone()));
+        }
+        if let Some(v) = &self.permission_mode {
+            result.push(("permission_mode".into(), v.clone()));
+        }
+        if let Some(v) = self.max_turns {
+            result.push(("max_turns".into(), v.to_string()));
+        }
+        if let Some(v) = self.max_tokens {
+            result.push(("max_tokens".into(), v.to_string()));
+        }
+        if let Some(v) = &self.custom_base_url {
+            result.push(("custom_base_url".into(), v.clone()));
+        }
+        if let Some(v) = &self.custom_api_format {
+            result.push(("custom_api_format".into(), v.clone()));
+        }
+        if let Some(v) = &self.system_prompt {
+            result.push(("system_prompt".into(), v.clone()));
+        }
+        if let Some(v) = &self.reasoning_effort {
+            result.push(("reasoning_effort".into(), v.clone()));
+        }
+        if let Some(v) = self.telemetry_enabled {
+            result.push(("telemetry_enabled".into(), v.to_string()));
+        }
+        result
     }
 }
 
