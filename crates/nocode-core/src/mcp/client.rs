@@ -370,8 +370,7 @@ for line in sys.stdin:
         perms.set_mode(0o644);
         std::fs::set_permissions(&script_path, perms).unwrap();
 
-        let mut client =
-            McpClient::spawn("python3", &[script_path.to_str().unwrap()]).unwrap();
+        let mut client = McpClient::spawn("python3", &[script_path.to_str().unwrap()]).unwrap();
         let tools = client.list_tools().unwrap();
         assert_eq!(tools.len(), 1);
 
@@ -426,8 +425,7 @@ for line in sys.stdin:
         perms.set_mode(0o644);
         std::fs::set_permissions(&script_path, perms).unwrap();
 
-        let mut client =
-            McpClient::spawn("python3", &[script_path.to_str().unwrap()]).unwrap();
+        let mut client = McpClient::spawn("python3", &[script_path.to_str().unwrap()]).unwrap();
         let result = client.call_tool("structured", &json!({})).unwrap();
         assert!(result.content.contains("\"resource\""));
         assert!(
