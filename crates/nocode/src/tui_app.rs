@@ -196,22 +196,40 @@ impl TuiApp {
     }
 
     pub fn push_tool_start(&mut self, name: &str) {
-        self.chat_messages.push(ChatMessage::plain(
-            ChatMessageKind::Tool,
-            &format!("❯ {name}"),
-        ));
+        let info = crate::tui_widgets::ToolCallInfo::new(name, "");
+        let msg = ChatMessage::tool_call(info, Vec::new());
+        self.chat_messages.push(msg);
         self.on_message_added();
     }
 
     pub fn push_tool_done(&mut self, name: &str, content: &str, is_error: bool) {
+        // Try to update the last Tool message with structured result
+        let content_lines = crate::markdown_render::render_markdown_to_lines(content);
+        if let Some(last) = self.chat_messages.last_mut()
+            && last.kind == ChatMessageKind::Tool
+        {
+            if let Some(info) = &mut last.tool_info {
+                info.result_preview = Some(content.to_string());
+                info.collapsed = false;
+                if is_error {
+                    last.kind = ChatMessageKind::Error;
+                }
+            }
+            last.lines = content_lines;
+            self.invalidate_height_cache();
+            self.dirty = true;
+            return;
+        }
+        // Fallback: plain message
         let prefix = if is_error { "✖" } else { "⎿" };
         let display = if content.len() > 200 {
             format!("{}...", &content[..200])
         } else {
             content.to_string()
         };
+        let kind = if is_error { ChatMessageKind::Error } else { ChatMessageKind::Tool };
         self.chat_messages.push(ChatMessage::plain(
-            ChatMessageKind::Tool,
+            kind,
             &format!("{prefix} {name} {display}"),
         ));
         self.on_message_added();

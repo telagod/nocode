@@ -150,7 +150,6 @@ impl ChatMessage {
     }
 
     /// Create a tool call message with structured info.
-    #[allow(dead_code)]
     pub fn tool_call(tool_info: ToolCallInfo, result_lines: Vec<RenderedLine>) -> Self {
         Self {
             kind: ChatMessageKind::Tool,
