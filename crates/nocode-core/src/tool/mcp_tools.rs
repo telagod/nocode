@@ -2,6 +2,7 @@
 
 use crate::tool::{Tool, ToolOutput};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // ListMcpResources
@@ -126,11 +127,59 @@ impl Tool for McpTool {
         })
     }
     fn execute(&self, input: &Value) -> ToolOutput {
-        // Generic MCP tool dispatch — the GlobalToolRegistry handles mcp: prefix routing
-        ToolOutput::error(format!(
-            "Direct Mcp tool calls should be routed through GlobalToolRegistry with mcp:server:tool prefix. Input: {}",
-            serde_json::to_string(input).unwrap_or_default()
-        ))
+        // Route to McpManager for server+tool_name dispatch
+        if let Some(server) = input["server"].as_str() {
+            let tool_name = input
+                .get("tool_name")
+                .or_else(|| input.get("name"))
+                .and_then(|v| v.as_str());
+            if let Some(tool_name) = tool_name {
+                let mgr = crate::mcp::manager::global_mcp_manager();
+                let mut guard = mgr.lock().unwrap_or_else(|e| e.into_inner());
+                let args_map: HashMap<String, String> = input
+                    .get("arguments")
+                    .and_then(|v| v.as_object())
+                    .map(|obj| {
+                        obj.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let entry = guard.get_entry(server);
+                let has_entry = entry.is_some();
+                let is_connected = entry.is_some_and(|e| e.phase == crate::mcp::manager::McpPhase::Connected);
+                if !has_entry {
+                    return ToolOutput::error(format!("MCP server '{server}' not registered"));
+                }
+                if !is_connected {
+                    return ToolOutput::error(format!(
+                        "MCP server '{server}' is not connected"
+                    ));
+                }
+                return match guard.call_tool(server, tool_name, &args_map) {
+                    Ok(result) if result.is_error => ToolOutput::error(result.content),
+                    Ok(result) => ToolOutput::success(result.content),
+                    Err(e) => ToolOutput::error(e),
+                };
+            }
+        }
+
+        // Try GlobalToolRegistry if input has a prefixed name
+        if let Some(prefixed) = input["name"].as_str()
+            && prefixed.starts_with("mcp:")
+        {
+            let global = crate::tool::global_registry::global_tool_registry();
+            let guard = global.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(output) = guard.execute(prefixed, input) {
+                return output;
+            }
+        }
+
+        ToolOutput::error(
+            "Mcp tool requires 'server' and 'tool_name' (or 'name') parameters, \
+             or use the mcp:server:tool prefix format via GlobalToolRegistry."
+                .to_string(),
+        )
     }
 }
 
@@ -166,9 +215,17 @@ mod tests {
     }
 
     #[test]
-    fn mcp_generic_returns_error() {
+    fn mcp_generic_requires_parameters() {
         let tool = McpTool;
-        let result = tool.execute(&json!({"name": "test"}));
+        let result = tool.execute(&json!({}));
         assert!(result.is_error);
+    }
+
+    #[test]
+    fn mcp_generic_rejects_unknown_server() {
+        let tool = McpTool;
+        let result = tool.execute(&json!({"server": "nonexistent_xyz", "tool_name": "test"}));
+        assert!(result.is_error);
+        assert!(result.content.contains("not registered"));
     }
 }

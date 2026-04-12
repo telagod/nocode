@@ -254,6 +254,35 @@ impl McpManager {
             .collect()
     }
 
+    /// Get a reference to a server entry by name.
+    pub fn get_entry(&self, name: &str) -> Option<&McpServerEntry> {
+        self.servers.get(name)
+    }
+
+    /// Call a tool on a connected MCP server by server name and tool name.
+    pub fn call_tool(
+        &mut self,
+        server: &str,
+        tool_name: &str,
+        arguments: &std::collections::HashMap<String, String>,
+    ) -> Result<crate::mcp::client::McpToolResult, String> {
+        let entry = self
+            .servers
+            .get_mut(server)
+            .ok_or_else(|| format!("MCP server '{server}' not registered"))?;
+        if entry.phase != McpPhase::Connected {
+            return Err(format!(
+                "MCP server '{server}' is not connected ({:?})",
+                entry.phase
+            ));
+        }
+        let client = entry
+            .client
+            .as_mut()
+            .ok_or_else(|| format!("MCP server '{server}' has no active client"))?;
+        client.call_tool(tool_name, arguments)
+    }
+
     /// Read a resource from a connected MCP server.
     pub fn read_resource(&mut self, server: &str, uri: &str) -> Result<String, String> {
         let entry = self

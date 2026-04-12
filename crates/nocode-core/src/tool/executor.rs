@@ -5,6 +5,7 @@ use crate::message::ContentBlock;
 use crate::tool::ToolRegistry;
 use crate::tool::bash_validation;
 use crate::tool::file_safety;
+use crate::tool::global_registry::global_tool_registry;
 use crate::tool::hook_runner::HookRunner;
 use crate::tool::permission::{PermissionDecision, PermissionMode, PermissionPrompter};
 use crate::tool::session_tools::is_plan_mode;
@@ -74,8 +75,26 @@ impl<'a> ToolExecutor<'a> {
 
     /// Execute a single tool_use block through the full pipeline.
     pub fn execute_tool_use(&self, id: &str, name: &str, input: &Value) -> ContentBlock {
-        // 1. Lookup tool
-        let Some(tool) = self.registry.get(name) else {
+        // 1. Lookup tool — base registry first, then GlobalToolRegistry for mcp: prefix
+        let tool_opt = self.registry.get(name);
+        let is_bridged = tool_opt.is_none() && name.contains(':');
+
+        let Some(tool) = tool_opt else {
+            // Try GlobalToolRegistry for bridged tools (mcp:server:tool, plugin:name:tool)
+            if is_bridged {
+                let global = global_tool_registry();
+                let guard = global.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(output) = guard.execute(name, input) {
+                    // Run PostToolUse hooks even for bridged tools
+                    if let Some(runner) = self.hook_runner {
+                        let _ = runner.run_post_tool_use(name, Some(&output.content));
+                    }
+                    if output.is_error {
+                        return ContentBlock::tool_error(id, output.content);
+                    }
+                    return ContentBlock::tool_result(id, output.content);
+                }
+            }
             return ContentBlock::tool_error(id, format!("Tool '{name}' not found"));
         };
 

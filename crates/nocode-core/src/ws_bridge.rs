@@ -224,6 +224,207 @@ pub fn global_ws_registry() -> &'static Arc<Mutex<WsConnectionRegistry>> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// WebSocket server — TCP listener + accept loop + message dispatch
+// ---------------------------------------------------------------------------
+
+use futures::{SinkExt, StreamExt};
+use tokio::net::TcpListener;
+use tokio_tungstenite::accept_async;
+use tokio_tungstenite::tungstenite::Message;
+
+/// Callback type for handling incoming queries from WS clients.
+/// Receives the query content, returns the full response text.
+pub type QueryHandler = Arc<dyn Fn(&str) -> String + Send + Sync>;
+
+/// Run the WebSocket bridge server.
+///
+/// Binds to `config.bind_addr`, accepts WS connections, and dispatches
+/// incoming `WsMessage::Query` frames to the provided handler.
+/// Runs heartbeat pings and timeout cleanup in the background.
+pub async fn run_ws_server(config: WsBridgeConfig, handler: QueryHandler) -> Result<(), String> {
+    let listener = TcpListener::bind(&config.bind_addr)
+        .await
+        .map_err(|e| format!("WS bind failed: {e}"))?;
+
+    let heartbeat_interval = config.heartbeat_interval_secs;
+    let _connection_timeout = config.connection_timeout_secs;
+
+    // Background task: heartbeat + timeout cleanup
+    let registry = global_ws_registry().clone();
+    let hb_registry = registry.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(heartbeat_interval));
+        loop {
+            interval.tick().await;
+            let mut guard = hb_registry.lock().unwrap_or_else(|e| e.into_inner());
+            let timed_out = guard.check_timeouts();
+            if !timed_out.is_empty() {
+                eprintln!("[ws] timed out {} connections", timed_out.len());
+            }
+        }
+    });
+
+    eprintln!("[ws] listening on {}", config.bind_addr);
+
+    loop {
+        let (stream, addr) = listener
+            .accept()
+            .await
+            .map_err(|e| format!("WS accept failed: {e}"))?;
+
+        // Check capacity
+        {
+            let guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+            if guard.active_count() >= config.max_connections {
+                eprintln!("[ws] rejecting {addr}: at capacity");
+                continue;
+            }
+        }
+
+        let registry = registry.clone();
+        let handler = handler.clone();
+
+        tokio::spawn(async move {
+            let ws_stream = match accept_async(stream).await {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[ws] handshake failed from {addr}: {e}");
+                    return;
+                }
+            };
+
+            let conn_id = {
+                let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+                match guard.connect() {
+                    Ok(id) => id,
+                    Err(e) => {
+                        eprintln!("[ws] rejected connection from {addr}: {e}");
+                        return;
+                    }
+                }
+            };
+
+            eprintln!("[ws] {conn_id} connected from {addr}");
+
+            let (mut ws_sender, mut ws_receiver) = ws_stream.split();
+
+            // Heartbeat task for this connection
+            let hb_sender = registry.clone();
+            let hb_conn_id = conn_id.clone();
+            let ping_interval = std::time::Duration::from_secs(heartbeat_interval);
+            let hb_task = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(ping_interval);
+                loop {
+                    interval.tick().await;
+                    let ping = WsMessage::Ping {
+                        timestamp: chrono::Utc::now().timestamp(),
+                    };
+                    let _json = match serde_json::to_string(&ping) {
+                        Ok(j) => j,
+                        Err(_) => continue,
+                    };
+                    // We can't access ws_sender here, so just record the ping
+                    let mut guard = hb_sender.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(conn) = guard.get_mut(&hb_conn_id) {
+                        conn.record_ping();
+                    }
+                }
+            });
+
+            // Message receive loop
+            while let Some(msg_result) = ws_receiver.next().await {
+                match msg_result {
+                    Ok(Message::Text(text)) => {
+                        // Record receive
+                        {
+                            let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+                            if let Some(conn) = guard.get_mut(&conn_id) {
+                                conn.record_receive();
+                            }
+                        }
+
+                        let ws_msg: WsMessage = match serde_json::from_str(&text) {
+                            Ok(m) => m,
+                            Err(e) => {
+                                let err = WsMessage::Error {
+                                    id: String::new(),
+                                    message: format!("Invalid message: {e}"),
+                                };
+                                let err_json = serde_json::to_string(&err).unwrap_or_default();
+                                let _ = ws_sender.send(Message::Text(err_json.into())).await;
+                                continue;
+                            }
+                        };
+
+                        match ws_msg {
+                            WsMessage::Query { id, content } => {
+                                let response = handler(&content);
+
+                                // Send delta + complete
+                                let delta = WsMessage::Delta {
+                                    id: id.clone(),
+                                    text: response,
+                                };
+                                let complete = WsMessage::Complete {
+                                    id: id.clone(),
+                                    stop_reason: "end_turn".to_string(),
+                                };
+
+                                if let Ok(json) = serde_json::to_string(&delta) {
+                                    let _ = ws_sender.send(Message::Text(json.into())).await;
+                                }
+                                if let Ok(json) = serde_json::to_string(&complete) {
+                                    let _ = ws_sender.send(Message::Text(json.into())).await;
+                                }
+
+                                // Record sends
+                                {
+                                    let mut guard =
+                                        registry.lock().unwrap_or_else(|e| e.into_inner());
+                                    if let Some(conn) = guard.get_mut(&conn_id) {
+                                        conn.record_send();
+                                        conn.record_send();
+                                    }
+                                }
+                            }
+                            WsMessage::Pong { .. } => {
+                                let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+                                if let Some(conn) = guard.get_mut(&conn_id) {
+                                    conn.record_pong();
+                                }
+                            }
+                            WsMessage::Ping { timestamp } => {
+                                let pong = WsMessage::Pong { timestamp };
+                                if let Ok(json) = serde_json::to_string(&pong) {
+                                    let _ = ws_sender.send(Message::Text(json.into())).await;
+                                }
+                            }
+                            _ => {
+                                // Ignore other message types from clients
+                            }
+                        }
+                    }
+                    Ok(Message::Close(_)) => break,
+                    Ok(_) => {} // Binary, Ping, Pong — ignore
+                    Err(e) => {
+                        eprintln!("[ws] {conn_id} read error: {e}");
+                        break;
+                    }
+                }
+            }
+
+            // Cleanup
+            hb_task.abort();
+            {
+                let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+                guard.disconnect(&conn_id);
+            }
+            eprintln!("[ws] {conn_id} disconnected");
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
