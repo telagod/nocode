@@ -442,8 +442,8 @@ fn build_provider(
                 Some(url) => url,
                 None => {
                     warnings.push(
-                        "Custom provider selected but no base URL configured. \
-                         Set NOCODE_CUSTOM_BASE_URL or custom_base_url in settings. \
+                        "Custom provider: no base URL configured.\n\
+                         Set NOCODE_CUSTOM_BASE_URL or custom_base_url in settings.\n\
                          Falling back to http://localhost:8080"
                             .to_string(),
                     );
