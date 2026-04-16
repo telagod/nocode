@@ -1901,6 +1901,7 @@ impl TuiApp {
                     return HandleKeyResult::Continue;
                 }
                 self.input_history.push(text.clone());
+                self.save_history_entry(&text);
                 self.history_index = None;
                 self.input.clear();
                 self.cursor_pos = 0;
@@ -2201,6 +2202,46 @@ impl TuiApp {
         }
     }
 
+    /// Load input history from persistent file.
+    pub(crate) fn load_input_history(&mut self) {
+        let Some(path) = input_history_path() else {
+            return;
+        };
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            self.input_history = content
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(String::from)
+                .collect();
+            // Cap at 500 entries
+            if self.input_history.len() > 500 {
+                let start = self.input_history.len() - 500;
+                self.input_history = self.input_history.split_off(start);
+            }
+        }
+    }
+
+    /// Append a single entry to the persistent history file.
+    pub(crate) fn save_history_entry(&self, entry: &str) {
+        let Some(path) = input_history_path() else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        else {
+            return;
+        };
+        use std::io::Write;
+        // Escape newlines for multi-line inputs
+        let escaped = entry.replace('\n', "\\n");
+        let _ = writeln!(file, "{escaped}");
+    }
+
     fn handle_paste(&mut self, text: &str) {
         if let Overlay::Config(ref mut cs) = self.overlay
             && cs.editing
@@ -2323,6 +2364,9 @@ pub(crate) fn run_app_loop(
         std::process::id()
     );
     app.hud.session_id = session_id;
+
+    // Load persistent input history
+    app.load_input_history();
 
     // Auto-update check (non-blocking, cached)
     {
@@ -3279,6 +3323,12 @@ fn safe_truncate_ellipsis(s: &str, max: usize) -> String {
         idx -= 1;
     }
     format!("{}...", &s[..idx])
+}
+
+/// Path to persistent input history file.
+fn input_history_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(std::path::PathBuf::from(home).join(".nocode").join("input_history.txt"))
 }
 
 /// Encode RGBA pixel data to PNG format.
