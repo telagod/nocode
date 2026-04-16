@@ -32,7 +32,7 @@ crates/nocode-core/   — library (86 modules), all core logic
 crates/nocode/        — binary (18 modules), CLI/REPL/TUI shell
 ```
 
-Key dependencies: serde, serde_json, reqwest (rustls-tls), rusqlite (bundled), chrono, pulldown-cmark, syntect, crossterm, ratatui, tokio.
+Key dependencies: serde, serde_json, reqwest (rustls-tls), rusqlite (bundled), chrono, pulldown-cmark, syntect, crossterm, ratatui, tokio, arboard (clipboard), png, base64.
 
 ### Cargo Features
 
@@ -77,9 +77,9 @@ MCP tools are bridged via `mcp/bridge.rs` with `mcp:server:tool` prefix dispatch
 
 ### Provider Abstraction
 
-`ModelProvider` enum (Claude|OpenAi|Gemini|Custom) with `ApiFormat` routing. Each provider maps to a different wire format: Claude → Messages API, OpenAI → Responses API (default, not Chat Completions), Gemini → generateContent. `provider/transport.rs` handles HTTP client, SSE parsing, retry/backoff, and per-provider auth headers. Foundry is supported via `FoundryProvider` struct (same Messages API, different endpoint/auth) — use `Custom` provider with `NOCODE_CUSTOM_API_FORMAT=claude`.
+`ModelProvider` enum (Claude|OpenAi|Gemini|Custom) with `ApiFormat` routing. 4 explicit API formats: `openai-responses` (default for Custom), `openai-chat`, `anthropic`, `google`. Legacy values auto-normalized (`"openai"` → `"openai-responses"`, `"claude"` → `"anthropic"`, `"gemini"` → `"google"`). Each format maps to a different wire format: Claude → Messages API, OpenAI Responses → `/v1/responses`, OpenAI Chat → `/v1/chat/completions`, Gemini → `generateContent`. All 4 providers support inline image content blocks (`ContentBlock::Image` with base64 `ImageSource`). `provider/transport.rs` handles HTTP client, SSE parsing, retry/backoff, and per-provider auth headers. Foundry is supported via `FoundryProvider` struct (same Messages API, different endpoint/auth) — use `Custom` provider with `NOCODE_CUSTOM_API_FORMAT=anthropic`.
 
-Provider auto-detection priority (in `main.rs:resolve_provider`): `NOCODE_MODEL_PROVIDER` env → settings `model_provider` → Custom (if custom URL/format set) → `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` → `GEMINI_API_KEY` → fallback Claude.
+Provider auto-detection priority (in `main.rs:resolve_provider`): `NOCODE_MODEL_PROVIDER` env → settings `model_provider` → Custom (if `custom_base_url` set) → `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` → `GEMINI_API_KEY` → fallback Claude.
 
 ### Configuration (3-tier hierarchy)
 
@@ -138,16 +138,21 @@ The TUI (`tui_app.rs`, `tui_widgets.rs`) provides a rich terminal interface:
 
 - **Vim mode**: Normal/Insert mode with `h/j/k/l/w/b/e/x/dd/C` motions, Esc toggle, `[NORMAL]` indicator
 - **Theme switching**: Dark/light themes via `Ctrl-T`, `RwLock`-based runtime switching (`tui_theme.rs`)
-- **Thinking blocks**: Collapsible `∴` blocks showing model reasoning, `Ctrl-O` expand/collapse
+- **Thinking blocks**: Collapsible `∴` blocks showing model reasoning, `Ctrl-O` expand/collapse, first-line preview when collapsed
+- **Image paste**: `Ctrl-V` reads clipboard image via `arboard`, encodes PNG, attaches to next message. Status bar shows `[N images attached, XKB]`. Max 10 images, 4096x4096, 20MB. Esc clears pending images.
+- **Command completion**: `/` triggers autocomplete popup above input with up/down selection, Tab/Enter confirms, Esc cancels. Up to 10 filtered suggestions from `CommandRegistry`.
 - **Paste support**: Bracketed paste mode for multi-line paste with newline preservation
 - **Streaming**: Real-time incremental text rendering, tool start/done/result events
-- **Tool display**: Claude Code visual language (`❯/⎿/●/∴/•/✖/⚠`), collapsible tool output with `Tab`
+- **Tool display**: Claude Code visual language (`❯/⎿/●/∴/•/✖/⚠`), collapsible tool output with `Tab`, auto-collapsed by default
 - **Inline permissions**: `⚠ y/n/a` prompt for tool approval
-- **Input**: Multi-line with `Shift-Enter`, input history `Ctrl-P/N`, `Ctrl-U` clear
-- **Slash commands**: `/help /clear /status /model /sessions /resume /mcp /agents /quit`
-- **Session resume**: `/sessions` lists saved sessions, `/resume <id>` restores transcript
+- **Input**: Multi-line with `Shift-Enter`, `Ctrl-P/N` history (persistent across sessions in `~/.nocode/input_history.txt`), `Ctrl-U` clear, `Ctrl-A/E` line start/end, `Ctrl-W` delete word, `Ctrl-K` delete to EOL
+- **Context-aware hints**: Bottom bar shows different shortcuts based on mode (vim/completion/images/default)
+- **Slash commands**: `/help /clear /status /model /sessions /resume /mcp /agents /quit` + 40 more
+- **Session resume**: `/sessions` overlay lists saved sessions with age/count/preview, `/resume <id>` restores transcript
 - **MCP status**: `/mcp` shows connected MCP servers and discovered tools
 - **Agent status**: `/agents` shows background agent workers and their state
+- **Small terminal protection**: Graceful fallback when terminal height < 4 or width < 20
+- **Unseen messages**: Status bar shows `N new` indicator when scrolled up and new messages arrive
 
 ### Model Stream Events
 
