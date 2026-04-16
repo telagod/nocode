@@ -237,11 +237,7 @@ impl<'a> ToolExecutor<'a> {
             let new_content = std::fs::read_to_string(&path).ok();
             let history = crate::storage::file_history::global_file_history();
             if let Ok(mut h) = history.lock() {
-                h.record_edit(
-                    &std::path::PathBuf::from(&path),
-                    old_content,
-                    new_content,
-                );
+                h.record_edit(&std::path::PathBuf::from(&path), old_content, new_content);
             }
         }
 

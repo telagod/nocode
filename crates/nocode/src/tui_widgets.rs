@@ -416,7 +416,11 @@ impl Widget for InputBox<'_> {
                     col += 1;
                     char_idx = idx + _ch.len_utf8();
                 }
-                if col < self.view_offset { "" } else { &line_text[char_idx..] }
+                if col < self.view_offset {
+                    ""
+                } else {
+                    &line_text[char_idx..]
+                }
             } else {
                 line_text
             };
@@ -434,7 +438,10 @@ impl Widget for InputBox<'_> {
                     ));
                 }
                 spans.push(Span::styled("> ", Style::default().fg(theme.text_dim)));
-                spans.push(Span::styled(visible.to_string(), Style::default().fg(theme.text)));
+                spans.push(Span::styled(
+                    visible.to_string(),
+                    Style::default().fg(theme.text),
+                ));
                 lines.push(Line::from(spans));
             } else {
                 lines.push(Line::from(vec![

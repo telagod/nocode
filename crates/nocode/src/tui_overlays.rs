@@ -9,7 +9,13 @@ use crate::status_hud::StatusHud;
 use crate::tui_app::{Overlay, preset_label, provider_auth_help, provider_endpoint_help};
 
 /// Draw the active overlay on top of the main UI.
-pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, scroll: u16, frame: &mut Frame, area: Rect) {
+pub(crate) fn draw_overlay(
+    overlay: &Overlay,
+    hud: &StatusHud,
+    scroll: u16,
+    frame: &mut Frame,
+    area: Rect,
+) {
     match overlay {
         Overlay::None => {}
         Overlay::Help => {
@@ -68,16 +74,25 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, scroll: u16, fram
                 "No saved sessions.\n\nSessions are saved automatically during conversations.\nUse /resume <id> to restore a session.".to_string()
             } else {
                 let mut lines = Vec::new();
-                lines.push(format!("{} saved session{}:\n", sessions.len(), if sessions.len() > 1 { "s" } else { "" }));
+                lines.push(format!(
+                    "{} saved session{}:\n",
+                    sessions.len(),
+                    if sessions.len() > 1 { "s" } else { "" }
+                ));
                 for (i, s) in sessions.iter().take(20).enumerate() {
                     let preview = s.first_user_message.as_deref().unwrap_or("(empty)");
-                    let age = s.modified_at
+                    let age = s
+                        .modified_at
                         .map(|t| {
                             let now = chrono::Utc::now();
                             let dur = now.signed_duration_since(t);
-                            if dur.num_days() > 0 { format!("{}d ago", dur.num_days()) }
-                            else if dur.num_hours() > 0 { format!("{}h ago", dur.num_hours()) }
-                            else { format!("{}m ago", dur.num_minutes().max(1)) }
+                            if dur.num_days() > 0 {
+                                format!("{}d ago", dur.num_days())
+                            } else if dur.num_hours() > 0 {
+                                format!("{}h ago", dur.num_hours())
+                            } else {
+                                format!("{}m ago", dur.num_minutes().max(1))
+                            }
                         })
                         .unwrap_or_default();
                     lines.push(format!(

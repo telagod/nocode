@@ -15,6 +15,7 @@ use crate::tui_widgets::{
     ChatMessage, ChatMessageKind, HintsBar, InputBox, StatusBar, WelcomeBanner, WelcomeBannerInfo,
 };
 
+use base64::Engine as _;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use nocode_core::config::settings::{Settings, SettingsTier};
 use nocode_core::message::{ContentBlock, Message, SystemBlock};
@@ -23,7 +24,6 @@ use nocode_core::query::r#loop::{self, LoopConfig};
 use nocode_core::tool::ToolRegistry;
 use nocode_core::tool::executor::ToolExecutor;
 use nocode_core::tool::global_registry::tool_definitions_for_model;
-use base64::Engine as _;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::widgets::{Block, Borders};
@@ -633,11 +633,19 @@ impl TuiApp {
         let pending_img_hint = if self.pending_images.is_empty() {
             None
         } else {
-            let total_kb: usize = self.pending_images.iter().map(|i| i.size_bytes / 1024).sum();
+            let total_kb: usize = self
+                .pending_images
+                .iter()
+                .map(|i| i.size_bytes / 1024)
+                .sum();
             Some(format!(
                 "[{} image{} attached, {}KB]",
                 self.pending_images.len(),
-                if self.pending_images.len() > 1 { "s" } else { "" },
+                if self.pending_images.len() > 1 {
+                    "s"
+                } else {
+                    ""
+                },
                 total_kb
             ))
         };
@@ -799,7 +807,13 @@ impl TuiApp {
     }
 
     fn draw_overlay(&self, frame: &mut Frame, area: Rect) {
-        crate::tui_overlays::draw_overlay(&self.overlay, &self.hud, self.overlay_scroll, frame, area);
+        crate::tui_overlays::draw_overlay(
+            &self.overlay,
+            &self.hud,
+            self.overlay_scroll,
+            frame,
+            area,
+        );
     }
 
     /// Draw command completion popup above the input box.
@@ -1483,18 +1497,22 @@ impl TuiApp {
                                     // Auto-test connection after save
                                     let mut test_settings = Settings::load_merged(&cwd);
                                     test_settings.model_provider = Some(provider.clone());
-                                    test_settings.custom_base_url = if custom_base_url.trim().is_empty() {
-                                        None
-                                    } else {
-                                        Some(custom_base_url.trim().to_string())
-                                    };
-                                    test_settings.custom_api_format = if custom_api_format.trim().is_empty() {
-                                        None
-                                    } else {
-                                        Some(custom_api_format.trim().to_string())
-                                    };
-                                    let test_provider_type = crate::resolve_provider(&test_settings);
-                                    let (test_impl, _) = crate::build_provider(&test_provider_type, &test_settings);
+                                    test_settings.custom_base_url =
+                                        if custom_base_url.trim().is_empty() {
+                                            None
+                                        } else {
+                                            Some(custom_base_url.trim().to_string())
+                                        };
+                                    test_settings.custom_api_format =
+                                        if custom_api_format.trim().is_empty() {
+                                            None
+                                        } else {
+                                            Some(custom_api_format.trim().to_string())
+                                        };
+                                    let test_provider_type =
+                                        crate::resolve_provider(&test_settings);
+                                    let (test_impl, _) =
+                                        crate::build_provider(&test_provider_type, &test_settings);
                                     let test_result = match test_impl.verify_key() {
                                         Ok(msg) => format!("Saved + Connection OK: {msg}"),
                                         Err(err) => format!("Saved, but connection failed: {err}"),
@@ -1915,9 +1933,7 @@ impl TuiApp {
                 self.dirty = true;
             }
             // Delete word backward
-            (KeyCode::Char('w'), KeyModifiers::CONTROL)
-                if self.cursor_pos > 0 =>
-            {
+            (KeyCode::Char('w'), KeyModifiers::CONTROL) if self.cursor_pos > 0 => {
                 let before = &self.input[..self.cursor_pos];
                 // Skip trailing whitespace, then skip word chars
                 let trimmed = before.trim_end();
@@ -2809,10 +2825,8 @@ pub(crate) fn run_app_loop(
                                 // Build message with text + any pending images
                                 let mut blocks: Vec<ContentBlock> = Vec::new();
                                 for img in app.pending_images.drain(..) {
-                                    blocks.push(ContentBlock::image(
-                                        img.media_type,
-                                        img.base64_data,
-                                    ));
+                                    blocks
+                                        .push(ContentBlock::image(img.media_type, img.base64_data));
                                 }
                                 blocks.push(ContentBlock::text(&text));
                                 messages.push(Message::user(blocks));
@@ -2879,12 +2893,18 @@ pub(crate) fn run_app_loop(
                 Event::Mouse(mouse) => {
                     use crossterm::event::{MouseEvent, MouseEventKind};
                     match mouse {
-                        MouseEvent { kind: MouseEventKind::ScrollUp, .. } => {
+                        MouseEvent {
+                            kind: MouseEventKind::ScrollUp,
+                            ..
+                        } => {
                             app.chat_scroll = app.chat_scroll.saturating_add(3);
                             app.sticky_scroll = false;
                             app.dirty = true;
                         }
-                        MouseEvent { kind: MouseEventKind::ScrollDown, .. } => {
+                        MouseEvent {
+                            kind: MouseEventKind::ScrollDown,
+                            ..
+                        } => {
                             app.chat_scroll = app.chat_scroll.saturating_sub(3);
                             if app.chat_scroll == 0 {
                                 app.sticky_scroll = true;
@@ -2911,7 +2931,10 @@ pub(crate) fn run_app_loop(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn highlight_search_in_line<'a>(line: ratatui::text::Line<'a>, query: &str) -> ratatui::text::Line<'a> {
+fn highlight_search_in_line<'a>(
+    line: ratatui::text::Line<'a>,
+    query: &str,
+) -> ratatui::text::Line<'a> {
     use ratatui::style::{Color, Modifier};
     use ratatui::text::Span;
     if query.is_empty() {
@@ -2923,7 +2946,10 @@ fn highlight_search_in_line<'a>(line: ratatui::text::Line<'a>, query: &str) -> r
         let text = span.content.to_string();
         let text_lower = text.to_lowercase();
         let base_style = span.style;
-        let hl_style = base_style.fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD);
+        let hl_style = base_style
+            .fg(Color::Black)
+            .bg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
         let mut start = 0;
         while let Some(pos) = text_lower[start..].find(&query_lower) {
             let abs = start + pos;
@@ -3499,7 +3525,11 @@ fn safe_truncate_ellipsis(s: &str, max: usize) -> String {
 /// Path to persistent input history file.
 fn input_history_path() -> Option<std::path::PathBuf> {
     let home = std::env::var("HOME").ok()?;
-    Some(std::path::PathBuf::from(home).join(".nocode").join("input_history.txt"))
+    Some(
+        std::path::PathBuf::from(home)
+            .join(".nocode")
+            .join("input_history.txt"),
+    )
 }
 
 /// Encode RGBA pixel data to PNG format.
@@ -3509,11 +3539,7 @@ fn encode_rgba_to_png(
     width: usize,
     height: usize,
 ) -> Result<(), String> {
-    let mut encoder = png::Encoder::new(
-        std::io::Cursor::new(out),
-        width as u32,
-        height as u32,
-    );
+    let mut encoder = png::Encoder::new(std::io::Cursor::new(out), width as u32, height as u32);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder
