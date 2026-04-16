@@ -306,15 +306,15 @@ impl Provider for OpenAiResponsesProvider {
                         }
                     }
                 }
-                "response.output_item.added" => {
+                "response.output_item.added"
+                    if json["item"]["type"].as_str() == Some("function_call") =>
+                {
                     // Track new function_call items
-                    if json["item"]["type"].as_str() == Some("function_call") {
-                        let item_id = json["item"]["id"].as_str().unwrap_or("").to_string();
-                        let call_id = json["item"]["call_id"].as_str().unwrap_or("").to_string();
-                        let name = json["item"]["name"].as_str().unwrap_or("").to_string();
-                        has_function_call = true;
-                        fc_bufs.insert(item_id, (call_id, name, String::new()));
-                    }
+                    let item_id = json["item"]["id"].as_str().unwrap_or("").to_string();
+                    let call_id = json["item"]["call_id"].as_str().unwrap_or("").to_string();
+                    let name = json["item"]["name"].as_str().unwrap_or("").to_string();
+                    has_function_call = true;
+                    fc_bufs.insert(item_id, (call_id, name, String::new()));
                 }
                 "response.function_call_arguments.delta" => {
                     let item_id = json["item_id"].as_str().unwrap_or("");

@@ -152,7 +152,7 @@ impl ToolSearchTool {
             })
             .collect();
 
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        scored.sort_by_key(|s| std::cmp::Reverse(s.0));
 
         let results: Vec<Value> = scored
             .into_iter()

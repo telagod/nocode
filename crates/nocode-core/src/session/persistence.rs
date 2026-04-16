@@ -180,7 +180,7 @@ impl SessionPersistence {
             .collect();
 
         // Sort by modified_at descending (most recent first)
-        sessions.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.modified_at));
         sessions
     }
 
