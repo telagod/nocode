@@ -455,13 +455,22 @@ impl Widget for StatusBar<'_> {
         // Overlay the status content centered-ish
         if !self.content.is_empty() {
             let content = format!(" {} ", self.content);
-            let content_len = content.len() as u16;
+            let max_w = area.width.saturating_sub(2) as usize;
+            let display = if content.len() > max_w && max_w > 3 {
+                // Truncate with ellipsis
+                let mut idx = max_w - 1;
+                while idx > 0 && !content.is_char_boundary(idx) {
+                    idx -= 1;
+                }
+                format!("{}\u{2026}", &content[..idx])
+            } else {
+                content
+            };
+            let w = (display.len() as u16).min(area.width.saturating_sub(2));
             let x = area.x + 1;
-            let max_w = area.width.saturating_sub(2);
-            let w = content_len.min(max_w);
             if w > 0 {
                 let status_area = Rect::new(x, area.y, w, 1);
-                let status_p = Paragraph::new(content).style(style);
+                let status_p = Paragraph::new(display).style(style);
                 status_p.render(status_area, buf);
             }
         }

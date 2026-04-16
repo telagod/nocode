@@ -59,11 +59,43 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
             frame.render_widget(overlay_w, area);
         }
         Overlay::Sessions => {
-            let overlay_w = OverlayBlock::new(
-                "Sessions",
-                "Use /sessions in non-busy mode to list saved sessions.\n\
-                 Use /resume <id> to restore a session.",
-            );
+            use nocode_core::session::persistence::SessionPersistence;
+            let cwd = std::env::current_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| ".".to_string());
+            let sessions = SessionPersistence::list_sessions_with_info(&cwd);
+            let body = if sessions.is_empty() {
+                "No saved sessions.\n\nSessions are saved automatically during conversations.\nUse /resume <id> to restore a session.".to_string()
+            } else {
+                let mut lines = Vec::new();
+                lines.push(format!("{} saved session{}:\n", sessions.len(), if sessions.len() > 1 { "s" } else { "" }));
+                for (i, s) in sessions.iter().take(20).enumerate() {
+                    let preview = s.first_user_message.as_deref().unwrap_or("(empty)");
+                    let age = s.modified_at
+                        .map(|t| {
+                            let now = chrono::Utc::now();
+                            let dur = now.signed_duration_since(t);
+                            if dur.num_days() > 0 { format!("{}d ago", dur.num_days()) }
+                            else if dur.num_hours() > 0 { format!("{}h ago", dur.num_hours()) }
+                            else { format!("{}m ago", dur.num_minutes().max(1)) }
+                        })
+                        .unwrap_or_default();
+                    lines.push(format!(
+                        "  {}. {} ({} msgs, {}) {}",
+                        i + 1,
+                        &s.id[..s.id.len().min(12)],
+                        s.message_count,
+                        age,
+                        preview,
+                    ));
+                }
+                if sessions.len() > 20 {
+                    lines.push(format!("\n  ... and {} more", sessions.len() - 20));
+                }
+                lines.push(String::from("\nUse /resume <id> to restore a session."));
+                lines.join("\n")
+            };
+            let overlay_w = OverlayBlock::new("Sessions", &body);
             frame.render_widget(overlay_w, area);
         }
         Overlay::Mcp => {
