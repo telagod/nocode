@@ -642,6 +642,9 @@ pub fn run_repl(
             continue;
         }
 
+        // Save to persistent input history
+        save_repl_history_entry(input);
+
         messages.push(Message::user_text(input));
 
         let config = LoopConfig {
@@ -1021,4 +1024,26 @@ fn which_exists(program: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+/// Append a single entry to the persistent input history file (shared with TUI).
+fn save_repl_history_entry(entry: &str) {
+    let Some(home) = std::env::var("HOME").ok() else {
+        return;
+    };
+    let path = std::path::PathBuf::from(home)
+        .join(".nocode")
+        .join("input_history.txt");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    else {
+        return;
+    };
+    let escaped = entry.replace('\n', "\\n");
+    let _ = writeln!(file, "{escaped}");
 }
