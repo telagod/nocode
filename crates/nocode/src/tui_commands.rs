@@ -728,7 +728,7 @@ fn cmd_insights(app: &mut TuiApp, messages: &[Message]) {
 
     // Top 5 tools
     let mut top_tools: Vec<(String, usize)> = tool_freq.into_iter().collect();
-    top_tools.sort_by(|a, b| b.1.cmp(&a.1));
+    top_tools.sort_by_key(|t| std::cmp::Reverse(t.1));
     top_tools.truncate(5);
 
     let mut lines = vec![

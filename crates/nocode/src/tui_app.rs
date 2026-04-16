@@ -538,7 +538,7 @@ impl TuiApp {
         for line in &msg.lines {
             let line_width: usize = line.segments.iter().map(|s| s.text.len()).sum();
             let wrapped = if width > 0 {
-                ((line_width as u16).saturating_add(width - 1)) / width
+                (line_width as u16).div_ceil(width)
             } else {
                 1
             };
@@ -1469,15 +1469,11 @@ impl TuiApp {
                 } = self.overlay
                 {
                     match key.code {
-                        KeyCode::Up => {
-                            if !selected.is_empty() {
-                                // Move to previous question
-                            }
+                        KeyCode::Up if !selected.is_empty() => {
+                            // Move to previous question
                         }
-                        KeyCode::Down => {
-                            if !selected.is_empty() {
-                                // Move to next question
-                            }
+                        KeyCode::Down if !selected.is_empty() => {
+                            // Move to next question
                         }
                         KeyCode::Left => {
                             if let Some(cur) = selected.first_mut()
@@ -1560,13 +1556,12 @@ impl TuiApp {
                     self.search_matches.clear();
                     self.dirty = true;
                 }
-                KeyCode::Enter => {
+                KeyCode::Enter
                     // Jump to next match
-                    if !self.search_matches.is_empty() {
+                    if !self.search_matches.is_empty() => {
                         self.search_index = (self.search_index + 1) % self.search_matches.len();
                         self.dirty = true;
                     }
-                }
                 KeyCode::Backspace => {
                     self.search_query.pop();
                     self.update_search_matches();
@@ -1703,34 +1698,26 @@ impl TuiApp {
                 self.dirty = true;
             }
             // Backspace
-            (KeyCode::Backspace, _) => {
-                if self.cursor_pos > 0 {
-                    let prev = prev_char_boundary(&self.input, self.cursor_pos);
-                    self.input.drain(prev..self.cursor_pos);
-                    self.cursor_pos = prev;
-                    self.dirty = true;
-                }
+            (KeyCode::Backspace, _) if self.cursor_pos > 0 => {
+                let prev = prev_char_boundary(&self.input, self.cursor_pos);
+                self.input.drain(prev..self.cursor_pos);
+                self.cursor_pos = prev;
+                self.dirty = true;
             }
             // Delete
-            (KeyCode::Delete, _) => {
-                if self.cursor_pos < self.input.len() {
-                    let next = next_char_boundary(&self.input, self.cursor_pos);
-                    self.input.drain(self.cursor_pos..next);
-                    self.dirty = true;
-                }
+            (KeyCode::Delete, _) if self.cursor_pos < self.input.len() => {
+                let next = next_char_boundary(&self.input, self.cursor_pos);
+                self.input.drain(self.cursor_pos..next);
+                self.dirty = true;
             }
             // Left/Right
-            (KeyCode::Left, _) => {
-                if self.cursor_pos > 0 {
-                    self.cursor_pos = prev_char_boundary(&self.input, self.cursor_pos);
-                    self.dirty = true;
-                }
+            (KeyCode::Left, _) if self.cursor_pos > 0 => {
+                self.cursor_pos = prev_char_boundary(&self.input, self.cursor_pos);
+                self.dirty = true;
             }
-            (KeyCode::Right, _) => {
-                if self.cursor_pos < self.input.len() {
-                    self.cursor_pos = next_char_boundary(&self.input, self.cursor_pos);
-                    self.dirty = true;
-                }
+            (KeyCode::Right, _) if self.cursor_pos < self.input.len() => {
+                self.cursor_pos = next_char_boundary(&self.input, self.cursor_pos);
+                self.dirty = true;
             }
             // Home/End
             (KeyCode::Home, _) => {
@@ -1779,24 +1766,18 @@ impl TuiApp {
                 self.cursor_pos = 0;
                 self.dirty = true;
             }
-            'h' => {
-                if self.cursor_pos > 0 {
-                    self.cursor_pos = prev_char_boundary(&self.input, self.cursor_pos);
-                    self.dirty = true;
-                }
+            'h' if self.cursor_pos > 0 => {
+                self.cursor_pos = prev_char_boundary(&self.input, self.cursor_pos);
+                self.dirty = true;
             }
-            'l' => {
-                if self.cursor_pos < self.input.len() {
-                    self.cursor_pos = next_char_boundary(&self.input, self.cursor_pos);
-                    self.dirty = true;
-                }
+            'l' if self.cursor_pos < self.input.len() => {
+                self.cursor_pos = next_char_boundary(&self.input, self.cursor_pos);
+                self.dirty = true;
             }
-            'x' => {
-                if self.cursor_pos < self.input.len() {
-                    let next = next_char_boundary(&self.input, self.cursor_pos);
-                    self.input.drain(self.cursor_pos..next);
-                    self.dirty = true;
-                }
+            'x' if self.cursor_pos < self.input.len() => {
+                let next = next_char_boundary(&self.input, self.cursor_pos);
+                self.input.drain(self.cursor_pos..next);
+                self.dirty = true;
             }
             '0' => {
                 self.cursor_pos = 0;
@@ -2387,10 +2368,8 @@ pub(crate) fn run_app_loop(
                         }
                     }
                 }
-                Event::Paste(text) => {
-                    if !is_busy {
-                        app.handle_paste(&text);
-                    }
+                Event::Paste(text) if !is_busy => {
+                    app.handle_paste(&text);
                 }
                 Event::Resize(_, _) => {
                     app.invalidate_height_cache();
