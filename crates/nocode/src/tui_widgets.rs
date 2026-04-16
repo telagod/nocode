@@ -115,7 +115,6 @@ impl ToolCallInfo {
         }
     }
 
-    #[allow(dead_code)]
     pub fn with_result(mut self, result: &str) -> Self {
         self.result_preview = Some(result.to_owned());
         self
@@ -254,7 +253,7 @@ impl ChatMessage {
                     } else {
                         first
                     };
-                    format!("Thinking ({line_count} lines): {preview}")
+                    format!("\u{25B6} Thinking ({line_count} lines): {preview}")
                 } else {
                     String::from("Thinking...")
                 };
@@ -267,7 +266,7 @@ impl ChatMessage {
                 result.push(Line::from(vec![
                     Span::styled(prefix, Style::default().fg(prefix_color)),
                     Span::styled(
-                        format!("Thinking ({line_count} lines)"),
+                        format!("\u{25BC} Thinking ({line_count} lines)"),
                         Style::default().fg(theme.text_dim),
                     ),
                 ]));
@@ -348,7 +347,6 @@ impl ChatMessage {
     }
 
     /// Estimate height in terminal rows at given width.
-    #[allow(dead_code)]
     pub fn height(&self, _width: u16) -> u16 {
         let badge_line = if matches!(self.kind, ChatMessageKind::Spinner) {
             0

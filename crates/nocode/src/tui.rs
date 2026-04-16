@@ -1,7 +1,9 @@
 //! TUI entry point — thin wrapper around ratatui-based tui_app.
 
 use crossterm::cursor::{Hide, Show};
-use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
+use crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -30,7 +32,13 @@ pub(crate) fn run_tui(
     // Terminal setup
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste, Hide)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableBracketedPaste,
+        EnableMouseCapture,
+        Hide
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
@@ -53,6 +61,7 @@ pub(crate) fn run_tui(
         io::stdout(),
         Show,
         DisableBracketedPaste,
+        DisableMouseCapture,
         LeaveAlternateScreen
     )?;
 

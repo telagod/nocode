@@ -146,7 +146,6 @@ pub(crate) struct ConfigState {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum Overlay {
     #[default]
     None,
@@ -1896,6 +1895,15 @@ impl TuiApp {
                 }
                 self.dirty = true;
             }
+            // Error log overlay
+            (KeyCode::F(4), _) => {
+                if self.error_log.is_empty() {
+                    self.push_system("No errors logged.");
+                } else {
+                    self.overlay = Overlay::Errors(self.error_log.clone());
+                }
+                self.dirty = true;
+            }
             // History prev
             (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
                 self.history_prev();
@@ -2772,6 +2780,25 @@ pub(crate) fn run_app_loop(
                 }
                 Event::Paste(text) if !is_busy => {
                     app.handle_paste(&text);
+                }
+                Event::Mouse(mouse) => {
+                    use crossterm::event::{MouseEvent, MouseEventKind};
+                    match mouse {
+                        MouseEvent { kind: MouseEventKind::ScrollUp, .. } => {
+                            app.chat_scroll = app.chat_scroll.saturating_add(3);
+                            app.sticky_scroll = false;
+                            app.dirty = true;
+                        }
+                        MouseEvent { kind: MouseEventKind::ScrollDown, .. } => {
+                            app.chat_scroll = app.chat_scroll.saturating_sub(3);
+                            if app.chat_scroll == 0 {
+                                app.sticky_scroll = true;
+                                app.unseen_count = 0;
+                            }
+                            app.dirty = true;
+                        }
+                        _ => {}
+                    }
                 }
                 Event::Resize(_, _) => {
                     app.invalidate_height_cache();

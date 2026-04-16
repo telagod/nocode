@@ -33,7 +33,8 @@ pub(crate) fn handle_slash_command(
             SlashResult::Handled
         }
         CommandAction::Sessions => {
-            cmd_sessions(app);
+            app.overlay = Overlay::Sessions;
+            app.dirty = true;
             SlashResult::Handled
         }
         CommandAction::Resume => {
