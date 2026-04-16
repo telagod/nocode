@@ -751,7 +751,7 @@ impl TuiApp {
                         ref mut model_suggestions,
                         ref mut preset_index,
                     } = **cs;
-                    let field_count = if provider == "custom" { 5 } else { 3 };
+                    let field_count = 5; // All fields always navigable
                     match key.code {
                         KeyCode::Esc => {
                             if *editing {
@@ -988,6 +988,11 @@ impl TuiApp {
                                     ));
                                 }
                             } else {
+                                // Auto-switch to custom provider when editing endpoint fields
+                                if (*selected == 3 || *selected == 4) && provider != "custom" {
+                                    *provider = "custom".to_string();
+                                    *status = Some("Auto-switched to custom provider".to_string());
+                                }
                                 *editing = true;
                                 match *selected {
                                     1 => input.clone_from(api_key),
@@ -995,7 +1000,9 @@ impl TuiApp {
                                     3 => input.clone_from(custom_base_url),
                                     _ => input.clone_from(custom_api_format),
                                 }
-                                *status = Some("Editing field".to_string());
+                                if status.as_deref() != Some("Auto-switched to custom provider") {
+                                    *status = Some("Editing field".to_string());
+                                }
                             }
                             self.dirty = true;
                         }
@@ -1003,6 +1010,11 @@ impl TuiApp {
                             if *selected == 0 {
                                 *status = Some("Provider uses ←/→ or Enter to switch".to_string());
                             } else {
+                                // Auto-switch to custom provider when editing endpoint fields
+                                if (*selected == 3 || *selected == 4) && provider != "custom" {
+                                    *provider = "custom".to_string();
+                                    *status = Some("Auto-switched to custom provider".to_string());
+                                }
                                 *editing = true;
                                 match *selected {
                                     1 => input.clone_from(api_key),
@@ -1010,7 +1022,9 @@ impl TuiApp {
                                     3 => input.clone_from(custom_base_url),
                                     _ => input.clone_from(custom_api_format),
                                 }
-                                *status = Some("Editing field".to_string());
+                                if status.as_deref() != Some("Auto-switched to custom provider") {
+                                    *status = Some("Editing field".to_string());
+                                }
                             }
                             self.dirty = true;
                         }
