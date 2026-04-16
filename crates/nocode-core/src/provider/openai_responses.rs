@@ -105,6 +105,12 @@ impl OpenAiResponsesProvider {
                         }));
                     }
                     ContentBlock::Thinking { .. } => {}
+                    ContentBlock::Image { source } => {
+                        text_parts.push(format!(
+                            "[image: {}]",
+                            source.media_type
+                        ));
+                    }
                 }
             }
 

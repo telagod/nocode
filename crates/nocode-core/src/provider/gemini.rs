@@ -91,6 +91,14 @@ impl GeminiProvider {
                         }));
                     }
                     ContentBlock::Thinking { .. } => {}
+                    ContentBlock::Image { source } => {
+                        parts.push(json!({
+                            "inlineData": {
+                                "mimeType": source.media_type,
+                                "data": source.data
+                            }
+                        }));
+                    }
                 }
             }
 

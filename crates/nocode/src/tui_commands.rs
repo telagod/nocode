@@ -720,6 +720,9 @@ fn cmd_insights(app: &mut TuiApp, messages: &[Message]) {
                 nocode_core::message::ContentBlock::Thinking { thinking } => {
                     total_chars += thinking.len();
                 }
+                nocode_core::message::ContentBlock::Image { source } => {
+                    total_chars += source.data.len();
+                }
             }
         }
     }

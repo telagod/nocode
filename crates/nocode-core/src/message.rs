@@ -46,6 +46,25 @@ pub enum ContentBlock {
 
     #[serde(rename = "thinking")]
     Thinking { thinking: String },
+
+    #[serde(rename = "image")]
+    Image {
+        /// Base64-encoded image data.
+        #[serde(rename = "source")]
+        source: ImageSource,
+    },
+}
+
+/// Image source for inline image content blocks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageSource {
+    /// Always "base64" for inline images.
+    #[serde(rename = "type")]
+    pub source_type: String,
+    /// MIME type: "image/png", "image/jpeg", "image/gif", "image/webp".
+    pub media_type: String,
+    /// Base64-encoded image bytes.
+    pub data: String,
 }
 
 impl ContentBlock {
@@ -111,6 +130,17 @@ impl ContentBlock {
 
     pub const fn is_tool_result(&self) -> bool {
         matches!(self, Self::ToolResult { .. })
+    }
+
+    /// Create an inline base64 image content block.
+    pub fn image(media_type: impl Into<String>, data: impl Into<String>) -> Self {
+        Self::Image {
+            source: ImageSource {
+                source_type: "base64".to_string(),
+                media_type: media_type.into(),
+                data: data.into(),
+            },
+        }
     }
 }
 

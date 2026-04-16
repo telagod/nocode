@@ -92,6 +92,14 @@ impl OpenAiProvider {
                         }));
                     }
                     ContentBlock::Thinking { .. } => {}
+                    ContentBlock::Image { source } => {
+                        content_parts.push(json!({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": format!("data:{};base64,{}", source.media_type, source.data)
+                            }
+                        }));
+                    }
                 }
             }
 

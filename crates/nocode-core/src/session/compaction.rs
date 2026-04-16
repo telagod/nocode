@@ -142,6 +142,9 @@ impl RichCompactor {
                         transcript.push_str(&format!("[tool_result:{status}] {preview}\n"));
                     }
                     ContentBlock::Thinking { .. } => {}
+                    ContentBlock::Image { source } => {
+                        transcript.push_str(&format!("[{role}] (image: {})\n", source.media_type));
+                    }
                 }
             }
         }
@@ -157,6 +160,7 @@ impl RichCompactor {
                 ContentBlock::ToolUse { input, .. } => input.to_string().len() as u64 / 4,
                 ContentBlock::ToolResult { content, .. } => content.len() as u64 / 4,
                 ContentBlock::Thinking { thinking } => thinking.len() as u64 / 4,
+                ContentBlock::Image { source } => source.data.len() as u64 / 4,
             })
             .sum()
     }
@@ -299,6 +303,7 @@ impl ContextCollapser {
                 ContentBlock::ToolUse { input, .. } => input.to_string().len() as u64 / 4,
                 ContentBlock::ToolResult { content, .. } => content.len() as u64 / 4,
                 ContentBlock::Thinking { thinking } => thinking.len() as u64 / 4,
+                ContentBlock::Image { source } => source.data.len() as u64 / 4,
             })
             .sum()
     }

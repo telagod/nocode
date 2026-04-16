@@ -17,12 +17,13 @@ use crate::tui_widgets::{
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use nocode_core::config::settings::{Settings, SettingsTier};
-use nocode_core::message::{Message, SystemBlock};
+use nocode_core::message::{ContentBlock, Message, SystemBlock};
 use nocode_core::provider::Provider;
 use nocode_core::query::r#loop::{self, LoopConfig};
 use nocode_core::tool::ToolRegistry;
 use nocode_core::tool::executor::ToolExecutor;
 use nocode_core::tool::global_registry::tool_definitions_for_model;
+use base64::Engine as _;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::widgets::{Block, Borders};
@@ -310,6 +311,17 @@ pub(crate) struct TuiApp {
     /// Background worker event receiver
     pub(crate) worker_event_rx:
         Option<std::sync::mpsc::Receiver<nocode_core::agent::worker::WorkerEvent>>,
+    /// Command completion state
+    pub(crate) completion_selected: Option<usize>,
+    /// Pending images from clipboard paste, awaiting submit.
+    pub(crate) pending_images: Vec<PendingImage>,
+}
+
+/// An image pasted from clipboard, waiting to be sent with the next message.
+pub(crate) struct PendingImage {
+    pub media_type: String,
+    pub base64_data: String,
+    pub size_bytes: usize,
 }
 
 impl TuiApp {
@@ -345,6 +357,8 @@ impl TuiApp {
             search_index: 0,
             model_fetch_rx: None,
             worker_event_rx: None,
+            completion_selected: None,
+            pending_images: Vec::new(),
         }
     }
 
@@ -600,8 +614,19 @@ impl TuiApp {
         frame.render_widget(input_widget, chunks[1]);
 
         // 3. Status line (fused as input bottom border)
-        let status_text = self
-            .search_status()
+        let pending_img_hint = if self.pending_images.is_empty() {
+            None
+        } else {
+            let total_kb: usize = self.pending_images.iter().map(|i| i.size_bytes / 1024).sum();
+            Some(format!(
+                "[{} image{} attached, {}KB]",
+                self.pending_images.len(),
+                if self.pending_images.len() > 1 { "s" } else { "" },
+                total_kb
+            ))
+        };
+        let status_text = pending_img_hint
+            .or_else(|| self.search_status())
             .or_else(|| self.slash_command_hint())
             .unwrap_or_else(|| self.hud.render_line());
         let status = StatusBar::new(&status_text);
@@ -628,7 +653,12 @@ impl TuiApp {
         let cursor_y = chunks[1].y + 1 + cursor_line; // +1 for top border
         frame.set_cursor_position((cursor_x, cursor_y));
 
-        // 5. Overlay
+        // 5. Command completion popup (above input box)
+        if self.completion_selected.is_some() && !self.overlay.is_open() {
+            self.draw_completion_popup(frame, chunks[1]);
+        }
+
+        // 6. Overlay
         if self.overlay.is_open() {
             self.draw_overlay(frame, frame.area());
         }
@@ -725,6 +755,93 @@ impl TuiApp {
 
     fn draw_overlay(&self, frame: &mut Frame, area: Rect) {
         crate::tui_overlays::draw_overlay(&self.overlay, &self.hud, frame, area);
+    }
+
+    /// Draw command completion popup above the input box.
+    fn draw_completion_popup(&self, frame: &mut Frame, input_area: Rect) {
+        let suggestions = self.completion_suggestions();
+        if suggestions.is_empty() {
+            return;
+        }
+        let selected = self.completion_selected.unwrap_or(0);
+        let count = suggestions.len().min(10) as u16;
+        let popup_height = count + 2; // +2 for border
+
+        // Position: above input box
+        let popup_y = input_area.y.saturating_sub(popup_height);
+        let popup_width = input_area.width.min(60);
+        let popup_area = Rect {
+            x: input_area.x,
+            y: popup_y,
+            width: popup_width,
+            height: popup_height,
+        };
+
+        // Clear background
+        frame.render_widget(ratatui::widgets::Clear, popup_area);
+
+        let theme = crate::tui_theme::default_theme();
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(ratatui::style::Style::default().fg(theme.border))
+            .title(" Commands ")
+            .title_style(ratatui::style::Style::default().fg(theme.claude));
+
+        let inner = block.inner(popup_area);
+        frame.render_widget(block, popup_area);
+
+        // Render each suggestion line
+        for (i, (label, summary)) in suggestions.iter().take(count as usize).enumerate() {
+            let is_selected = i == selected;
+            let y = inner.y + i as u16;
+            if y >= inner.y + inner.height {
+                break;
+            }
+
+            let line_area = Rect {
+                x: inner.x,
+                y,
+                width: inner.width,
+                height: 1,
+            };
+
+            // Truncate to fit
+            let max_label = 20.min(inner.width as usize / 2);
+            let display_label = if label.len() > max_label {
+                &label[..max_label]
+            } else {
+                label.as_str()
+            };
+            let remaining = inner.width as usize - display_label.len() - 1;
+            let display_summary = if summary.len() > remaining {
+                let mut idx = remaining.saturating_sub(3);
+                while idx > 0 && !summary.is_char_boundary(idx) {
+                    idx -= 1;
+                }
+                format!("{}...", &summary[..idx])
+            } else {
+                summary.clone()
+            };
+
+            let style = if is_selected {
+                ratatui::style::Style::default()
+                    .fg(theme.background)
+                    .bg(theme.claude)
+            } else {
+                ratatui::style::Style::default().fg(theme.text)
+            };
+
+            // Fill background for selected line
+            if is_selected {
+                let bg_block =
+                    Block::default().style(ratatui::style::Style::default().bg(theme.claude));
+                frame.render_widget(bg_block, line_area);
+            }
+
+            let text = format!("{display_label} {display_summary}");
+            let para = ratatui::widgets::Paragraph::new(text).style(style);
+            frame.render_widget(para, line_area);
+        }
     }
 
     // -- key handling --
@@ -1579,6 +1696,53 @@ impl TuiApp {
             return HandleKeyResult::Continue;
         }
 
+        // Command completion intercept — when popup is active
+        if self.completion_selected.is_some() {
+            match (key.code, key.modifiers) {
+                (KeyCode::Up, KeyModifiers::NONE) => {
+                    if let Some(sel) = self.completion_selected.as_mut() {
+                        *sel = sel.saturating_sub(1);
+                    }
+                    self.dirty = true;
+                    return HandleKeyResult::Continue;
+                }
+                (KeyCode::Down, KeyModifiers::NONE) => {
+                    let count = self.completion_suggestions().len();
+                    if let Some(sel) = self.completion_selected.as_mut()
+                        && *sel + 1 < count
+                    {
+                        *sel += 1;
+                    }
+                    self.dirty = true;
+                    return HandleKeyResult::Continue;
+                }
+                (KeyCode::Tab, _) | (KeyCode::Enter, KeyModifiers::NONE) => {
+                    // Apply selected completion
+                    let suggestions = self.completion_suggestions();
+                    if let Some(sel) = self.completion_selected
+                        && let Some((label, _)) = suggestions.get(sel)
+                    {
+                        // Extract command name (e.g. "/help" from "/help [topic]")
+                        let cmd = label.split_whitespace().next().unwrap_or(label);
+                        self.input = cmd.to_string();
+                        self.cursor_pos = self.input.len();
+                    }
+                    self.completion_selected = None;
+                    self.dirty = true;
+                    return HandleKeyResult::Continue;
+                }
+                (KeyCode::Esc, _) => {
+                    self.completion_selected = None;
+                    self.dirty = true;
+                    return HandleKeyResult::Continue;
+                }
+                _ => {
+                    // Fall through to normal handling, but clear completion
+                    // if it's not a character key (completion will be re-evaluated)
+                }
+            }
+        }
+
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) => {
                 if self.input_mode == InputMode::Insert {
@@ -1653,6 +1817,10 @@ impl TuiApp {
             (KeyCode::Char('y'), KeyModifiers::CONTROL) => {
                 self.copy_last_assistant_to_clipboard();
             }
+            // Paste image from clipboard (text paste handled by Event::Paste)
+            (KeyCode::Char('v'), KeyModifiers::CONTROL) => {
+                let _ = self.try_paste_image();
+            }
             // Search toggle
             (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
                 if self.search_active {
@@ -1704,12 +1872,14 @@ impl TuiApp {
                 let prev = prev_char_boundary(&self.input, self.cursor_pos);
                 self.input.drain(prev..self.cursor_pos);
                 self.cursor_pos = prev;
+                self.update_completion();
                 self.dirty = true;
             }
             // Delete
             (KeyCode::Delete, _) if self.cursor_pos < self.input.len() => {
                 let next = next_char_boundary(&self.input, self.cursor_pos);
                 self.input.drain(self.cursor_pos..next);
+                self.update_completion();
                 self.dirty = true;
             }
             // Left/Right
@@ -1737,6 +1907,7 @@ impl TuiApp {
                 } else {
                     self.input.insert(self.cursor_pos, c);
                     self.cursor_pos += c.len_utf8();
+                    self.update_completion();
                     self.dirty = true;
                 }
             }
@@ -1884,18 +2055,61 @@ impl TuiApp {
             return None;
         }
         let registry = CommandRegistry::with_defaults();
-        let suggestions = registry.recommend(&self.input, 4);
+        let suggestions = registry.recommend(&self.input, 10);
         if suggestions.is_empty() {
             return Some("Commands: no matches".to_string());
         }
-        let parts: Vec<String> = suggestions
-            .into_iter()
-            .map(|cmd| match cmd.argument_hint {
+        // When completion popup is active, show selected command in status bar
+        if let Some(sel) = self.completion_selected
+            && let Some(cmd) = suggestions.get(sel)
+        {
+            return Some(match cmd.argument_hint {
                 Some(hint) => format!("/{} {} — {}", cmd.name, hint, cmd.summary),
                 None => format!("/{} — {}", cmd.name, cmd.summary),
+            });
+        }
+        let parts: Vec<String> = suggestions
+            .iter()
+            .take(4)
+            .map(|cmd| match cmd.argument_hint {
+                Some(hint) => format!("/{} {}", cmd.name, hint),
+                None => format!("/{}", cmd.name),
             })
             .collect();
         Some(format!("Commands: {}", parts.join("  ·  ")))
+    }
+
+    /// Get completion suggestions for the current input.
+    pub(crate) fn completion_suggestions(&self) -> Vec<(String, String)> {
+        if !self.input.trim_start().starts_with('/') {
+            return Vec::new();
+        }
+        let registry = CommandRegistry::with_defaults();
+        registry
+            .recommend(&self.input, 10)
+            .into_iter()
+            .map(|cmd| {
+                let label = match cmd.argument_hint {
+                    Some(hint) => format!("/{} {}", cmd.name, hint),
+                    None => format!("/{}", cmd.name),
+                };
+                (label, cmd.summary.to_string())
+            })
+            .collect()
+    }
+
+    /// Update completion state after input changes.
+    fn update_completion(&mut self) {
+        if self.input.trim_start().starts_with('/') && !self.input.contains(' ') {
+            // Activate completion, reset selection to 0 if we have suggestions
+            let has_suggestions = {
+                let registry = CommandRegistry::with_defaults();
+                !registry.recommend(&self.input, 1).is_empty()
+            };
+            self.completion_selected = if has_suggestions { Some(0) } else { None };
+        } else {
+            self.completion_selected = None;
+        }
     }
 
     fn history_prev(&mut self) {
@@ -1952,7 +2166,46 @@ impl TuiApp {
         }
         self.input.insert_str(self.cursor_pos, text);
         self.cursor_pos += text.len();
+        self.update_completion();
         self.dirty = true;
+    }
+
+    /// Try to read an image from the system clipboard and add it to pending_images.
+    fn try_paste_image(&mut self) -> bool {
+        let Ok(mut clipboard) = arboard::Clipboard::new() else {
+            return false;
+        };
+        let Ok(img) = clipboard.get_image() else {
+            return false;
+        };
+
+        // Convert RGBA pixels to PNG in memory
+        let width = img.width;
+        let height = img.height;
+        let rgba_bytes = img.bytes;
+
+        // Encode as PNG using minimal encoder
+        let mut png_data: Vec<u8> = Vec::new();
+        if encode_rgba_to_png(&mut png_data, &rgba_bytes, width, height).is_err() {
+            return false;
+        }
+
+        let size_bytes = png_data.len();
+        let base64_data = base64::engine::general_purpose::STANDARD.encode(&png_data);
+
+        self.pending_images.push(PendingImage {
+            media_type: "image/png".to_string(),
+            base64_data,
+            size_bytes,
+        });
+
+        let idx = self.pending_images.len();
+        let size_kb = size_bytes / 1024;
+        self.push_system(&format!(
+            "Image #{idx} pasted ({width}x{height}, {size_kb}KB). Will be sent with your next message."
+        ));
+        self.dirty = true;
+        true
     }
 }
 
@@ -2312,7 +2565,17 @@ pub(crate) fn run_app_loop(
                                 // Submit to agentic loop
                                 app.push_user_message(&text);
                                 app.show_banner = false;
-                                messages.push(Message::user_text(&text));
+
+                                // Build message with text + any pending images
+                                let mut blocks: Vec<ContentBlock> = Vec::new();
+                                for img in app.pending_images.drain(..) {
+                                    blocks.push(ContentBlock::image(
+                                        img.media_type,
+                                        img.base64_data,
+                                    ));
+                                }
+                                blocks.push(ContentBlock::text(&text));
+                                messages.push(Message::user(blocks));
 
                                 app.hud.start_turn();
                                 app.thinking_spinner = Some(Spinner::new("Thinking..."));
@@ -2914,6 +3177,29 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
     }
 
     Err("No clipboard tool found (tried xclip, xsel, wl-copy, pbcopy, clip.exe)".to_string())
+}
+
+/// Encode RGBA pixel data to PNG format.
+fn encode_rgba_to_png(
+    out: &mut Vec<u8>,
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+) -> Result<(), String> {
+    let mut encoder = png::Encoder::new(
+        std::io::Cursor::new(out),
+        width as u32,
+        height as u32,
+    );
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder
+        .write_header()
+        .map_err(|e| format!("PNG header: {e}"))?;
+    writer
+        .write_image_data(rgba)
+        .map_err(|e| format!("PNG data: {e}"))?;
+    Ok(())
 }
 
 #[cfg(test)]
