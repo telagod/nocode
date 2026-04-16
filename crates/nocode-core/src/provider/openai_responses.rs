@@ -75,6 +75,7 @@ impl OpenAiResponsesProvider {
             let mut text_parts: Vec<String> = Vec::new();
             let mut function_calls: Vec<Value> = Vec::new();
             let mut function_results: Vec<Value> = Vec::new();
+            let mut image_parts: Vec<Value> = Vec::new();
 
             for block in &msg.content {
                 match block {
@@ -106,10 +107,10 @@ impl OpenAiResponsesProvider {
                     }
                     ContentBlock::Thinking { .. } => {}
                     ContentBlock::Image { source } => {
-                        text_parts.push(format!(
-                            "[image: {}]",
-                            source.media_type
-                        ));
+                        image_parts.push(json!({
+                            "type": "input_image",
+                            "image_url": format!("data:{};base64,{}", source.media_type, source.data)
+                        }));
                     }
                 }
             }
@@ -120,7 +121,17 @@ impl OpenAiResponsesProvider {
                     for fr in function_results {
                         input.push(fr);
                     }
-                    if !text_parts.is_empty() {
+                    if !image_parts.is_empty() {
+                        // Multi-part content: images + text
+                        let mut content_parts = image_parts;
+                        if !text_parts.is_empty() {
+                            content_parts.push(json!({
+                                "type": "input_text",
+                                "text": text_parts.join("")
+                            }));
+                        }
+                        input.push(json!({"role": "user", "content": content_parts}));
+                    } else if !text_parts.is_empty() {
                         let text = text_parts.join("");
                         input.push(json!({"role": "user", "content": text}));
                     }
