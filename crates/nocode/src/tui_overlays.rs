@@ -9,7 +9,7 @@ use crate::status_hud::StatusHud;
 use crate::tui_app::{Overlay, preset_label, provider_auth_help, provider_endpoint_help};
 
 /// Draw the active overlay on top of the main UI.
-pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame, area: Rect) {
+pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, scroll: u16, frame: &mut Frame, area: Rect) {
     match overlay {
         Overlay::None => {}
         Overlay::Help => {
@@ -39,7 +39,7 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                  \n",
             );
             help.push_str(&cmd_reg.help_text());
-            let overlay_w = OverlayBlock::new("Help", &help);
+            let overlay_w = OverlayBlock::new("Help", &help).with_scroll(scroll);
             frame.render_widget(overlay_w, area);
         }
         Overlay::Status => {
@@ -55,7 +55,7 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                 hud.cumulative_output_tokens(),
                 hud.context_pct(),
             );
-            let overlay_w = OverlayBlock::new("Status", &status);
+            let overlay_w = OverlayBlock::new("Status", &status).with_scroll(scroll);
             frame.render_widget(overlay_w, area);
         }
         Overlay::Sessions => {
@@ -95,7 +95,7 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                 lines.push(String::from("\nUse /resume <id> to restore a session."));
                 lines.join("\n")
             };
-            let overlay_w = OverlayBlock::new("Sessions", &body);
+            let overlay_w = OverlayBlock::new("Sessions", &body).with_scroll(scroll);
             frame.render_widget(overlay_w, area);
         }
         Overlay::Mcp => {
@@ -149,7 +149,7 @@ Commands:
 ",
                 )
             };
-            let overlay_w = OverlayBlock::new("MCP Servers", &text);
+            let overlay_w = OverlayBlock::new("MCP Servers", &text).with_scroll(scroll);
             frame.render_widget(overlay_w, area);
         }
         Overlay::Agents => {
@@ -206,7 +206,7 @@ Commands:
                 );
                 lines.join("\n")
             };
-            let overlay_w = OverlayBlock::new("Agents", &text);
+            let overlay_w = OverlayBlock::new("Agents", &text).with_scroll(scroll);
             frame.render_widget(overlay_w, area);
         }
         Overlay::Config(cs) => {
@@ -443,7 +443,7 @@ Commands:
                 }
                 Err(e) => format!("Memory directory: {mem_dir}\n\nError: {e}"),
             };
-            let overlay_w = OverlayBlock::new("Memory", &text);
+            let overlay_w = OverlayBlock::new("Memory", &text).with_scroll(scroll);
             frame.render_widget(overlay_w, area);
         }
         Overlay::Cost => {
@@ -462,7 +462,7 @@ Commands:
                  Use /insights for detailed session statistics.",
                 hud.context_pct(),
             );
-            let overlay_w = OverlayBlock::new("Cost", &text);
+            let overlay_w = OverlayBlock::new("Cost", &text).with_scroll(scroll);
             frame.render_widget(overlay_w, area);
         }
         Overlay::Permission { tool_name, tool_id } => {
@@ -515,7 +515,7 @@ Commands:
                     lines.join("\n")
                 )
             };
-            let overlay_w = OverlayBlock::new("Error Log", &text);
+            let overlay_w = OverlayBlock::new("Error Log", &text).with_scroll(scroll);
             frame.render_widget(overlay_w, area);
         }
     }

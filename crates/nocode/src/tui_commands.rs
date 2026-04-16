@@ -24,16 +24,19 @@ pub(crate) fn handle_slash_command(
         }
         CommandAction::Help => {
             app.overlay = Overlay::Help;
+            app.overlay_scroll = 0;
             app.dirty = true;
             SlashResult::Handled
         }
         CommandAction::Status => {
             app.overlay = Overlay::Status;
+            app.overlay_scroll = 0;
             app.dirty = true;
             SlashResult::Handled
         }
         CommandAction::Sessions => {
             app.overlay = Overlay::Sessions;
+            app.overlay_scroll = 0;
             app.dirty = true;
             SlashResult::Handled
         }
@@ -43,11 +46,13 @@ pub(crate) fn handle_slash_command(
         }
         CommandAction::Mcp => {
             app.overlay = Overlay::Mcp;
+            app.overlay_scroll = 0;
             app.dirty = true;
             SlashResult::Handled
         }
         CommandAction::Agents => {
             app.overlay = Overlay::Agents;
+            app.overlay_scroll = 0;
             app.dirty = true;
             SlashResult::Handled
         }
@@ -57,11 +62,13 @@ pub(crate) fn handle_slash_command(
         }
         CommandAction::Memory => {
             app.overlay = Overlay::Memory;
+            app.overlay_scroll = 0;
             app.dirty = true;
             SlashResult::Handled
         }
         CommandAction::Cost => {
             app.overlay = Overlay::Cost;
+            app.overlay_scroll = 0;
             app.dirty = true;
             SlashResult::Handled
         }

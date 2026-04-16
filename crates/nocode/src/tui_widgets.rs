@@ -510,11 +510,21 @@ impl Widget for HintsBar {
 pub(crate) struct OverlayBlock<'a> {
     pub title: &'a str,
     pub body: &'a str,
+    pub scroll: u16,
 }
 
 impl<'a> OverlayBlock<'a> {
     pub fn new(title: &'a str, body: &'a str) -> Self {
-        Self { title, body }
+        Self {
+            title,
+            body,
+            scroll: 0,
+        }
+    }
+
+    pub fn with_scroll(mut self, scroll: u16) -> Self {
+        self.scroll = scroll;
+        self
     }
 }
 
@@ -544,7 +554,8 @@ impl Widget for OverlayBlock<'_> {
 
         let paragraph = Paragraph::new(self.body)
             .style(Style::default().fg(theme.text))
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .scroll((self.scroll, 0));
         paragraph.render(inner, buf);
     }
 }

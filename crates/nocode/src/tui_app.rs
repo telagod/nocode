@@ -314,6 +314,8 @@ pub(crate) struct TuiApp {
     pub(crate) completion_selected: Option<usize>,
     /// Pending images from clipboard paste, awaiting submit.
     pub(crate) pending_images: Vec<PendingImage>,
+    /// Overlay scroll offset for scrollable overlays.
+    pub(crate) overlay_scroll: u16,
 }
 
 /// An image pasted from clipboard, waiting to be sent with the next message.
@@ -358,6 +360,7 @@ impl TuiApp {
             worker_event_rx: None,
             completion_selected: None,
             pending_images: Vec::new(),
+            overlay_scroll: 0,
         }
     }
 
@@ -770,7 +773,7 @@ impl TuiApp {
     }
 
     fn draw_overlay(&self, frame: &mut Frame, area: Rect) {
-        crate::tui_overlays::draw_overlay(&self.overlay, &self.hud, frame, area);
+        crate::tui_overlays::draw_overlay(&self.overlay, &self.hud, self.overlay_scroll, frame, area);
     }
 
     /// Draw command completion popup above the input box.
@@ -1676,10 +1679,30 @@ impl TuiApp {
                 self.dirty = true;
                 return HandleKeyResult::Continue;
             }
-            // Other overlays: Esc closes
-            if key.code == KeyCode::Esc {
-                self.overlay = Overlay::None;
-                self.dirty = true;
+            // Other overlays: Esc closes, Up/Down/PageUp/PageDown scrolls
+            match key.code {
+                KeyCode::Esc => {
+                    self.overlay = Overlay::None;
+                    self.overlay_scroll = 0;
+                    self.dirty = true;
+                }
+                KeyCode::Up => {
+                    self.overlay_scroll = self.overlay_scroll.saturating_add(1);
+                    self.dirty = true;
+                }
+                KeyCode::Down => {
+                    self.overlay_scroll = self.overlay_scroll.saturating_sub(1);
+                    self.dirty = true;
+                }
+                KeyCode::PageUp => {
+                    self.overlay_scroll = self.overlay_scroll.saturating_add(10);
+                    self.dirty = true;
+                }
+                KeyCode::PageDown => {
+                    self.overlay_scroll = self.overlay_scroll.saturating_sub(10);
+                    self.dirty = true;
+                }
+                _ => {}
             }
             return HandleKeyResult::Continue;
         }
@@ -1901,6 +1924,7 @@ impl TuiApp {
                     self.push_system("No errors logged.");
                 } else {
                     self.overlay = Overlay::Errors(self.error_log.clone());
+                    self.overlay_scroll = 0;
                 }
                 self.dirty = true;
             }
