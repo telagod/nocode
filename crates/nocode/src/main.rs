@@ -38,6 +38,7 @@ use nocode_core::provider::ProviderBox;
 use nocode_core::provider::claude::ClaudeProvider;
 use nocode_core::provider::foundry::FoundryProvider;
 use nocode_core::provider::gemini::GeminiProvider;
+use nocode_core::provider::openai::OpenAiProvider;
 use nocode_core::provider::openai_responses::OpenAiResponsesProvider;
 use nocode_core::provider::types::ModelProvider;
 use nocode_core::query::r#loop::{self, LoopConfig, NoopObserver};
@@ -450,13 +451,14 @@ fn build_provider(
                     String::from("http://localhost:8080")
                 }
             };
-            let format = settings
+            let format_raw = settings
                 .custom_api_format
                 .clone()
                 .or_else(|| env::var("NOCODE_CUSTOM_API_FORMAT").ok())
-                .unwrap_or_else(|| String::from("openai"));
-            match format.as_str() {
-                "anthropic" | "claude" => {
+                .unwrap_or_else(|| String::from("openai-responses"));
+            let format = nocode_core::config::settings::normalize_api_format(&format_raw);
+            match format {
+                "anthropic" => {
                     if let Some(foundry_id) = base
                         .strip_prefix("https://")
                         .and_then(|s| s.strip_suffix(".foundry.anthropic.com"))
@@ -466,12 +468,13 @@ fn build_provider(
                         Box::new(ClaudeProvider::with_base_url(base, key))
                     }
                 }
-                "openai" => Box::new(OpenAiResponsesProvider::with_base_url(base, key)),
-                "google" | "gemini" => Box::new(GeminiProvider::new(key)),
+                "openai-responses" => Box::new(OpenAiResponsesProvider::with_base_url(base, key)),
+                "openai-chat" => Box::new(OpenAiProvider::with_base_url(base, key)),
+                "google" => Box::new(GeminiProvider::new(key)),
                 other => {
                     warnings.push(format!(
-                        "Unknown custom_api_format '{other}', defaulting to openai. \
-                         Valid values: anthropic, openai, google"
+                        "Unknown custom_api_format '{other}', defaulting to openai-responses.\n\
+                         Valid values: openai-responses, openai-chat, anthropic, google"
                     ));
                     Box::new(OpenAiResponsesProvider::with_base_url(base, key))
                 }

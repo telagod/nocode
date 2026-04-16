@@ -287,13 +287,19 @@ fn build_worker_provider(
                 .clone()
                 .or_else(|| std::env::var("NOCODE_CUSTOM_BASE_URL").ok())
                 .unwrap_or_else(|| String::from("http://localhost:8080"));
-            let format = settings
+            let format_raw = settings
                 .custom_api_format
                 .clone()
                 .or_else(|| std::env::var("NOCODE_CUSTOM_API_FORMAT").ok())
-                .unwrap_or_else(|| String::from("openai"));
-            match format.as_str() {
-                "anthropic" | "claude" => Box::new(ClaudeProvider::with_base_url(base, key)),
+                .unwrap_or_else(|| String::from("openai-responses"));
+            let format = crate::config::settings::normalize_api_format(&format_raw);
+            match format {
+                "anthropic" => Box::new(ClaudeProvider::with_base_url(base, key)),
+                "openai-chat" => {
+                    use crate::provider::openai::OpenAiProvider;
+                    Box::new(OpenAiProvider::with_base_url(base, key))
+                }
+                "google" => Box::new(GeminiProvider::new(key)),
                 _ => Box::new(OpenAiResponsesProvider::with_base_url(base, key)),
             }
         }

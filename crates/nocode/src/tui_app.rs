@@ -49,31 +49,31 @@ pub(crate) static CUSTOM_PRESETS: &[ProviderPreset] = &[
     ProviderPreset {
         name: "Ollama",
         base_url: "http://localhost:11434/v1",
-        api_format: "openai",
+        api_format: "openai-chat",
         auth_hint: "No API key needed for local Ollama",
     },
     ProviderPreset {
         name: "vLLM",
         base_url: "http://localhost:8000/v1",
-        api_format: "openai",
+        api_format: "openai-chat",
         auth_hint: "Use --api-key flag if set on server",
     },
     ProviderPreset {
         name: "LiteLLM",
         base_url: "http://localhost:4000/v1",
-        api_format: "openai",
+        api_format: "openai-chat",
         auth_hint: "Set LITELLM_API_KEY or use proxy key",
     },
     ProviderPreset {
         name: "LocalAI",
         base_url: "http://localhost:8080/v1",
-        api_format: "openai",
+        api_format: "openai-chat",
         auth_hint: "Optional, depends on config",
     },
     ProviderPreset {
         name: "LM Studio",
         base_url: "http://localhost:1234/v1",
-        api_format: "openai",
+        api_format: "openai-chat",
         auth_hint: "No key required for local LM Studio",
     },
 ];
@@ -187,7 +187,7 @@ impl TuiApp {
         let custom_api_format = settings
             .custom_api_format
             .clone()
-            .unwrap_or_else(|| "openai".to_string());
+            .unwrap_or_else(|| "openai-responses".to_string());
         let provider = settings
             .model_provider
             .clone()
@@ -838,12 +838,18 @@ impl TuiApp {
                             self.dirty = true;
                         }
                         KeyCode::Left | KeyCode::Right if !*editing && *selected == 4 => {
-                            *custom_api_format =
-                                if custom_api_format.eq_ignore_ascii_case("anthropic") {
-                                    "openai".to_string()
-                                } else {
-                                    "anthropic".to_string()
-                                };
+                            let formats = nocode_core::config::settings::API_FORMATS;
+                            let normalized = nocode_core::config::settings::normalize_api_format(
+                                custom_api_format,
+                            );
+                            let current_idx =
+                                formats.iter().position(|&f| f == normalized).unwrap_or(0);
+                            let next_idx = if matches!(key.code, KeyCode::Right) {
+                                (current_idx + 1) % formats.len()
+                            } else {
+                                (current_idx + formats.len() - 1) % formats.len()
+                            };
+                            *custom_api_format = formats[next_idx].to_string();
                             // Re-detect preset after format toggle
                             *preset_index = detect_preset(custom_base_url);
                             apply_api_key_to_env(provider, custom_api_format, api_key);
@@ -2443,12 +2449,11 @@ fn provider_key_slot<'a>(provider: &'a str, api_format: &'a str) -> (&'static st
         "openai" => ("openai", "OPENAI_API_KEY"),
         "gemini" | "google" => ("gemini", "GEMINI_API_KEY"),
         "custom" => {
-            if api_format.eq_ignore_ascii_case("anthropic")
-                || api_format.eq_ignore_ascii_case("claude")
-            {
-                ("anthropic", "ANTHROPIC_API_KEY")
-            } else {
-                ("openai", "OPENAI_API_KEY")
+            let normalized = nocode_core::config::settings::normalize_api_format(api_format);
+            match normalized {
+                "anthropic" => ("anthropic", "ANTHROPIC_API_KEY"),
+                "google" => ("gemini", "GEMINI_API_KEY"),
+                _ => ("openai", "OPENAI_API_KEY"),
             }
         }
         _ => ("anthropic", "ANTHROPIC_API_KEY"),
@@ -2565,7 +2570,7 @@ fn restore_setting_from_source(
             std::env::var("NOCODE_CUSTOM_API_FORMAT")
                 .ok()
                 .or(merged.custom_api_format)
-                .unwrap_or_else(|| "openai".to_string()),
+                .unwrap_or_else(|| "openai-responses".to_string()),
             source_without_tier("NOCODE_CUSTOM_API_FORMAT", Some("default")),
         ),
         _ => (String::new(), "default".to_string()),
@@ -2590,10 +2595,12 @@ pub(crate) fn provider_auth_help(provider: &str, api_format: &str) -> &'static s
         "openai" => "Paste an OpenAI key; R loads /v1/models and T verifies access.",
         "gemini" | "google" => "Paste a Gemini key; R loads v1beta/models and T checks API access.",
         "custom" => {
-            if api_format.eq_ignore_ascii_case("anthropic") {
-                "Custom Anthropic-compatible: use an Anthropic-style key plus a compatible base URL."
-            } else {
-                "Custom OpenAI-compatible: use an OpenAI-style key plus a compatible base URL."
+            let normalized = nocode_core::config::settings::normalize_api_format(api_format);
+            match normalized {
+                "anthropic" => "Custom Anthropic-compatible: use an Anthropic-style key.",
+                "google" => "Custom Google-compatible: use a Gemini-style key.",
+                "openai-chat" => "Custom OpenAI Chat Completions: use an OpenAI-style key.",
+                _ => "Custom OpenAI Responses API: use an OpenAI-style key.",
             }
         }
         _ => "Auto mode inherits whichever configured provider is available first.",
@@ -2603,19 +2610,17 @@ pub(crate) fn provider_auth_help(provider: &str, api_format: &str) -> &'static s
 pub(crate) fn provider_endpoint_help(provider: &str, api_format: &str) -> &'static str {
     match provider.to_ascii_lowercase().as_str() {
         "custom" => {
-            if api_format.eq_ignore_ascii_case("anthropic") {
-                "Endpoint mode: custom Anthropic-compatible (/v1/models, anthropic-version header)."
-            } else {
-                "Endpoint mode: custom OpenAI-compatible (/v1/models)."
+            let normalized = nocode_core::config::settings::normalize_api_format(api_format);
+            match normalized {
+                "anthropic" => "Endpoint: base_url + /v1/messages",
+                "openai-chat" => "Endpoint: base_url + /v1/chat/completions",
+                "google" => "Endpoint: base_url + /v1beta/models/{model}:generateContent",
+                _ => "Endpoint: base_url + /v1/responses",
             }
         }
-        "claude" | "anthropic" => {
-            "Official Anthropic endpoint is used; custom endpoint fields are hidden."
-        }
-        "openai" => "Official OpenAI endpoint is used; custom endpoint fields are hidden.",
-        "gemini" | "google" => {
-            "Official Gemini endpoint is used; custom endpoint fields are hidden."
-        }
+        "claude" | "anthropic" => "Official Anthropic endpoint: api.anthropic.com/v1/messages",
+        "openai" => "Official OpenAI endpoint: api.openai.com/v1/responses",
+        "gemini" | "google" => "Official Gemini endpoint: generativelanguage.googleapis.com",
         _ => "Auto mode uses the first available configured provider endpoint.",
     }
 }
@@ -2654,16 +2659,18 @@ fn fetch_model_suggestions(
         .map_err(|e| format!("HTTP client build failed: {e}"))?;
 
     let format = if custom_api_format.is_empty() {
-        "openai"
+        "openai-responses"
     } else {
-        custom_api_format
+        nocode_core::config::settings::normalize_api_format(custom_api_format)
     };
 
     if provider.eq_ignore_ascii_case("custom") || !custom_base_url.is_empty() {
-        if format.eq_ignore_ascii_case("openai") {
-            let key = std::env::var("OPENAI_API_KEY")
+        let normalized = format;
+        if normalized == "openai-responses" || normalized == "openai-chat" {
+            let key = std::env::var("NOCODE_CUSTOM_API_KEY")
+                .or_else(|_| std::env::var("OPENAI_API_KEY"))
                 .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
-                .map_err(|_| "Set OPENAI_API_KEY (or compatible key) first".to_string())?;
+                .map_err(|_| "Set an API key first".to_string())?;
             let body = client
                 .get(format!(
                     "{}/v1/models",
@@ -2687,10 +2694,10 @@ fn fetch_model_suggestions(
             return Ok(models);
         }
 
-        if format.eq_ignore_ascii_case("anthropic") || format.eq_ignore_ascii_case("claude") {
-            let key = std::env::var("ANTHROPIC_API_KEY")
-                .or_else(|_| std::env::var("OPENAI_API_KEY"))
-                .map_err(|_| "Set ANTHROPIC_API_KEY (or compatible key) first".to_string())?;
+        if normalized == "anthropic" {
+            let key = std::env::var("NOCODE_CUSTOM_API_KEY")
+                .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
+                .map_err(|_| "Set ANTHROPIC_API_KEY first".to_string())?;
             let body = client
                 .get(format!(
                     "{}/v1/models",
@@ -2715,7 +2722,7 @@ fn fetch_model_suggestions(
             return Ok(models);
         }
 
-        return Err(format!("Unsupported custom API format: {format}"));
+        return Err(format!("Unsupported custom API format: {normalized}"));
     }
 
     if provider.eq_ignore_ascii_case("openai") {
@@ -2979,7 +2986,7 @@ mod tests {
 
     #[test]
     fn presets_have_valid_api_format() {
-        let valid = ["openai", "anthropic"];
+        let valid = nocode_core::config::settings::API_FORMATS;
         for preset in CUSTOM_PRESETS {
             assert!(
                 valid.contains(&preset.api_format),

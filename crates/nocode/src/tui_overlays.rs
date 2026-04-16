@@ -271,36 +271,25 @@ Commands:
                     custom_base_url_source
                 ));
                 lines.push(format!(
-                    "{} Custom API:   {} ({})",
+                    "{} API Format:   {} ({})",
                     active(4, *selected),
                     field_value(4, *selected, *editing, input, custom_api_format),
                     custom_api_format_source
                 ));
             } else {
-                lines.push("  Custom endpoint fields hidden until Provider = custom".to_string());
+                lines.push("  Custom URL:   (set Provider to custom to edit)".to_string());
+                lines.push("  API Format:   (set Provider to custom to edit)".to_string());
             }
             lines.extend([
                 String::new(),
                 format!("Save tier: {tier_label}  [Tab to cycle]"),
-                format!(
-                    "Quick provider toggle: {}",
-                    if *selected == 0 { "←/→ or Enter" } else { "select Provider field" }
-                ),
-                format!(
-                    "Quick API toggle: {}",
-                    if is_custom_provider && *selected == 4 {
-                        "←/→"
-                    } else {
-                        "select Custom API field"
-                    }
-                ),
+                String::new(),
+                "Controls: ↑/↓ navigate  ←/→ toggle  Enter/E edit  S save  T test  R refresh  Esc close".to_string(),
                 if is_custom_provider {
-                    "Controls: ↑/↓ select  Enter apply/edit  E edit  / filter  X reset  P preset  T test  S save  R refresh  Esc close".to_string()
+                    "         P preset  / filter models  X reset field".to_string()
                 } else {
-                    "Controls: ↑/↓ select  Enter apply/edit  E edit  / filter  X reset  T test  S save  R refresh  Esc close".to_string()
+                    "         / filter models  X reset field".to_string()
                 },
-                "Paste works while editing a field.".to_string(),
-                "Tip: leave a field empty to clear it.".to_string(),
                 format!("Auth hint: {}", if is_custom_provider {
                     if let Some(idx) = preset_index {
                         crate::tui_app::CUSTOM_PRESETS.get(*idx).map_or(

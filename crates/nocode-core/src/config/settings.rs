@@ -67,6 +67,23 @@ pub struct Settings {
     pub telemetry_enabled: Option<bool>,
 }
 
+/// Normalize legacy API format values to the 4 canonical formats.
+///
+/// Valid formats: `openai-responses`, `openai-chat`, `anthropic`, `google`.
+/// Legacy mappings: `"openai"` → `"openai-responses"`, `"claude"` → `"anthropic"`, `"gemini"` → `"google"`.
+pub fn normalize_api_format(format: &str) -> &str {
+    match format.to_ascii_lowercase().as_str() {
+        "openai" => "openai-responses",
+        "claude" => "anthropic",
+        "gemini" => "google",
+        "openai-responses" | "openai-chat" | "anthropic" | "google" => format,
+        _ => format,
+    }
+}
+
+/// The 4 valid API format values for cycling in the config UI.
+pub const API_FORMATS: &[&str] = &["openai-responses", "openai-chat", "anthropic", "google"];
+
 impl Settings {
     /// Load settings from a JSON file, returning default if not found.
     pub fn load_from(path: &Path) -> Self {
