@@ -437,7 +437,8 @@ impl TuiApp {
         {
             if let Some(info) = &mut last.tool_info {
                 info.result_preview = Some(content.to_string());
-                info.collapsed = false;
+                // Auto-expand errors, keep normal results collapsed
+                info.collapsed = !is_error;
                 if is_error {
                     last.kind = ChatMessageKind::Error;
                 }
@@ -473,7 +474,7 @@ impl TuiApp {
             && last.kind == ChatMessageKind::Assistant
         {
             last.lines = lines;
-            self.invalidate_height_cache();
+            self.invalidate_last_height();
             self.dirty = true;
             return;
         }
@@ -501,7 +502,7 @@ impl TuiApp {
             && last.kind == ChatMessageKind::Thinking
         {
             last.lines = lines;
-            self.invalidate_height_cache();
+            self.invalidate_last_height();
             self.dirty = true;
             return;
         }
@@ -517,17 +518,31 @@ impl TuiApp {
         self.height_cache_width = 0;
     }
 
+    /// Invalidate only the last message's cached height (for streaming updates).
+    fn invalidate_last_height(&mut self) {
+        if !self.height_cache.is_empty() {
+            self.height_cache.pop();
+        }
+    }
+
     fn message_height(msg: &ChatMessage, width: u16) -> u16 {
-        let rlines = msg.to_ratatui_lines();
+        // Fast path: collapsed tool messages are 1 line
+        if (msg.kind == ChatMessageKind::Tool || msg.kind == ChatMessageKind::Error)
+            && let Some(info) = &msg.tool_info
+            && info.collapsed
+        {
+            return 1;
+        }
+        // Use pre-computed lines count instead of re-rendering
         let mut total: u16 = 0;
-        for line in &rlines {
-            let line_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+        for line in &msg.lines {
+            let line_width: usize = line.segments.iter().map(|s| s.text.len()).sum();
             let wrapped = if width > 0 {
-                (line_width as u16 / width) + 1
+                ((line_width as u16).saturating_add(width - 1)) / width
             } else {
                 1
             };
-            total += wrapped;
+            total += wrapped.max(1);
         }
         total.max(1)
     }
@@ -1810,6 +1825,11 @@ impl TuiApp {
         for msg in &mut self.chat_messages {
             if msg.kind == ChatMessageKind::Thinking {
                 msg.thinking_collapsed = !msg.thinking_collapsed;
+            }
+            if (msg.kind == ChatMessageKind::Tool || msg.kind == ChatMessageKind::Error)
+                && let Some(info) = &mut msg.tool_info
+            {
+                info.collapsed = !info.collapsed;
             }
         }
         self.invalidate_height_cache();

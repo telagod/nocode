@@ -18,6 +18,7 @@ pub struct StatusHud {
     pub session_name: String,
     pub context_window_pct: f32,
     pub cost_usd: f64,
+    pub cwd: String,
 }
 
 impl StatusHud {
@@ -37,6 +38,9 @@ impl StatusHud {
             session_name: String::new(),
             context_window_pct: 0.0,
             cost_usd: 0.0,
+            cwd: std::env::current_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
         }
     }
 
@@ -169,6 +173,18 @@ impl StatusHud {
         let tok = format!("{} tok", format_tokens(total_tok));
 
         let mut parts: Vec<&str> = vec![model, mode, &cost, &ctx];
+
+        // Short CWD: show last 2 path components
+        let short_cwd;
+        if !self.cwd.is_empty() {
+            let components: Vec<&str> = self.cwd.split('/').filter(|s| !s.is_empty()).collect();
+            short_cwd = if components.len() <= 2 {
+                self.cwd.clone()
+            } else {
+                format!("…/{}", components[components.len() - 2..].join("/"))
+            };
+            parts.push(&short_cwd);
+        }
 
         if total_tok > 0 {
             parts.push(&tok);
