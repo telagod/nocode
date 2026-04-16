@@ -1956,11 +1956,6 @@ pub(crate) fn run_app_loop(
 ) -> io::Result<()> {
     let mut app = TuiApp::new(model);
 
-    // Display provider warnings via TUI message system
-    for w in &warnings {
-        app.push_error(w);
-    }
-
     let mut messages: Vec<Message> = Vec::new();
     let tool_defs = tool_definitions_for_model(&registry);
 
@@ -2008,6 +2003,11 @@ pub(crate) fn run_app_loop(
         let mut guard = reg.lock().unwrap_or_else(|e| e.into_inner());
         guard.set_event_channel(worker_tx);
         app.worker_event_rx = Some(worker_rx);
+    }
+
+    // Display provider warnings after all init (so banner renders first)
+    for w in &warnings {
+        app.push_system(w);
     }
 
     let mut event_rx: Option<mpsc::Receiver<TuiEvent>> = None;
