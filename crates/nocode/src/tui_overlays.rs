@@ -181,8 +181,12 @@ Commands:
                     let detail = match w.state {
                         nocode_core::agent::worker::WorkerState::Finished => {
                             w.result.as_deref().map_or(String::new(), |r| {
-                                let preview: String = r.chars().take(80).collect();
-                                format!("\n    → {preview}")
+                                if r.chars().count() > 80 {
+                                    let preview: String = r.chars().take(77).collect();
+                                    format!("\n    \u{2192} {preview}...")
+                                } else {
+                                    format!("\n    \u{2192} {r}")
+                                }
                             })
                         }
                         nocode_core::agent::worker::WorkerState::Failed => w
