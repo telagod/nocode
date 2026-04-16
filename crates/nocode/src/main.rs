@@ -38,7 +38,7 @@ use nocode_core::provider::ProviderBox;
 use nocode_core::provider::claude::ClaudeProvider;
 use nocode_core::provider::foundry::FoundryProvider;
 use nocode_core::provider::gemini::GeminiProvider;
-use nocode_core::provider::openai::OpenAiProvider;
+use nocode_core::provider::openai_responses::OpenAiResponsesProvider;
 use nocode_core::provider::types::ModelProvider;
 use nocode_core::query::r#loop::{self, LoopConfig, NoopObserver};
 use nocode_core::tool::ToolRegistry;
@@ -405,7 +405,7 @@ fn build_provider(provider: &ModelProvider, settings: &Settings) -> Box<dyn Prov
             let key = env::var("OPENAI_API_KEY").unwrap_or_default();
             let base = env::var("OPENAI_BASE_URL")
                 .unwrap_or_else(|_| String::from("https://api.openai.com"));
-            Box::new(OpenAiProvider::with_base_url(base, key))
+            Box::new(OpenAiResponsesProvider::with_base_url(base, key))
         }
         ModelProvider::Gemini => {
             let key = env::var("GEMINI_API_KEY").unwrap_or_default();
@@ -446,14 +446,14 @@ fn build_provider(provider: &ModelProvider, settings: &Settings) -> Box<dyn Prov
                         Box::new(ClaudeProvider::with_base_url(base, key))
                     }
                 }
-                "openai" => Box::new(OpenAiProvider::with_base_url(base, key)),
+                "openai" => Box::new(OpenAiResponsesProvider::with_base_url(base, key)),
                 "google" | "gemini" => Box::new(GeminiProvider::new(key)),
                 other => {
                     eprintln!(
                         "Warning: Unknown custom_api_format '{other}', defaulting to openai. \
                          Valid values: anthropic, openai, google"
                     );
-                    Box::new(OpenAiProvider::with_base_url(base, key))
+                    Box::new(OpenAiResponsesProvider::with_base_url(base, key))
                 }
             }
         }

@@ -257,7 +257,7 @@ fn build_worker_provider(
 ) -> Box<dyn crate::provider::Provider> {
     use crate::provider::claude::ClaudeProvider;
     use crate::provider::gemini::GeminiProvider;
-    use crate::provider::openai::OpenAiProvider;
+    use crate::provider::openai_responses::OpenAiResponsesProvider;
     use crate::provider::types::ModelProvider;
 
     match provider {
@@ -271,14 +271,15 @@ fn build_worker_provider(
             let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
             let base = std::env::var("OPENAI_BASE_URL")
                 .unwrap_or_else(|_| String::from("https://api.openai.com"));
-            Box::new(OpenAiProvider::with_base_url(base, key))
+            Box::new(OpenAiResponsesProvider::with_base_url(base, key))
         }
         ModelProvider::Gemini => {
             let key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
             Box::new(GeminiProvider::new(key))
         }
         ModelProvider::Custom => {
-            let key = std::env::var("ANTHROPIC_API_KEY")
+            let key = std::env::var("NOCODE_CUSTOM_API_KEY")
+                .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
                 .or_else(|_| std::env::var("OPENAI_API_KEY"))
                 .unwrap_or_default();
             let base = settings
@@ -293,7 +294,7 @@ fn build_worker_provider(
                 .unwrap_or_else(|| String::from("openai"));
             match format.as_str() {
                 "anthropic" | "claude" => Box::new(ClaudeProvider::with_base_url(base, key)),
-                _ => Box::new(OpenAiProvider::with_base_url(base, key)),
+                _ => Box::new(OpenAiResponsesProvider::with_base_url(base, key)),
             }
         }
     }
