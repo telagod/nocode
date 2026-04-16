@@ -638,7 +638,11 @@ impl TuiApp {
 
         // 4. Hints
         if !is_busy {
-            let hints = HintsBar;
+            let hints = HintsBar {
+                vim_normal: self.input_mode == InputMode::Normal,
+                has_completion: self.completion_selected.is_some(),
+                has_images: !self.pending_images.is_empty(),
+            };
             frame.render_widget(hints, chunks[3]);
         }
 
@@ -2501,7 +2505,7 @@ pub(crate) fn run_app_loop(
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
                         if is_busy {
-                            app.push_error("background loop disconnected");
+                            app.push_error("Model response interrupted. Try submitting again or restart with /clear.");
                             is_busy = false;
                             event_rx = None;
                         }
@@ -3250,7 +3254,7 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
         }
     }
 
-    Err("No clipboard tool found (tried xclip, xsel, wl-copy, pbcopy, clip.exe)".to_string())
+    Err("Clipboard not available. Install xclip, xsel, or wl-copy.".to_string())
 }
 
 /// Truncate a string to at most `max` bytes on a valid UTF-8 boundary.

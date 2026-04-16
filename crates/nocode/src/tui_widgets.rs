@@ -236,12 +236,18 @@ impl ChatMessage {
             if self.thinking_collapsed {
                 // Collapsed: show summary only
                 let summary = if line_count > 0 {
-                    // Show first ~60 chars of thinking as preview
+                    // Show first non-empty line as preview
                     let first: String = self
                         .lines
                         .iter()
-                        .flat_map(|l| l.segments.iter().map(|s| s.text.as_str()))
-                        .collect::<String>();
+                        .map(|l| {
+                            l.segments
+                                .iter()
+                                .map(|s| s.text.as_str())
+                                .collect::<String>()
+                        })
+                        .find(|s| !s.trim().is_empty())
+                        .unwrap_or_default();
                     let preview = if first.chars().count() > 60 {
                         let truncated: String = first.chars().take(59).collect();
                         format!("{truncated}\u{2026}")
@@ -466,14 +472,25 @@ impl Widget for StatusBar<'_> {
 // HintsBar — contextual keyboard shortcuts
 // ---------------------------------------------------------------------------
 
-pub(crate) struct HintsBar;
+pub(crate) struct HintsBar {
+    pub vim_normal: bool,
+    pub has_completion: bool,
+    pub has_images: bool,
+}
 
 impl Widget for HintsBar {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = default_theme();
         let dim = Style::default().fg(theme.text_dim);
-        let hints =
-            " enter send \u{00B7} /help commands \u{00B7} ctrl-t theme \u{00B7} ctrl-c quit";
+        let hints = if self.has_completion {
+            " \u{2191}/\u{2193} select \u{00B7} tab/enter confirm \u{00B7} esc cancel"
+        } else if self.vim_normal {
+            " i insert \u{00B7} /cmd \u{00B7} :q quit \u{00B7} j/k scroll"
+        } else if self.has_images {
+            " enter send with images \u{00B7} ctrl-v more images \u{00B7} /help commands"
+        } else {
+            " enter send \u{00B7} /help commands \u{00B7} ctrl-v image \u{00B7} ctrl-c quit"
+        };
         let paragraph = Paragraph::new(hints).style(dim);
         paragraph.render(area, buf);
     }
