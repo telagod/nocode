@@ -6,6 +6,20 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
+
+static GLOBAL_FILE_HISTORY: OnceLock<Arc<Mutex<FileHistory>>> = OnceLock::new();
+
+pub fn global_file_history() -> &'static Arc<Mutex<FileHistory>> {
+    GLOBAL_FILE_HISTORY.get_or_init(|| {
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| ".".to_string());
+        Arc::new(Mutex::new(FileHistory::new(&cwd).unwrap_or_else(|_| {
+            FileHistory::new(".").expect("fallback file history")
+        })))
+    })
+}
 
 /// A single file edit record for undo/redo.
 #[derive(Debug, Clone)]

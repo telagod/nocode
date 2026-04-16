@@ -316,6 +316,8 @@ pub(crate) struct TuiApp {
     pub(crate) pending_images: Vec<PendingImage>,
     /// Overlay scroll offset for scrollable overlays.
     pub(crate) overlay_scroll: u16,
+    /// Horizontal scroll offset for input box (single-line long input).
+    pub(crate) input_view_offset: usize,
 }
 
 /// An image pasted from clipboard, waiting to be sent with the next message.
@@ -361,6 +363,7 @@ impl TuiApp {
             completion_selected: None,
             pending_images: Vec::new(),
             overlay_scroll: 0,
+            input_view_offset: 0,
         }
     }
 
@@ -621,7 +624,9 @@ impl TuiApp {
         } else {
             ""
         };
-        let input_widget = InputBox::new(&self.input, self.cursor_pos).with_mode(mode_label);
+        let input_widget = InputBox::new(&self.input, self.cursor_pos)
+            .with_mode(mode_label)
+            .with_view_offset(self.input_view_offset);
         frame.render_widget(input_widget, chunks[1]);
 
         // 3. Status line (fused as input bottom border)
@@ -667,7 +672,18 @@ impl TuiApp {
         } else {
             0
         };
-        let cursor_col = display_width_of(line_text) as u16 + 2 + mode_prefix_width;
+        let char_col = line_text.chars().count();
+        // Update horizontal scroll so cursor stays visible
+        let usable_width = chunks[1].width.saturating_sub(2 + mode_prefix_width) as usize;
+        if usable_width > 0 {
+            if char_col < self.input_view_offset {
+                self.input_view_offset = char_col;
+            } else if char_col >= self.input_view_offset + usable_width {
+                self.input_view_offset = char_col.saturating_sub(usable_width) + 1;
+            }
+        }
+        let visible_col = char_col.saturating_sub(self.input_view_offset) as u16;
+        let cursor_col = visible_col + 2 + mode_prefix_width;
         let cursor_x = chunks[1].x + cursor_col;
         let cursor_y = chunks[1].y + 1 + cursor_line; // +1 for top border
         frame.set_cursor_position((cursor_x, cursor_y));
@@ -731,7 +747,17 @@ impl TuiApp {
             };
 
             let rlines = msg.to_ratatui_lines();
+            let search_q = if self.search_active && !self.search_query.is_empty() {
+                Some(self.search_query.clone())
+            } else {
+                None
+            };
             for line in rlines {
+                let line = if let Some(ref q) = search_q {
+                    highlight_search_in_line(line, q)
+                } else {
+                    line
+                };
                 if first_visible_skip > 0 {
                     first_visible_skip -= 1;
                     continue;
@@ -1370,7 +1396,7 @@ impl TuiApp {
                                         }
                                     } else {
                                         unsafe {
-                                            std::env::set_var("NOCODE_MODEL_PROVIDER", provider);
+                                            std::env::set_var("NOCODE_MODEL_PROVIDER", &**provider);
                                         }
                                     }
                                     if model.trim().is_empty() {
@@ -1454,6 +1480,26 @@ impl TuiApp {
                                             model.trim().to_string()
                                         }
                                     ));
+                                    // Auto-test connection after save
+                                    let mut test_settings = Settings::load_merged(&cwd);
+                                    test_settings.model_provider = Some(provider.clone());
+                                    test_settings.custom_base_url = if custom_base_url.trim().is_empty() {
+                                        None
+                                    } else {
+                                        Some(custom_base_url.trim().to_string())
+                                    };
+                                    test_settings.custom_api_format = if custom_api_format.trim().is_empty() {
+                                        None
+                                    } else {
+                                        Some(custom_api_format.trim().to_string())
+                                    };
+                                    let test_provider_type = crate::resolve_provider(&test_settings);
+                                    let (test_impl, _) = crate::build_provider(&test_provider_type, &test_settings);
+                                    let test_result = match test_impl.verify_key() {
+                                        Ok(msg) => format!("Saved + Connection OK: {msg}"),
+                                        Err(err) => format!("Saved, but connection failed: {err}"),
+                                    };
+                                    *status = Some(test_result);
                                 }
                                 Some(e) => {
                                     *status = Some(format!("Save failed: {e}"));
@@ -1798,6 +1844,7 @@ impl TuiApp {
                 } else if !self.input.is_empty() {
                     self.input.clear();
                     self.cursor_pos = 0;
+                    self.input_view_offset = 0;
                     self.input_mode = InputMode::Insert;
                     self.update_completion();
                     self.dirty = true;
@@ -1850,6 +1897,7 @@ impl TuiApp {
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
                 self.input.clear();
                 self.cursor_pos = 0;
+                self.input_view_offset = 0;
                 self.update_completion();
                 self.dirty = true;
             }
@@ -1954,6 +2002,7 @@ impl TuiApp {
                 self.history_index = None;
                 self.input.clear();
                 self.cursor_pos = 0;
+                self.input_view_offset = 0;
                 self.dirty = true;
                 return HandleKeyResult::Submit(text);
             }
@@ -2862,6 +2911,39 @@ pub(crate) fn run_app_loop(
 // Helpers
 // ---------------------------------------------------------------------------
 
+fn highlight_search_in_line<'a>(line: ratatui::text::Line<'a>, query: &str) -> ratatui::text::Line<'a> {
+    use ratatui::style::{Color, Modifier};
+    use ratatui::text::Span;
+    if query.is_empty() {
+        return line;
+    }
+    let query_lower = query.to_lowercase();
+    let mut new_spans = Vec::new();
+    for span in line.spans {
+        let text = span.content.to_string();
+        let text_lower = text.to_lowercase();
+        let base_style = span.style;
+        let hl_style = base_style.fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD);
+        let mut start = 0;
+        while let Some(pos) = text_lower[start..].find(&query_lower) {
+            let abs = start + pos;
+            if abs > start {
+                new_spans.push(Span::styled(text[start..abs].to_string(), base_style));
+            }
+            let end = abs + query.len();
+            let end = end.min(text.len());
+            new_spans.push(Span::styled(text[abs..end].to_string(), hl_style));
+            start = end;
+        }
+        if start < text.len() {
+            new_spans.push(Span::styled(text[start..].to_string(), base_style));
+        } else if start == 0 && text.is_empty() {
+            new_spans.push(span);
+        }
+    }
+    ratatui::text::Line::from(new_spans)
+}
+
 fn prev_char_boundary(s: &str, pos: usize) -> usize {
     let mut p = pos.saturating_sub(1);
     while p > 0 && !s.is_char_boundary(p) {
@@ -2878,6 +2960,7 @@ fn next_char_boundary(s: &str, pos: usize) -> usize {
     p.min(s.len())
 }
 
+#[allow(dead_code)]
 fn display_width_of(s: &str) -> usize {
     s.chars().map(|c| c.width().unwrap_or(0)).sum()
 }

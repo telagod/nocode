@@ -366,6 +366,7 @@ pub(crate) struct InputBox<'a> {
     #[allow(dead_code)]
     pub cursor_pos: usize,
     pub mode_label: &'a str,
+    pub view_offset: usize,
 }
 
 impl<'a> InputBox<'a> {
@@ -374,11 +375,17 @@ impl<'a> InputBox<'a> {
             input,
             cursor_pos,
             mode_label: "",
+            view_offset: 0,
         }
     }
 
     pub fn with_mode(mut self, label: &'a str) -> Self {
         self.mode_label = label;
+        self
+    }
+
+    pub fn with_view_offset(mut self, offset: usize) -> Self {
+        self.view_offset = offset;
         self
     }
 }
@@ -398,6 +405,21 @@ impl Widget for InputBox<'_> {
         };
 
         for (i, line_text) in input_lines.iter().enumerate() {
+            let visible = if self.view_offset > 0 && !line_text.is_empty() {
+                let mut char_idx = 0;
+                let mut col = 0usize;
+                for (idx, _ch) in line_text.char_indices() {
+                    if col >= self.view_offset {
+                        char_idx = idx;
+                        break;
+                    }
+                    col += 1;
+                    char_idx = idx + _ch.len_utf8();
+                }
+                if col < self.view_offset { "" } else { &line_text[char_idx..] }
+            } else {
+                line_text
+            };
             if i == 0 {
                 let mut spans = Vec::new();
                 if !mode_prefix.is_empty() {
@@ -412,12 +434,12 @@ impl Widget for InputBox<'_> {
                     ));
                 }
                 spans.push(Span::styled("> ", Style::default().fg(theme.text_dim)));
-                spans.push(Span::styled(*line_text, Style::default().fg(theme.text)));
+                spans.push(Span::styled(visible.to_string(), Style::default().fg(theme.text)));
                 lines.push(Line::from(spans));
             } else {
                 lines.push(Line::from(vec![
                     Span::styled("  ", Style::default().fg(theme.text_dim)),
-                    Span::styled(*line_text, Style::default().fg(theme.text)),
+                    Span::styled(visible.to_string(), Style::default().fg(theme.text)),
                 ]));
             }
         }

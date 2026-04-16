@@ -587,28 +587,19 @@ pub fn run_repl(
                     }
                 }
                 CommandAction::Undo => {
-                    // Undo last file modification by checking file history
-                    let cwd = std::env::current_dir()
-                        .map(|p| p.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    match nocode_core::storage::file_history::FileHistory::new(&cwd) {
-                        Ok(mut history) => match history.undo() {
-                            Ok(path) => println!("Undone: {path}"),
-                            Err(e) => println!("Nothing to undo: {e}"),
-                        },
-                        Err(_) => println!("File history not available."),
+                    let history = nocode_core::storage::file_history::global_file_history();
+                    let mut h = history.lock().unwrap_or_else(|e| e.into_inner());
+                    match h.undo() {
+                        Ok(path) => println!("Undone: {path}"),
+                        Err(e) => println!("Nothing to undo: {e}"),
                     }
                 }
                 CommandAction::Redo => {
-                    let cwd = std::env::current_dir()
-                        .map(|p| p.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    match nocode_core::storage::file_history::FileHistory::new(&cwd) {
-                        Ok(mut history) => match history.redo() {
-                            Ok(path) => println!("Redone: {path}"),
-                            Err(e) => println!("Nothing to redo: {e}"),
-                        },
-                        Err(_) => println!("File history not available."),
+                    let history = nocode_core::storage::file_history::global_file_history();
+                    let mut h = history.lock().unwrap_or_else(|e| e.into_inner());
+                    match h.redo() {
+                        Ok(path) => println!("Redone: {path}"),
+                        Err(e) => println!("Nothing to redo: {e}"),
                     }
                 }
                 CommandAction::Rewind => {

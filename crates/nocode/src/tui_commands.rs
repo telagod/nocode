@@ -1372,10 +1372,10 @@ fn cmd_voice(app: &mut TuiApp, args: Option<&str>) {
 }
 
 fn cmd_undo(app: &mut TuiApp, _messages: &mut Vec<Message>) {
-    let mut history = nocode_core::storage::file_history::FileHistory::new(".")
-        .unwrap_or_else(|_| nocode_core::storage::file_history::FileHistory::new("/tmp").unwrap());
-    if history.can_undo() {
-        match history.undo() {
+    let history = nocode_core::storage::file_history::global_file_history();
+    let mut h = history.lock().unwrap_or_else(|e| e.into_inner());
+    if h.can_undo() {
+        match h.undo() {
             Ok(path) => app.push_system(&format!("Undone: {path}")),
             Err(e) => app.push_error(&format!("Undo failed: {e}")),
         }
@@ -1385,10 +1385,10 @@ fn cmd_undo(app: &mut TuiApp, _messages: &mut Vec<Message>) {
 }
 
 fn cmd_redo(app: &mut TuiApp, _messages: &mut Vec<Message>) {
-    let mut history = nocode_core::storage::file_history::FileHistory::new(".")
-        .unwrap_or_else(|_| nocode_core::storage::file_history::FileHistory::new("/tmp").unwrap());
-    if history.can_redo() {
-        match history.redo() {
+    let history = nocode_core::storage::file_history::global_file_history();
+    let mut h = history.lock().unwrap_or_else(|e| e.into_inner());
+    if h.can_redo() {
+        match h.redo() {
             Ok(path) => app.push_system(&format!("Redone: {path}")),
             Err(e) => app.push_error(&format!("Redo failed: {e}")),
         }

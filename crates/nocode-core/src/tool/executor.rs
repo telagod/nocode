@@ -217,10 +217,35 @@ impl<'a> ToolExecutor<'a> {
             return ContentBlock::tool_error(id, violation);
         }
 
-        // 8. Execute
+        // 8. Snapshot for undo (FileEdit / FileWrite)
+        let file_path_for_undo = if matches!(name, "FileEdit" | "FileWrite") {
+            input["file_path"].as_str().map(|p| {
+                let old = std::fs::read_to_string(p).ok();
+                (p.to_string(), old)
+            })
+        } else {
+            None
+        };
+
+        // 9. Execute
         let output = tool.execute(input);
 
-        // 9. PostToolUse hooks (informational)
+        // 10. Record to FileHistory on success
+        if !output.is_error
+            && let Some((path, old_content)) = file_path_for_undo
+        {
+            let new_content = std::fs::read_to_string(&path).ok();
+            let history = crate::storage::file_history::global_file_history();
+            if let Ok(mut h) = history.lock() {
+                h.record_edit(
+                    &std::path::PathBuf::from(&path),
+                    old_content,
+                    new_content,
+                );
+            }
+        }
+
+        // 11. PostToolUse hooks (informational)
         if let Some(runner) = self.hook_runner {
             let _ = runner.run_post_tool_use(name, Some(&output.content));
         }
