@@ -22,11 +22,19 @@ pub(crate) fn draw_overlay(overlay: &Overlay, hud: &StatusHud, frame: &mut Frame
                  Ctrl-C       — quit\n\
                  Esc          — vim normal / clear input\n\
                  Up/Down      — scroll chat\n\
-                 Ctrl-T       — toggle theme\n\
-                 Ctrl-L       — clear chat\n\
+                 Ctrl-A/E     — jump to start/end of line\n\
+                 Ctrl-W       — delete word backward\n\
+                 Ctrl-K       — delete to end of line\n\
                  Ctrl-U       — clear input\n\
                  Ctrl-P/N     — input history\n\
-                 Tab          — toggle tool output\n\
+                 Ctrl-V       — paste image from clipboard\n\
+                 Ctrl-Y       — copy last response to clipboard\n\
+                 Ctrl-F       — search chat\n\
+                 Ctrl-O       — toggle thinking blocks\n\
+                 Ctrl-T       — toggle theme\n\
+                 Ctrl-L       — clear chat\n\
+                 Tab          — toggle tool output / thinking\n\
+                 /            — command autocomplete\n\
                  F4           — error log\n\
                  \n",
             );

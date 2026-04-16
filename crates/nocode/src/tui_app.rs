@@ -625,11 +625,15 @@ impl TuiApp {
                 total_kb
             ))
         };
-        let status_text = pending_img_hint
+        let mut status_base = pending_img_hint
             .or_else(|| self.search_status())
             .or_else(|| self.slash_command_hint())
             .unwrap_or_else(|| self.hud.render_line());
-        let status = StatusBar::new(&status_text);
+        // Append unseen message indicator when scrolled up
+        if self.unseen_count > 0 && self.chat_scroll > 0 {
+            status_base.push_str(&format!(" | {} new", self.unseen_count));
+        }
+        let status = StatusBar::new(&status_base);
         frame.render_widget(status, chunks[2]);
 
         // 4. Hints
@@ -767,14 +771,28 @@ impl TuiApp {
         let count = suggestions.len().min(10) as u16;
         let popup_height = count + 2; // +2 for border
 
-        // Position: above input box
-        let popup_y = input_area.y.saturating_sub(popup_height);
+        // Position: above input box if space, otherwise below
+        let (popup_y, actual_height) = if input_area.y >= popup_height {
+            (input_area.y - popup_height, popup_height)
+        } else if input_area.y > 2 {
+            // Partial fit above
+            (0, input_area.y)
+        } else {
+            // No space above — render below input
+            let below_y = input_area.y + input_area.height;
+            let available = frame.area().height.saturating_sub(below_y);
+            if available < 3 {
+                return; // No space at all
+            }
+            (below_y, popup_height.min(available))
+        };
+
         let popup_width = input_area.width.min(60);
         let popup_area = Rect {
             x: input_area.x,
             y: popup_y,
             width: popup_width,
-            height: popup_height,
+            height: actual_height,
         };
 
         // Clear background
@@ -805,23 +823,11 @@ impl TuiApp {
                 height: 1,
             };
 
-            // Truncate to fit
+            // Truncate label safely (UTF-8 aware)
             let max_label = 20.min(inner.width as usize / 2);
-            let display_label = if label.len() > max_label {
-                &label[..max_label]
-            } else {
-                label.as_str()
-            };
+            let display_label = safe_truncate(label, max_label);
             let remaining = inner.width as usize - display_label.len() - 1;
-            let display_summary = if summary.len() > remaining {
-                let mut idx = remaining.saturating_sub(3);
-                while idx > 0 && !summary.is_char_boundary(idx) {
-                    idx -= 1;
-                }
-                format!("{}...", &summary[..idx])
-            } else {
-                summary.clone()
-            };
+            let display_summary = safe_truncate_ellipsis(summary, remaining);
 
             let style = if is_selected {
                 ratatui::style::Style::default()
@@ -1801,6 +1807,42 @@ impl TuiApp {
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
                 self.input.clear();
                 self.cursor_pos = 0;
+                self.update_completion();
+                self.dirty = true;
+            }
+            // Jump to start of line
+            (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
+                // Find start of current line
+                let before = &self.input[..self.cursor_pos];
+                self.cursor_pos = before.rfind('\n').map_or(0, |p| p + 1);
+                self.dirty = true;
+            }
+            // Jump to end of line
+            (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
+                let after = &self.input[self.cursor_pos..];
+                self.cursor_pos += after.find('\n').unwrap_or(after.len());
+                self.dirty = true;
+            }
+            // Delete word backward
+            (KeyCode::Char('w'), KeyModifiers::CONTROL)
+                if self.cursor_pos > 0 =>
+            {
+                let before = &self.input[..self.cursor_pos];
+                // Skip trailing whitespace, then skip word chars
+                let trimmed = before.trim_end();
+                let word_start = trimmed
+                    .rfind(|c: char| c.is_whitespace() || c == '/')
+                    .map_or(0, |p| p + 1);
+                self.input.drain(word_start..self.cursor_pos);
+                self.cursor_pos = word_start;
+                self.update_completion();
+                self.dirty = true;
+            }
+            // Delete to end of line
+            (KeyCode::Char('k'), KeyModifiers::CONTROL) => {
+                let after = &self.input[self.cursor_pos..];
+                let end = self.cursor_pos + after.find('\n').unwrap_or(after.len());
+                self.input.drain(self.cursor_pos..end);
                 self.dirty = true;
             }
             // Theme toggle
@@ -2172,6 +2214,10 @@ impl TuiApp {
 
     /// Try to read an image from the system clipboard and add it to pending_images.
     fn try_paste_image(&mut self) -> bool {
+        const MAX_IMAGES: usize = 10;
+        const MAX_DIMENSION: usize = 4096;
+        const MAX_BYTES: usize = 20 * 1024 * 1024; // 20MB
+
         let Ok(mut clipboard) = arboard::Clipboard::new() else {
             return false;
         };
@@ -2179,18 +2225,46 @@ impl TuiApp {
             return false;
         };
 
-        // Convert RGBA pixels to PNG in memory
+        // Validate limits
+        if self.pending_images.len() >= MAX_IMAGES {
+            self.push_system(&format!(
+                "Cannot paste: already {MAX_IMAGES} images attached. Submit or clear first."
+            ));
+            self.dirty = true;
+            return true;
+        }
+
         let width = img.width;
         let height = img.height;
+
+        if width > MAX_DIMENSION || height > MAX_DIMENSION {
+            self.push_system(&format!(
+                "Image too large ({width}x{height}). Max {MAX_DIMENSION}x{MAX_DIMENSION}."
+            ));
+            self.dirty = true;
+            return true;
+        }
+
         let rgba_bytes = img.bytes;
 
-        // Encode as PNG using minimal encoder
+        // Encode as PNG
         let mut png_data: Vec<u8> = Vec::new();
-        if encode_rgba_to_png(&mut png_data, &rgba_bytes, width, height).is_err() {
-            return false;
+        if let Err(e) = encode_rgba_to_png(&mut png_data, &rgba_bytes, width, height) {
+            self.push_system(&format!("Failed to encode image: {e}"));
+            self.dirty = true;
+            return true;
         }
 
         let size_bytes = png_data.len();
+        if size_bytes > MAX_BYTES {
+            let mb = size_bytes / (1024 * 1024);
+            self.push_system(&format!(
+                "Image too large ({mb}MB). Max 20MB after encoding."
+            ));
+            self.dirty = true;
+            return true;
+        }
+
         let base64_data = base64::engine::general_purpose::STANDARD.encode(&png_data);
 
         self.pending_images.push(PendingImage {
@@ -2199,10 +2273,10 @@ impl TuiApp {
             size_bytes,
         });
 
-        let idx = self.pending_images.len();
+        let count = self.pending_images.len();
         let size_kb = size_bytes / 1024;
         self.push_system(&format!(
-            "Image #{idx} pasted ({width}x{height}, {size_kb}KB). Will be sent with your next message."
+            "Image {count}/{MAX_IMAGES} pasted ({width}x{height}, {size_kb}KB). Will be sent with your next message."
         ));
         self.dirty = true;
         true
@@ -3177,6 +3251,30 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
     }
 
     Err("No clipboard tool found (tried xclip, xsel, wl-copy, pbcopy, clip.exe)".to_string())
+}
+
+/// Truncate a string to at most `max` bytes on a valid UTF-8 boundary.
+fn safe_truncate(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut idx = max;
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    &s[..idx]
+}
+
+/// Truncate a string with "..." suffix if it exceeds `max` bytes.
+fn safe_truncate_ellipsis(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut idx = max.saturating_sub(3);
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    format!("{}...", &s[..idx])
 }
 
 /// Encode RGBA pixel data to PNG format.

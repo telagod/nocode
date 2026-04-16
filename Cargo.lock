@@ -1190,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "nocode"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "arboard",
  "base64",
@@ -1208,7 +1208,7 @@ dependencies = [
 
 [[package]]
 name = "nocode-core"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "base64",
  "chrono",
