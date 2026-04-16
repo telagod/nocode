@@ -360,10 +360,10 @@ fn resolve_provider(settings: &Settings) -> ModelProvider {
     {
         return provider;
     }
-    if settings.custom_base_url.is_some() || settings.custom_api_format.is_some() {
+    if settings.custom_base_url.is_some() {
         return ModelProvider::Custom;
     }
-    if env::var("NOCODE_CUSTOM_BASE_URL").is_ok() || env::var("NOCODE_CUSTOM_API_FORMAT").is_ok() {
+    if env::var("NOCODE_CUSTOM_BASE_URL").is_ok() {
         return ModelProvider::Custom;
     }
     if env::var("ANTHROPIC_API_KEY").is_ok() {
