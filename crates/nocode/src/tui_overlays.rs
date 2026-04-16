@@ -35,7 +35,7 @@ pub(crate) fn draw_overlay(
                  Ctrl-P/N     — input history\n\
                  Ctrl-V       — paste image from clipboard\n\
                  Ctrl-Y       — copy last response to clipboard\n\
-                 Ctrl-F       — search chat\n\
+                 Ctrl-F       — search chat (Ctrl-N/P: next/prev match)\n\
                  Ctrl-O       — toggle thinking blocks\n\
                  Ctrl-T       — toggle theme\n\
                  Ctrl-L       — clear chat\n\

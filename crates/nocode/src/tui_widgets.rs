@@ -367,6 +367,7 @@ pub(crate) struct InputBox<'a> {
     pub cursor_pos: usize,
     pub mode_label: &'a str,
     pub view_offset: usize,
+    pub scroll_y: u16,
 }
 
 impl<'a> InputBox<'a> {
@@ -376,6 +377,7 @@ impl<'a> InputBox<'a> {
             cursor_pos,
             mode_label: "",
             view_offset: 0,
+            scroll_y: 0,
         }
     }
 
@@ -386,6 +388,11 @@ impl<'a> InputBox<'a> {
 
     pub fn with_view_offset(mut self, offset: usize) -> Self {
         self.view_offset = offset;
+        self
+    }
+
+    pub fn with_scroll_y(mut self, scroll_y: u16) -> Self {
+        self.scroll_y = scroll_y;
         self
     }
 }
@@ -450,7 +457,7 @@ impl Widget for InputBox<'_> {
                 ]));
             }
         }
-        let paragraph = Paragraph::new(lines);
+        let paragraph = Paragraph::new(lines).scroll((self.scroll_y, 0));
         paragraph.render(area, buf);
     }
 }

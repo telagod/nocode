@@ -318,6 +318,8 @@ pub(crate) struct TuiApp {
     pub(crate) overlay_scroll: u16,
     /// Horizontal scroll offset for input box (single-line long input).
     pub(crate) input_view_offset: usize,
+    /// Vertical scroll offset for input box (multi-line input).
+    pub(crate) input_scroll_y: u16,
 }
 
 /// An image pasted from clipboard, waiting to be sent with the next message.
@@ -364,6 +366,7 @@ impl TuiApp {
             pending_images: Vec::new(),
             overlay_scroll: 0,
             input_view_offset: 0,
+            input_scroll_y: 0,
         }
     }
 
@@ -626,7 +629,8 @@ impl TuiApp {
         };
         let input_widget = InputBox::new(&self.input, self.cursor_pos)
             .with_mode(mode_label)
-            .with_view_offset(self.input_view_offset);
+            .with_view_offset(self.input_view_offset)
+            .with_scroll_y(self.input_scroll_y);
         frame.render_widget(input_widget, chunks[1]);
 
         // 3. Status line (fused as input bottom border)
@@ -653,6 +657,17 @@ impl TuiApp {
             .or_else(|| self.search_status())
             .or_else(|| self.slash_command_hint())
             .unwrap_or_else(|| self.hud.render_line());
+        // Append undo/redo stack depth
+        {
+            let history = nocode_core::storage::file_history::global_file_history();
+            if let Ok(h) = history.lock() {
+                let uc = h.undo_count();
+                let rc = h.redo_count();
+                if uc > 0 || rc > 0 {
+                    status_base.push_str(&format!(" | undo:{uc} redo:{rc}"));
+                }
+            }
+        }
         // Append unseen message indicator when scrolled up
         if self.unseen_count > 0 && self.chat_scroll > 0 {
             status_base.push_str(&format!(" | {} new", self.unseen_count));
@@ -693,7 +708,17 @@ impl TuiApp {
         let visible_col = char_col.saturating_sub(self.input_view_offset) as u16;
         let cursor_col = visible_col + 2 + mode_prefix_width;
         let cursor_x = chunks[1].x + cursor_col;
-        let cursor_y = chunks[1].y + 1 + cursor_line; // +1 for top border
+        // Update vertical scroll so cursor line stays visible
+        let visible_lines = input_lines.saturating_sub(1); // subtract top border
+        if visible_lines > 0 {
+            if cursor_line < self.input_scroll_y {
+                self.input_scroll_y = cursor_line;
+            } else if cursor_line >= self.input_scroll_y + visible_lines {
+                self.input_scroll_y = cursor_line.saturating_sub(visible_lines) + 1;
+            }
+        }
+        let visible_cursor_line = cursor_line.saturating_sub(self.input_scroll_y);
+        let cursor_y = chunks[1].y + 1 + visible_cursor_line; // +1 for top border
         frame.set_cursor_position((cursor_x, cursor_y));
 
         // 5. Command completion popup (above input box)
@@ -1788,6 +1813,24 @@ impl TuiApp {
                         self.scroll_to_message(msg_idx);
                         self.dirty = true;
                     }
+                KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !self.search_matches.is_empty() => {
+                        self.search_index = (self.search_index + 1) % self.search_matches.len();
+                        let msg_idx = self.search_matches[self.search_index];
+                        self.scroll_to_message(msg_idx);
+                        self.dirty = true;
+                    }
+                KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !self.search_matches.is_empty() => {
+                        self.search_index = if self.search_index == 0 {
+                            self.search_matches.len() - 1
+                        } else {
+                            self.search_index - 1
+                        };
+                        let msg_idx = self.search_matches[self.search_index];
+                        self.scroll_to_message(msg_idx);
+                        self.dirty = true;
+                    }
                 KeyCode::Backspace => {
                     self.search_query.pop();
                     self.update_search_matches();
@@ -1863,6 +1906,7 @@ impl TuiApp {
                     self.input.clear();
                     self.cursor_pos = 0;
                     self.input_view_offset = 0;
+                    self.input_scroll_y = 0;
                     self.input_mode = InputMode::Insert;
                     self.update_completion();
                     self.dirty = true;
@@ -1916,6 +1960,7 @@ impl TuiApp {
                 self.input.clear();
                 self.cursor_pos = 0;
                 self.input_view_offset = 0;
+                self.input_scroll_y = 0;
                 self.update_completion();
                 self.dirty = true;
             }
@@ -2019,6 +2064,7 @@ impl TuiApp {
                 self.input.clear();
                 self.cursor_pos = 0;
                 self.input_view_offset = 0;
+                self.input_scroll_y = 0;
                 self.dirty = true;
                 return HandleKeyResult::Submit(text);
             }
