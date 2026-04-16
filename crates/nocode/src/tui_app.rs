@@ -568,15 +568,17 @@ impl TuiApp {
     pub fn draw(&mut self, frame: &mut Frame) {
         let is_busy = self.thinking_spinner.is_some();
         let hints_height: u16 = if is_busy { 0 } else { 1 };
-        let input_lines = (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).min(5);
+        let input_lines =
+            (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).min(10) + 1; // +1 for top border
 
+        // Layout: Chat → Input → Status (fused with input bottom) → Hints
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(4),
+                Constraint::Length(input_lines),
                 Constraint::Length(1),
                 Constraint::Length(hints_height),
-                Constraint::Length(input_lines),
             ])
             .split(frame.area());
 
@@ -588,30 +590,30 @@ impl TuiApp {
             self.draw_chat_area(frame, chunks[0]);
         }
 
-        // 2. Status line (search overrides when active)
-        let status_text = self
-            .search_status()
-            .or_else(|| self.slash_command_hint())
-            .unwrap_or_else(|| self.hud.render_line());
-        let status = StatusBar::new(&status_text);
-        frame.render_widget(status, chunks[1]);
-
-        // 3. Hints
-        if !is_busy {
-            let hints = HintsBar;
-            frame.render_widget(hints, chunks[2]);
-        }
-
-        // 4. Input
+        // 2. Input
         let mode_label = if self.input_mode == InputMode::Normal {
             self.input_mode.label()
         } else {
             ""
         };
         let input_widget = InputBox::new(&self.input, self.cursor_pos).with_mode(mode_label);
-        frame.render_widget(input_widget, chunks[3]);
+        frame.render_widget(input_widget, chunks[1]);
 
-        // Cursor position
+        // 3. Status line (fused as input bottom border)
+        let status_text = self
+            .search_status()
+            .or_else(|| self.slash_command_hint())
+            .unwrap_or_else(|| self.hud.render_line());
+        let status = StatusBar::new(&status_text);
+        frame.render_widget(status, chunks[2]);
+
+        // 4. Hints
+        if !is_busy {
+            let hints = HintsBar;
+            frame.render_widget(hints, chunks[3]);
+        }
+
+        // Cursor position (relative to input chunk)
         let text_before_cursor = &self.input[..self.cursor_pos];
         let cursor_line = text_before_cursor.chars().filter(|&c| c == '\n').count() as u16;
         let last_newline = text_before_cursor.rfind('\n').map_or(0, |p| p + 1);
@@ -622,8 +624,8 @@ impl TuiApp {
             0
         };
         let cursor_col = display_width_of(line_text) as u16 + 2 + mode_prefix_width;
-        let cursor_x = chunks[3].x + cursor_col;
-        let cursor_y = chunks[3].y + cursor_line;
+        let cursor_x = chunks[1].x + cursor_col;
+        let cursor_y = chunks[1].y + 1 + cursor_line; // +1 for top border
         frame.set_cursor_position((cursor_x, cursor_y));
 
         // 5. Overlay
