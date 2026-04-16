@@ -580,8 +580,17 @@ impl TuiApp {
     // -- drawing --
 
     pub fn draw(&mut self, frame: &mut Frame) {
+        let total_height = frame.area().height;
+        // Minimum terminal size protection
+        if total_height < 4 || frame.area().width < 20 {
+            let msg = ratatui::widgets::Paragraph::new("Terminal too small");
+            frame.render_widget(msg, frame.area());
+            self.dirty = false;
+            return;
+        }
+
         let is_busy = self.thinking_spinner.is_some();
-        let hints_height: u16 = if is_busy { 0 } else { 1 };
+        let hints_height: u16 = if is_busy || total_height < 8 { 0 } else { 1 };
         let input_lines =
             (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).min(10) + 1; // +1 for top border
 
@@ -1766,6 +1775,12 @@ impl TuiApp {
                     self.input.clear();
                     self.cursor_pos = 0;
                     self.input_mode = InputMode::Insert;
+                    self.update_completion();
+                    self.dirty = true;
+                } else if !self.pending_images.is_empty() {
+                    let count = self.pending_images.len();
+                    self.pending_images.clear();
+                    self.push_system(&format!("Cleared {count} pending image(s)."));
                     self.dirty = true;
                 }
             }
@@ -2211,7 +2226,7 @@ impl TuiApp {
             self.input_history = content
                 .lines()
                 .filter(|l| !l.is_empty())
-                .map(String::from)
+                .map(|l| l.replace("\\n", "\n"))
                 .collect();
             // Cap at 500 entries
             if self.input_history.len() > 500 {
