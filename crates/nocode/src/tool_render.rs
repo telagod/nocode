@@ -31,7 +31,7 @@ pub fn truncate_str(s: &str, max: usize) -> String {
 }
 
 /// Find the largest byte index <= `max` on a UTF-8 character boundary.
-fn safe_char_boundary(s: &str, max: usize) -> usize {
+pub fn safe_char_boundary(s: &str, max: usize) -> usize {
     if max >= s.len() {
         return s.len();
     }

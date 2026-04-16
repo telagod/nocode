@@ -2,7 +2,32 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
+
+/// Events emitted by worker threads for the UI to consume.
+#[derive(Debug, Clone)]
+pub enum WorkerEvent {
+    /// Worker state changed.
+    StateChanged {
+        worker_id: String,
+        name: String,
+        new_state: WorkerState,
+    },
+    /// Worker finished successfully.
+    Finished {
+        worker_id: String,
+        name: String,
+        result: String,
+    },
+    /// Worker failed.
+    Failed {
+        worker_id: String,
+        name: String,
+        error: String,
+    },
+    /// Worker timed out and was cancelled.
+    TimedOut { worker_id: String, name: String },
+}
 
 /// Worker lifecycle states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +121,7 @@ impl Worker {
 pub struct WorkerRegistry {
     workers: HashMap<String, Worker>,
     next_id: u64,
+    event_tx: Option<mpsc::Sender<WorkerEvent>>,
 }
 
 impl WorkerRegistry {
@@ -103,6 +129,23 @@ impl WorkerRegistry {
         Self {
             workers: HashMap::new(),
             next_id: 1,
+            event_tx: None,
+        }
+    }
+
+    /// Install an event channel for worker lifecycle notifications.
+    pub fn set_event_channel(&mut self, tx: mpsc::Sender<WorkerEvent>) {
+        self.event_tx = Some(tx);
+    }
+
+    /// Get a clone of the event sender (for passing to worker threads).
+    pub fn event_sender(&self) -> Option<mpsc::Sender<WorkerEvent>> {
+        self.event_tx.clone()
+    }
+
+    fn emit(&self, event: WorkerEvent) {
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(event);
         }
     }
 
@@ -129,8 +172,14 @@ impl WorkerRegistry {
         if let Some(w) = self.workers.get_mut(id)
             && w.state == WorkerState::Running
         {
-            w.result = Some(result);
+            let name = w.name.clone();
+            w.result = Some(result.clone());
             w.state = WorkerState::Finished;
+            self.emit(WorkerEvent::Finished {
+                worker_id: id.to_string(),
+                name,
+                result,
+            });
         }
     }
 
@@ -139,8 +188,14 @@ impl WorkerRegistry {
         if let Some(w) = self.workers.get_mut(id)
             && !matches!(w.state, WorkerState::Finished | WorkerState::Failed)
         {
-            w.error = Some(error);
+            let name = w.name.clone();
+            w.error = Some(error.clone());
             w.state = WorkerState::Failed;
+            self.emit(WorkerEvent::Failed {
+                worker_id: id.to_string(),
+                name,
+                error,
+            });
         }
     }
 
@@ -227,21 +282,25 @@ impl WorkerRegistry {
 
     /// Check all running workers for timeouts, cancel any that exceeded their limit.
     pub fn check_timeouts(&mut self) -> Vec<String> {
-        let timed_out: Vec<String> = self
+        let timed_out: Vec<(String, String)> = self
             .workers
             .values()
             .filter(|w| w.state == WorkerState::Running && w.is_timed_out())
-            .map(|w| w.id.clone())
+            .map(|w| (w.id.clone(), w.name.clone()))
             .collect();
 
-        for id in &timed_out {
+        for (id, name) in &timed_out {
             if let Some(w) = self.workers.get(id) {
                 w.cancel();
             }
             self.set_error(id, "worker timed out".to_string());
+            self.emit(WorkerEvent::TimedOut {
+                worker_id: id.clone(),
+                name: name.clone(),
+            });
         }
 
-        timed_out
+        timed_out.into_iter().map(|(id, _)| id).collect()
     }
 }
 
@@ -256,6 +315,29 @@ static GLOBAL_WORKER_REGISTRY: OnceLock<Arc<Mutex<WorkerRegistry>>> = OnceLock::
 
 pub fn global_worker_registry() -> &'static Arc<Mutex<WorkerRegistry>> {
     GLOBAL_WORKER_REGISTRY.get_or_init(|| Arc::new(Mutex::new(WorkerRegistry::new())))
+}
+
+// ---------------------------------------------------------------------------
+// WorkerObserver — bridges agentic loop events to WorkerEvent channel
+// ---------------------------------------------------------------------------
+
+use crate::query::r#loop::LoopObserver;
+
+/// Observer that forwards agentic loop events from a worker thread to the UI.
+pub struct WorkerObserver {
+    pub worker_id: String,
+    pub tx: mpsc::Sender<WorkerEvent>,
+}
+
+impl LoopObserver for WorkerObserver {
+    fn on_turn_complete(&mut self, turn: u32) {
+        let _ = self.tx.send(WorkerEvent::StateChanged {
+            worker_id: self.worker_id.clone(),
+            name: String::new(),
+            new_state: WorkerState::Running,
+        });
+        let _ = turn;
+    }
 }
 
 #[cfg(test)]

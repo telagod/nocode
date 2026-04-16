@@ -18,7 +18,7 @@ impl Tool for AgentTool {
             "description":{"type":"string","description":"A short (3-5 word) description of the task"},
             "prompt":{"type":"string","description":"The task for the agent to perform"},
             "subagent_type":{"type":"string","description":"The type of specialized agent to use for this task"},
-            "model":{"type":"string","enum":["sonnet","opus","haiku"],"description":"Optional model override for this agent"},
+            "model":{"type":"string","description":"Optional model override for this agent. Pass the full model name (e.g. gpt-4.1, gemini-2.5-pro, claude-sonnet-4-20250514)."},
             "run_in_background":{"type":"boolean","description":"Set to true to run this agent in the background"},
             "name":{"type":"string","description":"Name for the spawned agent. Makes it addressable via SendMessage({to: name}) while running."},
             "team_name":{"type":"string","description":"Team name for spawning. Uses current team context if omitted."},
@@ -32,12 +32,8 @@ impl Tool for AgentTool {
         };
         let description = input["description"].as_str().unwrap_or("");
         let name = input["name"].as_str().unwrap_or("agent");
-        let model_override = input["model"].as_str().map(|m| match m {
-            "sonnet" => "claude-sonnet-4-20250514",
-            "opus" => "claude-opus-4-20250514",
-            "haiku" => "claude-haiku-4-5-20251001",
-            other => other,
-        });
+        let run_in_background = input["run_in_background"].as_bool().unwrap_or(false);
+        let model_override = input["model"].as_str();
         let prompt_owned = prompt.to_string();
         let name_owned = name.to_string();
         let model_owned = model_override.map(String::from);
@@ -48,29 +44,60 @@ impl Tool for AgentTool {
             let mut guard = registry.lock().unwrap();
             let id = guard.register(&name_owned, &prompt_owned);
             guard.set_state(&id, WorkerState::ReadyForPrompt);
+            guard.set_timeout(&id, 300); // 5 minute default
             id
         };
 
         let worker_id = id.clone();
 
-        // Spawn background thread — worker builds its own provider/executor/loop
-        std::thread::spawn(move || {
-            run_worker_thread(&worker_id, &prompt_owned, model_owned.as_deref());
-        });
+        if run_in_background {
+            // Async: spawn and return immediately
+            std::thread::spawn(move || {
+                run_worker_thread(&worker_id, &prompt_owned, model_owned.as_deref());
+            });
+            ToolOutput::success(
+                json!({"worker_id": id, "name": name_owned, "description": description, "status": "spawned"}).to_string(),
+            )
+        } else {
+            // Sync: spawn, wait for completion, return result
+            let handle = std::thread::spawn(move || {
+                run_worker_thread(&worker_id, &prompt_owned, model_owned.as_deref());
+            });
+            let _ = handle.join();
 
-        ToolOutput::success(
-            json!({"worker_id": id, "name": name_owned, "description": description, "status": "spawned"}).to_string(),
-        )
+            // Read result from registry
+            let guard = registry.lock().unwrap();
+            if let Some(worker) = guard.get(&id) {
+                match worker.state {
+                    WorkerState::Finished => {
+                        let result = worker.result.clone().unwrap_or_default();
+                        ToolOutput::success(result)
+                    }
+                    WorkerState::Failed => {
+                        let error = worker
+                            .error
+                            .clone()
+                            .unwrap_or_else(|| "Unknown error".to_string());
+                        ToolOutput::error(error)
+                    }
+                    _ => ToolOutput::error("Agent ended in unexpected state"),
+                }
+            } else {
+                ToolOutput::error("Agent worker not found after execution")
+            }
+        }
     }
 }
 
 /// Execute a worker's prompt on a background thread.
 /// Builds provider, tool registry, and agentic loop from global config.
-fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&str>) {
+pub fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&str>) {
+    use crate::agent::worker::WorkerObserver;
     use crate::config::settings::Settings;
     use crate::message::Message;
     use crate::prompt::assembly::{self, TruncationBudget};
-    use crate::query::r#loop::{self, LoopConfig, NoopObserver};
+    use crate::query::budget::TokenBudget;
+    use crate::query::r#loop::{self, LoopConfig};
     use crate::tool::ToolRegistry;
     use crate::tool::executor::ToolExecutor;
     use crate::tool::global_registry::{
@@ -79,10 +106,22 @@ fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&str>
 
     let registry = global_worker_registry();
 
-    // Mark running
+    // Grab cancel token and event sender before marking running
+    let cancel_token = {
+        let guard = registry.lock().unwrap();
+        guard.get_cancel_token(worker_id)
+    };
+
+    let event_tx = {
+        let guard = registry.lock().unwrap();
+        guard.event_sender()
+    };
+
+    // Mark running + record start time
     {
         let mut guard = registry.lock().unwrap();
         guard.set_state(worker_id, WorkerState::Running);
+        guard.mark_started(worker_id);
     }
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -117,15 +156,37 @@ fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&str>
             tools: tool_definitions_for_model(&tool_registry),
             parallel_tool_execution: true,
         };
-        let mut observer = NoopObserver;
 
-        let loop_result = r#loop::run_agentic_loop(
-            provider.as_ref(),
-            &executor,
-            &config,
-            messages,
-            &mut observer,
-        )?;
+        // Use WorkerObserver if event channel available, otherwise NoopObserver
+        let mut budget = TokenBudget::default();
+        let cancel_ref = cancel_token.as_deref();
+
+        let loop_result = if let Some(tx) = event_tx {
+            let mut observer = WorkerObserver {
+                worker_id: worker_id.to_string(),
+                tx,
+            };
+            r#loop::run_agentic_loop_with_cancel(
+                provider.as_ref(),
+                &executor,
+                &config,
+                messages,
+                &mut observer,
+                &mut budget,
+                cancel_ref,
+            )?
+        } else {
+            let mut observer = r#loop::NoopObserver;
+            r#loop::run_agentic_loop_with_cancel(
+                provider.as_ref(),
+                &executor,
+                &config,
+                messages,
+                &mut observer,
+                &mut budget,
+                cancel_ref,
+            )?
+        };
 
         // Extract assistant text from result
         let text: String = loop_result
@@ -139,7 +200,7 @@ fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&str>
         Ok::<String, Box<dyn std::error::Error + Send + Sync>>(text)
     }));
 
-    // Write result back to registry
+    // Write result back to registry (auto-sends WorkerEvent via set_result/set_error)
     let mut guard = registry.lock().unwrap();
     match result {
         Ok(Ok(text)) => {
@@ -256,7 +317,8 @@ mod tests {
         let result = tool.execute(&json!({
             "description": "test task",
             "prompt": "echo hello",
-            "name": "test-agent"
+            "name": "test-agent",
+            "run_in_background": true
         }));
         assert!(!result.is_error);
         assert!(result.content.contains("worker_id"));
@@ -269,7 +331,8 @@ mod tests {
         let tool = AgentTool;
         let result = tool.execute(&json!({
             "description": "d",
-            "prompt": "p"
+            "prompt": "p",
+            "run_in_background": true
         }));
         assert!(!result.is_error);
         assert!(result.content.contains("agent"));
@@ -281,7 +344,8 @@ mod tests {
         let result = tool.execute(&json!({
             "description": "d",
             "prompt": "p",
-            "model": "haiku"
+            "model": "gpt-4.1",
+            "run_in_background": true
         }));
         assert!(!result.is_error);
     }

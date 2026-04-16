@@ -180,6 +180,10 @@ pub(crate) fn handle_slash_command(
             cmd_agent_create(app, args.as_deref());
             SlashResult::Handled
         }
+        CommandAction::AgentStop => {
+            cmd_agent_stop(app, args.as_deref());
+            SlashResult::Handled
+        }
         CommandAction::FeatureFlags => {
             cmd_feature_flags(app, args.as_deref());
             SlashResult::Handled
@@ -527,7 +531,9 @@ fn cmd_env(app: &mut TuiApp) {
         let display = match val {
             Some(v) if var.contains("KEY") || var.contains("TOKEN") => {
                 if v.len() > 8 {
-                    format!("{}...{}", &v[..4], &v[v.len() - 4..])
+                    let start = crate::tool_render::safe_char_boundary(&v, 4);
+                    let end = crate::tool_render::safe_char_boundary(&v, v.len() - 4);
+                    format!("{}...{}", &v[..start], &v[end..])
                 } else {
                     "(set)".to_string()
                 }
@@ -778,19 +784,53 @@ fn cmd_agent_create(app: &mut TuiApp, args: Option<&str>) {
 
     let id = guard.register(name, prompt);
     guard.set_state(&id, nocode_core::agent::worker::WorkerState::ReadyForPrompt);
+    guard.set_timeout(&id, 300); // 5 minute default timeout
+    drop(guard); // release lock before spawning thread
+
+    // Spawn background worker thread
+    let worker_id = id.clone();
+    let prompt_owned = prompt.to_string();
+    std::thread::spawn(move || {
+        nocode_core::tool::agent::run_worker_thread(&worker_id, &prompt_owned, None);
+    });
 
     app.push_system(&format!(
-        "Agent created:\n\
+        "Agent spawned:\n\
          \x20 ID:     {id}\n\
          \x20 Name:   {name}\n\
          \x20 Prompt: {}\n\
-         \x20 State:  ReadyForPrompt\n\n\
-         Use /agents to see all workers.",
+         \x20 State:  Running\n\n\
+         Use /agents to see all workers, /agent-stop <name> to cancel.",
         if prompt.len() > 80 {
-            format!("{}...", &prompt[..80])
+            crate::tool_render::truncate_str(prompt, 80)
         } else {
             prompt.to_string()
         }
+    ));
+}
+
+fn cmd_agent_stop(app: &mut TuiApp, args: Option<&str>) {
+    let Some(target) = args else {
+        app.push_system("Usage: /agent-stop <id|name>");
+        return;
+    };
+    let target = target.trim();
+    let registry = nocode_core::agent::worker::global_worker_registry();
+    let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Resolve by name or ID
+    let id = if let Some(w) = guard.find_by_name(target) {
+        w.id.clone()
+    } else if guard.get(target).is_some() {
+        target.to_string()
+    } else {
+        app.push_error(&format!("Agent '{target}' not found"));
+        return;
+    };
+
+    guard.cancel_worker(&id);
+    app.push_system(&format!(
+        "Cancellation requested for agent '{target}' ({id})"
     ));
 }
 

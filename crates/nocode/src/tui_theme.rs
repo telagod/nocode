@@ -74,8 +74,8 @@ impl Theme {
             assistant: Color::Cyan,
             error: Color::Red,
             warning: Color::Yellow,
-            tool: Color::Yellow,
-            system: Color::DarkGray,
+            tool: Color::Rgb(180, 160, 60),
+            system: Color::Rgb(100, 100, 110),
             success: Color::Green,
 
             border: Color::DarkGray,
@@ -121,8 +121,8 @@ impl Theme {
             assistant: Color::Rgb(0, 100, 140),
             error: Color::Rgb(180, 0, 0),
             warning: Color::Rgb(180, 140, 0),
-            tool: Color::Rgb(140, 100, 0),
-            system: Color::Gray,
+            tool: Color::Rgb(120, 90, 20),
+            system: Color::Rgb(120, 120, 130),
             success: Color::Rgb(0, 140, 0),
 
             border: Color::Gray,

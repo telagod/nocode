@@ -194,6 +194,8 @@ pub fn run_agentic_loop_with_cancel(
     let mut final_stop_reason = StopReason::EndTurn;
     let mut compaction_count: u32 = 0;
     const MAX_COMPACTIONS: u32 = 3;
+    let mut recovery_attempts: u32 = 0;
+    let mut current_model = config.model.clone();
 
     loop {
         // Check cancel token at top of each turn
@@ -241,7 +243,7 @@ pub fn run_agentic_loop_with_cancel(
             .min(u64::from(config.max_tokens)) as u32;
 
         let request = CreateMessageRequest {
-            model: config.model.clone(),
+            model: current_model.clone(),
             max_tokens: effective_max,
             system: config.system.clone(),
             messages: messages.clone(),
@@ -288,10 +290,21 @@ pub fn run_agentic_loop_with_cancel(
         });
 
         let response = match stream_result {
-            Ok(r) => r,
+            Ok(r) => {
+                recovery_attempts = 0; // reset on success
+                r
+            }
             Err(e) => {
                 let scenario = recovery::classify_error(e.status_code, &e.message);
                 let recipe = RecoveryRecipe::for_scenario(scenario);
+
+                recovery_attempts += 1;
+                if recovery_attempts > recipe.max_attempts {
+                    return Err(ProviderError::non_retryable(format!(
+                        "Max recovery attempts ({}) exceeded: {}",
+                        recipe.max_attempts, e.message
+                    )));
+                }
 
                 let mut recovered = false;
                 for action in &recipe.actions {
@@ -305,10 +318,19 @@ pub fn run_agentic_loop_with_cancel(
                             recovered = true;
                             break;
                         }
-                        RecoveryAction::RetryWithBackoff { base_ms, .. } => {
-                            let delay = base_ms * 2u64.pow(turns.min(4));
+                        RecoveryAction::RetryWithBackoff {
+                            base_ms,
+                            max_attempts,
+                        } => {
+                            if recovery_attempts > *max_attempts {
+                                continue; // skip to next action in recipe
+                            }
+                            let delay = base_ms * 2u64.pow(recovery_attempts.min(4));
                             observer.on_model_event(&ModelStreamEvent::StreamError {
-                                message: format!("Backoff {delay}ms: {}", e.message),
+                                message: format!(
+                                    "Backoff {delay}ms (attempt {recovery_attempts}): {}",
+                                    e.message
+                                ),
                                 retryable: true,
                             });
                             std::thread::sleep(std::time::Duration::from_millis(delay));
@@ -331,13 +353,39 @@ pub fn run_agentic_loop_with_cancel(
                                 break;
                             }
                         }
+                        RecoveryAction::SwitchModel { fallback } => {
+                            observer.on_model_event(&ModelStreamEvent::StreamError {
+                                message: format!("Switching to fallback model: {fallback}"),
+                                retryable: true,
+                            });
+                            current_model = fallback.clone();
+                            recovered = true;
+                            break;
+                        }
+                        RecoveryAction::SkipTool => {
+                            observer.on_model_event(&ModelStreamEvent::StreamError {
+                                message: "Skipping failed tool, continuing".to_string(),
+                                retryable: true,
+                            });
+                            recovered = true;
+                            break;
+                        }
+                        RecoveryAction::Escalate { reason } => {
+                            observer.on_model_event(&ModelStreamEvent::StreamError {
+                                message: format!("Escalating: {reason}"),
+                                retryable: false,
+                            });
+                            return Err(ProviderError::non_retryable(format!(
+                                "Escalated: {reason}: {}",
+                                e.message
+                            )));
+                        }
                         RecoveryAction::Abort { reason } => {
                             return Err(ProviderError::non_retryable(format!(
                                 "{reason}: {}",
                                 e.message
                             )));
                         }
-                        _ => {}
                     }
                 }
 

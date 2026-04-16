@@ -82,10 +82,56 @@ impl<'a> ToolExecutor<'a> {
         let Some(tool) = tool_opt else {
             // Try GlobalToolRegistry for bridged tools (mcp:server:tool, plugin:name:tool)
             if is_bridged {
+                // --- Security pipeline for bridged tools ---
+
+                // Trust check
+                if let Some(enforcer) = &self.trust_enforcer {
+                    match enforcer.check(name, "model") {
+                        TrustDecision::Deny => {
+                            return ContentBlock::tool_error(
+                                id,
+                                format!("Trust policy denied tool '{name}'"),
+                            );
+                        }
+                        TrustDecision::PromptUser | TrustDecision::Allow => {}
+                    }
+                }
+
+                // PreToolUse hooks
+                if let Some(runner) = self.hook_runner
+                    && let Err(hook_result) =
+                        runner.run_pre_tool_use(name, Some(&input.to_string()))
+                {
+                    return ContentBlock::tool_error(
+                        id,
+                        format!(
+                            "PreToolUse hook denied: {} (exit {})",
+                            hook_result.hook_command, hook_result.exit_code
+                        ),
+                    );
+                }
+
+                // Permission check
+                if !self.check_permission(name, input) {
+                    return ContentBlock::tool_error(
+                        id,
+                        format!("Permission denied for tool '{name}'"),
+                    );
+                }
+
+                // Sandbox enforcement
+                if let Some(ref sandbox) = self.sandbox
+                    && sandbox.enabled
+                    && let Some(violation) = self.check_sandbox(name, input, sandbox)
+                {
+                    return ContentBlock::tool_error(id, violation);
+                }
+
+                // Execute via global registry
                 let global = global_tool_registry();
                 let guard = global.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(output) = guard.execute(name, input) {
-                    // Run PostToolUse hooks even for bridged tools
+                    // PostToolUse hooks
                     if let Some(runner) = self.hook_runner {
                         let _ = runner.run_post_tool_use(name, Some(&output.content));
                     }
@@ -244,7 +290,11 @@ impl<'a> ToolExecutor<'a> {
                 if let Some(prompter) = self.prompter {
                     let args_summary = input.to_string();
                     let summary = if args_summary.len() > 200 {
-                        format!("{}...", &args_summary[..200])
+                        let mut idx = 200;
+                        while idx > 0 && !args_summary.is_char_boundary(idx) {
+                            idx -= 1;
+                        }
+                        format!("{}...", &args_summary[..idx])
                     } else {
                         args_summary
                     };

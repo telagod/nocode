@@ -274,10 +274,33 @@ impl McpServer {
 
         let path = std::path::Path::new(path_str);
 
-        // Security: ensure path is within cwd or a common config location
+        // Security: resolve to canonical path first
         let canonical = path
             .canonicalize()
             .map_err(|e| (-32602, format!("Cannot resolve path: {e}")))?;
+
+        // Security: enforce path is within cwd or ~/.nocode/
+        let canonical_str = canonical.to_string_lossy();
+        let home_nocode = std::env::var("HOME")
+            .map(|h| format!("{h}/.nocode/"))
+            .unwrap_or_default();
+        let cwd_prefix = if self.cwd.ends_with('/') {
+            self.cwd.clone()
+        } else {
+            format!("{}/", self.cwd)
+        };
+        if !canonical_str.starts_with(&cwd_prefix)
+            && canonical_str.as_ref() != self.cwd.as_str()
+            && (home_nocode.is_empty() || !canonical_str.starts_with(&home_nocode))
+        {
+            return Err((
+                -32602,
+                format!(
+                    "Access denied: path '{}' is outside workspace and config directories",
+                    canonical_str
+                ),
+            ));
+        }
 
         // Check file size (max 1MB)
         let metadata = std::fs::metadata(&canonical)

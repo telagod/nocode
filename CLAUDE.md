@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is nocode
 
-A terminal-native AI coding assistant built in Rust. Connects to Claude, OpenAI, Gemini, Foundry, or any compatible endpoint. Two interfaces: line-mode REPL and 4-pane TUI with Markdown rendering, syntect syntax highlighting, RGB color support, vim mode, dark/light themes, and thinking block display.
+A terminal-native AI coding assistant built in Rust. Connects to Claude, OpenAI, Gemini, or any compatible endpoint (including Foundry via Custom provider). Two interfaces: line-mode REPL and 4-pane TUI with Markdown rendering, syntect syntax highlighting, RGB color support, vim mode, dark/light themes, and thinking block display.
 
 ## Build & Test Commands
 
@@ -25,7 +25,7 @@ CI runs fmt → clippy → test on every push/PR to main (`.github/workflows/ci.
 
 ## Workspace Layout
 
-Two-crate Cargo workspace (edition 2024, clippy all+pedantic+nursery):
+Two-crate Cargo workspace (edition 2024, clippy all+pedantic+nursery, unsafe forbidden):
 
 ```
 crates/nocode-core/   — library (86 modules), all core logic
@@ -77,7 +77,9 @@ MCP tools are bridged via `mcp/bridge.rs` with `mcp:server:tool` prefix dispatch
 
 ### Provider Abstraction
 
-`ModelProvider` enum (Mock|Claude|OpenAi|Gemini|Foundry|Custom) with `ApiFormat` routing. Each provider maps to a different wire format (Messages API, Chat Completions/Responses, generateContent). `provider/transport.rs` handles HTTP client, SSE parsing, retry/backoff, and per-provider auth headers. Foundry provider routes through OpenAI-compatible format.
+`ModelProvider` enum (Claude|OpenAi|Gemini|Custom) with `ApiFormat` routing. Each provider maps to a different wire format: Claude → Messages API, OpenAI → Responses API (default, not Chat Completions), Gemini → generateContent. `provider/transport.rs` handles HTTP client, SSE parsing, retry/backoff, and per-provider auth headers. Foundry is supported via `FoundryProvider` struct (same Messages API, different endpoint/auth) — use `Custom` provider with `NOCODE_CUSTOM_API_FORMAT=claude`.
+
+Provider auto-detection priority (in `main.rs:resolve_provider`): `NOCODE_MODEL_PROVIDER` env → settings `model_provider` → Custom (if custom URL/format set) → `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` → `GEMINI_API_KEY` → fallback Claude.
 
 ### Configuration (3-tier hierarchy)
 
@@ -175,7 +177,7 @@ MCP servers configured in `settings.json` under `mcp_servers` are auto-connected
 
 ## Key Conventions
 
-- `ModelProvider` and `ApiFormat` are Copy enums. Custom config stored separately.
+- `ModelProvider` and `ApiFormat` are Copy enums. `ModelProvider` has 4 variants (Claude|OpenAi|Gemini|Custom). Custom config stored separately in `CustomProviderConfig`.
 - Global singletons: `OnceLock<Arc<Mutex<T>>>`, accessed via `global_*()` functions.
 - Explicit enum state machines over inferred state for all lifecycles.
 - Structured typed events for observability — never scrape prose.
@@ -193,6 +195,7 @@ MCP servers configured in `settings.json` under `mcp_servers` are auto-connected
 - `NOCODE_SYSTEM_PROMPT` — override system prompt
 - `NOCODE_MODEL_REASONING_EFFORT` — `low`, `medium`, `high`
 - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` — provider API keys
+- `ANTHROPIC_MODEL` / `OPENAI_MODEL` / `GEMINI_MODEL` — per-provider model override
 - `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` — per-provider base URL override
 - `NOCODE_BRIDGE_BASE_URL` / `NOCODE_BRIDGE_AUTH_TOKEN` — remote bridge config
 

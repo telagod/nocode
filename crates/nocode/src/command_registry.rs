@@ -55,6 +55,7 @@ pub enum CommandAction {
     Undo,
     Redo,
     Rewind,
+    AgentStop,
 }
 
 /// A registered slash command.
@@ -314,6 +315,13 @@ impl CommandRegistry {
                 summary: "Create a new background agent worker",
                 argument_hint: Some("<name> <prompt>"),
                 action: CommandAction::AgentCreate,
+            },
+            CommandEntry {
+                name: "agent-stop",
+                aliases: &["agent-cancel", "agent-kill"],
+                summary: "Cancel a running background agent",
+                argument_hint: Some("<id|name>"),
+                action: CommandAction::AgentStop,
             },
             CommandEntry {
                 name: "feature-flags",

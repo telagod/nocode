@@ -49,13 +49,18 @@ impl SessionPersistence {
             return;
         };
 
+        let mut written = 0usize;
         for msg in new_messages {
             if let Ok(json) = serde_json::to_string(msg) {
-                let _ = writeln!(file, "{json}");
+                if writeln!(file, "{json}").is_ok() {
+                    written += 1;
+                } else {
+                    break;
+                }
             }
         }
 
-        self.flushed_count = messages.len();
+        self.flushed_count += written;
     }
 
     /// Overwrite the transcript with the full message list (final seal).
@@ -150,7 +155,12 @@ impl SessionPersistence {
                         let text = msg.text_content();
                         if !text.is_empty() {
                             let preview = if text.len() > 80 {
-                                format!("{}...", &text[..77])
+                                // Find safe UTF-8 boundary
+                                let mut idx = 77;
+                                while idx > 0 && !text.is_char_boundary(idx) {
+                                    idx -= 1;
+                                }
+                                format!("{}...", &text[..idx])
                             } else {
                                 text
                             };

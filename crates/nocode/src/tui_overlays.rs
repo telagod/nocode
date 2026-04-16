@@ -118,16 +118,10 @@ Commands:
             let reg = reg.lock().unwrap_or_else(|e| e.into_inner());
             let workers = reg.list();
             let text = if workers.is_empty() {
-                "No background agents running.
-
-Use /agent-create <name> <prompt> to spawn one."
+                "No background agents running.\n\nUse /agent-create <name> <prompt> to spawn one."
                     .to_string()
             } else {
-                let mut lines = vec![format!(
-                    "Background agents ({}):
-",
-                    workers.len()
-                )];
+                let mut lines = vec![format!("Background agents ({}):\n", workers.len())];
                 for w in &workers {
                     let state_icon = match w.state {
                         nocode_core::agent::worker::WorkerState::Running => "▶",
@@ -136,17 +130,37 @@ Use /agent-create <name> <prompt> to spawn one."
                         nocode_core::agent::worker::WorkerState::Failed => "✗",
                         _ => "○",
                     };
+                    let elapsed = w.started_at.map_or(String::new(), |t| {
+                        let secs = t.elapsed().as_secs();
+                        if secs < 60 {
+                            format!(" ({secs}s)")
+                        } else {
+                            format!(" ({}m{}s)", secs / 60, secs % 60)
+                        }
+                    });
+                    let detail = match w.state {
+                        nocode_core::agent::worker::WorkerState::Finished => {
+                            w.result.as_deref().map_or(String::new(), |r| {
+                                let preview: String = r.chars().take(80).collect();
+                                format!("\n    → {preview}")
+                            })
+                        }
+                        nocode_core::agent::worker::WorkerState::Failed => w
+                            .error
+                            .as_deref()
+                            .map_or(String::new(), |e| format!("\n    ✖ {e}")),
+                        _ => String::new(),
+                    };
                     lines.push(format!(
-                        "  {state_icon} {} ({}): {:?}",
+                        "  {state_icon} {} ({}): {:?}{elapsed}{detail}",
                         w.name, w.id, w.state
                     ));
                 }
                 lines.push(String::new());
-                lines.push("Commands: /agent-create <name> <prompt>".to_string());
-                lines.join(
-                    "
-",
-                )
+                lines.push(
+                    "Commands: /agent-create <name> <prompt> | /agent-stop <name>".to_string(),
+                );
+                lines.join("\n")
             };
             let overlay_w = OverlayBlock::new("Agents", &text);
             frame.render_widget(overlay_w, area);

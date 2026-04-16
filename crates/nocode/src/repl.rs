@@ -55,7 +55,52 @@ pub fn run_repl(
     let mut persistence =
         nocode_core::session::persistence::SessionPersistence::new(&cwd, &session_id);
 
+    // Install worker event channel for background agent notifications
+    let worker_event_rx = {
+        let (worker_tx, worker_rx) = std::sync::mpsc::channel();
+        let reg = nocode_core::agent::worker::global_worker_registry();
+        let mut guard = reg.lock().unwrap_or_else(|e| e.into_inner());
+        guard.set_event_channel(worker_tx);
+        worker_rx
+    };
+
     loop {
+        // Drain worker events before prompting
+        {
+            use nocode_core::agent::worker::WorkerEvent;
+            loop {
+                match worker_event_rx.try_recv() {
+                    Ok(WorkerEvent::Finished {
+                        worker_id,
+                        name,
+                        result,
+                    }) => {
+                        let preview = crate::tool_render::truncate_str(&result, 300);
+                        println!(
+                            "\x1b[36m● Agent '{name}' ({worker_id}) finished:\x1b[0m\n{preview}"
+                        );
+                    }
+                    Ok(WorkerEvent::Failed {
+                        worker_id,
+                        name,
+                        error,
+                    }) => {
+                        println!("\x1b[31m✖ Agent '{name}' ({worker_id}) failed: {error}\x1b[0m");
+                    }
+                    Ok(WorkerEvent::TimedOut { worker_id, name }) => {
+                        println!("\x1b[31m✖ Agent '{name}' ({worker_id}) timed out\x1b[0m");
+                    }
+                    Ok(WorkerEvent::StateChanged { .. }) => {}
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                }
+            }
+            // Check timeouts
+            let reg = nocode_core::agent::worker::global_worker_registry();
+            let mut guard = reg.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = guard.check_timeouts();
+        }
+
         print!("> ");
         let _ = stdout.flush();
 
@@ -74,6 +119,7 @@ pub fn run_repl(
                 CommandAction::Quit => break,
                 CommandAction::Clear => {
                     messages.clear();
+                    persistence.persist_full(&messages);
                     println!("(conversation cleared)");
                 }
                 CommandAction::Help => {
@@ -100,7 +146,9 @@ pub fn run_repl(
                 }
                 CommandAction::Resume => {
                     if let Some(sid) = args {
-                        repl_cmd_resume(&sid, &mut messages);
+                        if let Some(new_persistence) = repl_cmd_resume(&sid, &mut messages) {
+                            persistence = new_persistence;
+                        }
                     } else {
                         println!("Usage: /resume <session_id>");
                     }
@@ -294,9 +342,10 @@ pub fn run_repl(
 
                     // Truncate very large diffs
                     let diff_for_review = if diff_text.len() > 50000 {
+                        let boundary = crate::tool_render::safe_char_boundary(&diff_text, 50000);
                         format!(
                             "{}\n\n... (truncated, {} chars total)",
-                            &diff_text[..50000],
+                            &diff_text[..boundary],
                             diff_text.len()
                         )
                     } else {
@@ -527,7 +576,7 @@ pub fn run_repl(
                             eprintln!("Failed to copy to clipboard: {e}");
                         } else {
                             let preview = if text.len() > 60 {
-                                format!("{}...", &text[..60])
+                                crate::tool_render::truncate_str(&text, 60)
                             } else {
                                 text.clone()
                             };
@@ -582,6 +631,7 @@ pub fn run_repl(
                     } else {
                         let removed = messages.len() - target;
                         messages.truncate(target);
+                        persistence.persist_full(&messages);
                         println!("Rewound to message {target} (removed {removed} messages)");
                     }
                 }
@@ -650,18 +700,25 @@ fn repl_cmd_sessions() {
     }
 }
 
-fn repl_cmd_resume(session_id: &str, messages: &mut Vec<Message>) {
+fn repl_cmd_resume(
+    session_id: &str,
+    messages: &mut Vec<Message>,
+) -> Option<nocode_core::session::persistence::SessionPersistence> {
     use nocode_core::session::persistence::SessionPersistence;
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
     match SessionPersistence::resume(&cwd, session_id) {
-        Ok((_persistence, loaded)) => {
+        Ok((new_persistence, loaded)) => {
             let count = loaded.len();
             *messages = loaded;
             println!("Resumed session '{session_id}' ({count} messages)");
+            Some(new_persistence)
         }
-        Err(e) => eprintln!("Failed to resume: {e}"),
+        Err(e) => {
+            eprintln!("Failed to resume: {e}");
+            None
+        }
     }
 }
 
@@ -832,7 +889,7 @@ impl LoopObserver for ReplObserver {
             };
             // Show truncated result
             let display = if content.len() > 200 {
-                format!("{}...", &content[..200])
+                crate::tool_render::truncate_str(content, 200)
             } else {
                 content.clone()
             };

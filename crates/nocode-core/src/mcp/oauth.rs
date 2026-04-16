@@ -99,22 +99,14 @@ impl McpOAuthManager {
 
         // 5. Wait for callback with timeout
         listener
-            .set_nonblocking(false)
-            .map_err(|e| format!("Failed to set blocking mode: {e}"))?;
+            .set_nonblocking(true)
+            .map_err(|e| format!("Failed to set non-blocking mode: {e}"))?;
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
         let mut code_opt: Option<String> = None;
-
-        // Set read timeout on the listener so we can check deadline
-        listener.set_ttl(30).ok();
-        let accept_timeout = std::time::Duration::from_secs(5);
-        listener.set_nonblocking(false).ok();
+        let mut browser_url_printed = false;
 
         while std::time::Instant::now() < deadline {
-            // Set a per-accept timeout
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            let _wait_time = remaining.min(accept_timeout);
-
             match listener.accept() {
                 Ok((mut stream, _addr)) => {
                     // Read the HTTP request
@@ -127,8 +119,16 @@ impl McpOAuthManager {
                     let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
                     let _ = stream.shutdown(std::net::Shutdown::Both);
 
-                    // Extract code from query string
-                    if let Some(code) = extract_code_from_request(&request_str) {
+                    // Extract code and validate state
+                    if let Some((code, callback_state)) = extract_code_from_request(&request_str) {
+                        // Validate state parameter to prevent CSRF
+                        if let Some(ref cb_state) = callback_state
+                            && cb_state != &state
+                        {
+                            return Err(format!(
+                                "OAuth state mismatch: expected '{state}', got '{cb_state}'"
+                            ));
+                        }
                         code_opt = Some(code);
                         break;
                     }
@@ -141,12 +141,9 @@ impl McpOAuthManager {
                 }
             }
 
-            if !browser_opened {
-                // If we couldn't open the browser, give the user the URL to visit manually
-                // but still wait for the callback
+            if !browser_opened && !browser_url_printed {
                 eprintln!("Please open this URL in your browser:\n{url}");
-                // Only print once — set a flag to avoid repeated messages
-                break;
+                browser_url_printed = true;
             }
         }
 
@@ -311,22 +308,27 @@ fn which_command(cmd: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Extract the authorization code from an HTTP request line.
+/// Extract the authorization code and state from an HTTP request line.
 /// Expects GET /callback?code=xxx&state=yyy
-fn extract_code_from_request(request: &str) -> Option<String> {
+fn extract_code_from_request(request: &str) -> Option<(String, Option<String>)> {
     // Parse the request line: "GET /callback?code=xxx&state=yyy HTTP/1.1"
     let first_line = request.lines().next()?;
     let path = first_line.split(' ').nth(1)?;
     let query = path.split('?').nth(1)?;
 
+    let mut code = None;
+    let mut state = None;
     for pair in query.split('&') {
-        let (key, value) = pair.split_once('=')?;
-        if key == "code" {
-            return Some(urlencoding::decode(value).ok()?.into_owned());
+        if let Some((key, value)) = pair.split_once('=') {
+            match key {
+                "code" => code = urlencoding::decode(value).ok().map(|v| v.into_owned()),
+                "state" => state = urlencoding::decode(value).ok().map(|v| v.into_owned()),
+                _ => {}
+            }
         }
     }
 
-    None
+    code.map(|c| (c, state))
 }
 
 /// Global singleton MCP OAuth manager.

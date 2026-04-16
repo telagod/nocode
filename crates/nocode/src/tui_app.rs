@@ -198,21 +198,12 @@ impl TuiApp {
             .ok()
             .or_else(|| credential_store.get_key(api_key_slot))
             .unwrap_or_default();
-        let (model_suggestions, status) = match fetch_model_suggestions(
+        // Spawn background model fetch instead of blocking the UI
+        self.spawn_model_fetch(
             provider.as_str(),
             custom_base_url.trim(),
             custom_api_format.trim(),
-        ) {
-            Ok(models) if !models.is_empty() => {
-                let count = models.len();
-                (models, Some(format!("Loaded {count} model suggestion(s)")))
-            }
-            Ok(models) => (models, Some("No model suggestions returned".to_string())),
-            Err(e) => (
-                Vec::new(),
-                Some(format!("Model suggestions unavailable: {e}")),
-            ),
-        };
+        );
         let detected_preset = detect_preset(&custom_base_url);
         self.overlay = Overlay::Config(Box::new(ConfigState {
             selected: 0,
@@ -222,7 +213,7 @@ impl TuiApp {
             filtering_models: false,
             editing: false,
             input: String::new(),
-            status,
+            status: Some("Loading models...".to_string()),
             provider,
             provider_source: setting_source_label(
                 "model_provider",
@@ -268,8 +259,8 @@ impl TuiApp {
                 Some("default"),
             ),
             model_filter: String::new(),
-            all_model_suggestions: model_suggestions.clone(),
-            model_suggestions,
+            all_model_suggestions: Vec::new(),
+            model_suggestions: Vec::new(),
             preset_index: detected_preset,
         }));
         self.dirty = true;
@@ -314,6 +305,11 @@ pub(crate) struct TuiApp {
     pub(crate) search_active: bool,
     pub(crate) search_matches: Vec<usize>,
     pub(crate) search_index: usize,
+    /// Background model fetch receiver
+    pub(crate) model_fetch_rx: Option<std::sync::mpsc::Receiver<Result<Vec<String>, String>>>,
+    /// Background worker event receiver
+    pub(crate) worker_event_rx:
+        Option<std::sync::mpsc::Receiver<nocode_core::agent::worker::WorkerEvent>>,
 }
 
 impl TuiApp {
@@ -347,6 +343,42 @@ impl TuiApp {
             search_active: false,
             search_matches: Vec::new(),
             search_index: 0,
+            model_fetch_rx: None,
+            worker_event_rx: None,
+        }
+    }
+
+    /// Spawn a background thread to fetch model suggestions without blocking the UI.
+    fn spawn_model_fetch(
+        &mut self,
+        provider: &str,
+        custom_base_url: &str,
+        custom_api_format: &str,
+    ) {
+        let provider = provider.to_string();
+        let base_url = custom_base_url.to_string();
+        let api_format = custom_api_format.to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.model_fetch_rx = Some(rx);
+        std::thread::spawn(move || {
+            let result = fetch_model_suggestions(&provider, &base_url, &api_format);
+            let _ = tx.send(result);
+        });
+    }
+
+    /// Poll for background model fetch results. Returns Some if results are ready.
+    fn poll_model_fetch(&mut self) -> Option<Result<Vec<String>, String>> {
+        let rx = self.model_fetch_rx.as_ref()?;
+        match rx.try_recv() {
+            Ok(result) => {
+                self.model_fetch_rx = None;
+                Some(result)
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.model_fetch_rx = None;
+                Some(Err("Model fetch thread disconnected".to_string()))
+            }
         }
     }
 
@@ -418,7 +450,7 @@ impl TuiApp {
         // Fallback: plain message
         let prefix = if is_error { "✖" } else { "⎿" };
         let display = if content.len() > 200 {
-            format!("{}...", &content[..200])
+            crate::tool_render::truncate_str(content, 200)
         } else {
             content.to_string()
         };
@@ -778,31 +810,16 @@ impl TuiApp {
                                 *status = Some("Switched provider to auto".to_string());
                             } else {
                                 apply_api_key_to_env(provider, custom_api_format, api_key);
-                                match fetch_model_suggestions(
+                                self.model_fetch_rx = Some(spawn_model_fetch_bg(
                                     provider,
                                     custom_base_url.trim(),
                                     custom_api_format.trim(),
-                                ) {
-                                    Ok(models) => {
-                                        *all_model_suggestions = models;
-                                        *model_suggestions =
-                                            apply_model_filter(all_model_suggestions, model_filter);
-                                        *suggestion_index = 0;
-                                        *suggestion_scroll = 0;
-                                        *status = Some(format!(
-                                            "Switched provider to custom; fetched {} model suggestion(s)",
-                                            model_suggestions.len()
-                                        ));
-                                    }
-                                    Err(e) => {
-                                        model_suggestions.clear();
-                                        *suggestion_index = 0;
-                                        *suggestion_scroll = 0;
-                                        *status = Some(format!(
-                                            "Switched provider to custom; model refresh failed: {e}"
-                                        ));
-                                    }
-                                }
+                                ));
+                                *suggestion_index = 0;
+                                *suggestion_scroll = 0;
+                                *status = Some(
+                                    "Switched provider to custom; loading models...".to_string(),
+                                );
                             }
                             self.dirty = true;
                         }
@@ -830,33 +847,17 @@ impl TuiApp {
                             // Re-detect preset after format toggle
                             *preset_index = detect_preset(custom_base_url);
                             apply_api_key_to_env(provider, custom_api_format, api_key);
-                            match fetch_model_suggestions(
+                            self.model_fetch_rx = Some(spawn_model_fetch_bg(
                                 provider,
                                 custom_base_url.trim(),
                                 custom_api_format.trim(),
-                            ) {
-                                Ok(models) => {
-                                    *all_model_suggestions = models;
-                                    *model_suggestions =
-                                        apply_model_filter(all_model_suggestions, model_filter);
-                                    *suggestion_index = 0;
-                                    *suggestion_scroll = 0;
-                                    *status = Some(format!(
-                                        "Switched API format to {}; fetched {} model suggestion(s)",
-                                        custom_api_format,
-                                        model_suggestions.len()
-                                    ));
-                                }
-                                Err(e) => {
-                                    model_suggestions.clear();
-                                    *suggestion_index = 0;
-                                    *suggestion_scroll = 0;
-                                    *status = Some(format!(
-                                        "Switched API format to {}; model refresh failed: {e}",
-                                        custom_api_format
-                                    ));
-                                }
-                            }
+                            ));
+                            *suggestion_index = 0;
+                            *suggestion_scroll = 0;
+                            *status = Some(format!(
+                                "Switched API format to {}; loading models...",
+                                custom_api_format
+                            ));
                             self.dirty = true;
                         }
                         KeyCode::Right
@@ -932,34 +933,15 @@ impl TuiApp {
                                         // Re-detect preset after manual edit
                                         *preset_index = detect_preset(custom_base_url);
                                         apply_api_key_to_env(provider, custom_api_format, api_key);
-                                        match fetch_model_suggestions(
+                                        self.model_fetch_rx = Some(spawn_model_fetch_bg(
                                             provider,
                                             custom_base_url.trim(),
                                             custom_api_format.trim(),
-                                        ) {
-                                            Ok(models) => {
-                                                *all_model_suggestions = models;
-                                                *model_suggestions = apply_model_filter(
-                                                    all_model_suggestions,
-                                                    model_filter,
-                                                );
-                                                *suggestion_index = 0;
-                                                *suggestion_scroll = 0;
-                                                *status = Some(format!(
-                                                    "Field updated; fetched {} model suggestion(s)",
-                                                    model_suggestions.len()
-                                                ));
-                                            }
-                                            Err(e) => {
-                                                all_model_suggestions.clear();
-                                                model_suggestions.clear();
-                                                *suggestion_index = 0;
-                                                *suggestion_scroll = 0;
-                                                *status = Some(format!(
-                                                    "Field updated; model refresh failed: {e}"
-                                                ));
-                                            }
-                                        }
+                                        ));
+                                        *suggestion_index = 0;
+                                        *suggestion_scroll = 0;
+                                        *status =
+                                            Some("Field updated; loading models...".to_string());
                                     } else {
                                         *status = Some("Field updated locally".to_string());
                                     }
@@ -987,36 +969,17 @@ impl TuiApp {
                                     *status = Some("Switched provider to auto".to_string());
                                 } else {
                                     apply_api_key_to_env(provider, custom_api_format, api_key);
-                                    match fetch_model_suggestions(
+                                    self.model_fetch_rx = Some(spawn_model_fetch_bg(
                                         provider,
                                         custom_base_url.trim(),
                                         custom_api_format.trim(),
-                                    ) {
-                                        Ok(models) => {
-                                            *all_model_suggestions = models;
-                                            *model_suggestions = apply_model_filter(
-                                                all_model_suggestions,
-                                                model_filter,
-                                            );
-                                            *suggestion_index = 0;
-                                            *suggestion_scroll = 0;
-                                            *status = Some(format!(
-                                                "Switched provider to {}; fetched {} model suggestion(s)",
-                                                provider,
-                                                model_suggestions.len()
-                                            ));
-                                        }
-                                        Err(e) => {
-                                            all_model_suggestions.clear();
-                                            model_suggestions.clear();
-                                            *suggestion_index = 0;
-                                            *suggestion_scroll = 0;
-                                            *status = Some(format!(
-                                                "Switched provider to {}; model refresh failed: {e}",
-                                                provider
-                                            ));
-                                        }
-                                    }
+                                    ));
+                                    *suggestion_index = 0;
+                                    *suggestion_scroll = 0;
+                                    *status = Some(format!(
+                                        "Switched provider to {}; loading models...",
+                                        provider
+                                    ));
                                 }
                             } else {
                                 *editing = true;
@@ -1127,27 +1090,13 @@ impl TuiApp {
                                     *suggestion_scroll = 0;
                                 } else {
                                     apply_api_key_to_env(provider, custom_api_format, api_key);
-                                    match fetch_model_suggestions(
+                                    self.model_fetch_rx = Some(spawn_model_fetch_bg(
                                         provider,
                                         custom_base_url.trim(),
                                         custom_api_format.trim(),
-                                    ) {
-                                        Ok(models) => {
-                                            *all_model_suggestions = models;
-                                            *model_suggestions = apply_model_filter(
-                                                all_model_suggestions,
-                                                model_filter,
-                                            );
-                                            *suggestion_index = 0;
-                                            *suggestion_scroll = 0;
-                                        }
-                                        Err(_) => {
-                                            all_model_suggestions.clear();
-                                            model_suggestions.clear();
-                                            *suggestion_index = 0;
-                                            *suggestion_scroll = 0;
-                                        }
-                                    }
+                                    ));
+                                    *suggestion_index = 0;
+                                    *suggestion_scroll = 0;
                                 }
                             }
                             *status =
@@ -1372,29 +1321,14 @@ impl TuiApp {
                         }
                         KeyCode::Char('r') | KeyCode::Char('R') if !*editing => {
                             apply_api_key_to_env(provider, custom_api_format, api_key);
-                            match fetch_model_suggestions(
+                            self.model_fetch_rx = Some(spawn_model_fetch_bg(
                                 provider,
                                 custom_base_url.trim(),
                                 custom_api_format.trim(),
-                            ) {
-                                Ok(models) => {
-                                    *all_model_suggestions = models;
-                                    *model_suggestions =
-                                        apply_model_filter(all_model_suggestions, model_filter);
-                                    *suggestion_index = 0;
-                                    *suggestion_scroll = 0;
-                                    *status = Some(format!(
-                                        "Fetched {} model suggestion(s)",
-                                        model_suggestions.len()
-                                    ));
-                                }
-                                Err(e) => {
-                                    all_model_suggestions.clear();
-                                    model_suggestions.clear();
-                                    *suggestion_scroll = 0;
-                                    *status = Some(format!("Model refresh failed: {e}"));
-                                }
-                            }
+                            ));
+                            *suggestion_index = 0;
+                            *suggestion_scroll = 0;
+                            *status = Some("Loading models...".to_string());
                             self.dirty = true;
                         }
                         KeyCode::Char('p') | KeyCode::Char('P')
@@ -1427,25 +1361,13 @@ impl TuiApp {
                             }
                             // Refresh model suggestions for new endpoint
                             apply_api_key_to_env(provider, custom_api_format, api_key);
-                            match fetch_model_suggestions(
+                            self.model_fetch_rx = Some(spawn_model_fetch_bg(
                                 provider,
                                 custom_base_url.trim(),
                                 custom_api_format.trim(),
-                            ) {
-                                Ok(models) => {
-                                    *all_model_suggestions = models;
-                                    *model_suggestions =
-                                        apply_model_filter(all_model_suggestions, model_filter);
-                                    *suggestion_index = 0;
-                                    *suggestion_scroll = 0;
-                                }
-                                Err(_) => {
-                                    all_model_suggestions.clear();
-                                    model_suggestions.clear();
-                                    *suggestion_index = 0;
-                                    *suggestion_scroll = 0;
-                                }
-                            }
+                            ));
+                            *suggestion_index = 0;
+                            *suggestion_scroll = 0;
                             self.dirty = true;
                         }
                         KeyCode::Char(c)
@@ -2070,6 +1992,15 @@ pub(crate) fn run_app_loop(
         }
     }
 
+    // Install worker event channel into global registry
+    {
+        let (worker_tx, worker_rx) = std::sync::mpsc::channel();
+        let reg = nocode_core::agent::worker::global_worker_registry();
+        let mut guard = reg.lock().unwrap_or_else(|e| e.into_inner());
+        guard.set_event_channel(worker_tx);
+        app.worker_event_rx = Some(worker_rx);
+    }
+
     let mut event_rx: Option<mpsc::Receiver<TuiEvent>> = None;
     let mut is_busy = false;
 
@@ -2113,7 +2044,7 @@ pub(crate) fn run_app_loop(
                             && last.kind == ChatMessageKind::Tool
                         {
                             let preview = if partial_json.len() > 120 {
-                                format!("{}...", &partial_json[..120])
+                                crate::tool_render::truncate_str(&partial_json, 120)
                             } else {
                                 partial_json
                             };
@@ -2215,6 +2146,80 @@ pub(crate) fn run_app_loop(
                     }
                 }
             }
+        }
+
+        // 2b. Poll background model fetch results
+        if let Some(result) = app.poll_model_fetch()
+            && let Overlay::Config(ref mut config) = app.overlay
+        {
+            match result {
+                Ok(models) if !models.is_empty() => {
+                    let count = models.len();
+                    config.status = Some(format!("Loaded {count} model suggestion(s)"));
+                    config.all_model_suggestions = models.clone();
+                    config.model_suggestions = models;
+                }
+                Ok(_) => {
+                    config.status = Some("No model suggestions returned".to_string());
+                }
+                Err(e) => {
+                    config.status = Some(format!("Model suggestions unavailable: {e}"));
+                }
+            }
+            app.dirty = true;
+        }
+
+        // 2c. Poll worker events
+        {
+            use nocode_core::agent::worker::WorkerEvent;
+            let mut worker_events = Vec::new();
+            if let Some(ref worker_rx) = app.worker_event_rx {
+                loop {
+                    match worker_rx.try_recv() {
+                        Ok(event) => worker_events.push(event),
+                        Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                    }
+                }
+            }
+            for event in worker_events {
+                match event {
+                    WorkerEvent::Finished {
+                        worker_id,
+                        name,
+                        result,
+                    } => {
+                        let preview = crate::tool_render::truncate_str(&result, 500);
+                        app.push_system(&format!(
+                            "Agent '{name}' ({worker_id}) finished:\n{preview}"
+                        ));
+                    }
+                    WorkerEvent::Failed {
+                        worker_id,
+                        name,
+                        error,
+                    } => {
+                        app.push_error(&format!("Agent '{name}' ({worker_id}) failed: {error}"));
+                    }
+                    WorkerEvent::TimedOut { worker_id, name } => {
+                        app.push_error(&format!(
+                            "Agent '{name}' ({worker_id}) timed out and was cancelled"
+                        ));
+                    }
+                    WorkerEvent::StateChanged { .. } => {
+                        if matches!(app.overlay, Overlay::Agents) {
+                            app.dirty = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2d. Check worker timeouts
+        {
+            let reg = nocode_core::agent::worker::global_worker_registry();
+            let mut guard = reg.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = guard.check_timeouts();
         }
 
         // 3. Render
@@ -2370,15 +2375,20 @@ fn display_width_of(s: &str) -> usize {
 }
 
 fn next_word_boundary(s: &str, pos: usize) -> usize {
-    let bytes = s.as_bytes();
     let mut p = pos;
-    // Skip current word chars
-    while p < bytes.len() && !bytes[p].is_ascii_whitespace() {
-        p += 1;
+    // Skip current word chars (non-whitespace)
+    for c in s[pos..].chars() {
+        if c.is_whitespace() {
+            break;
+        }
+        p += c.len_utf8();
     }
     // Skip whitespace
-    while p < bytes.len() && bytes[p].is_ascii_whitespace() {
-        p += 1;
+    for c in s[p..].chars() {
+        if !c.is_whitespace() {
+            break;
+        }
+        p += c.len_utf8();
     }
     p.min(s.len())
 }
@@ -2625,7 +2635,7 @@ fn fetch_model_suggestions(
     custom_api_format: &str,
 ) -> Result<Vec<String>, String> {
     let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
+        .timeout(std::time::Duration::from_secs(3))
         .build()
         .map_err(|e| format!("HTTP client build failed: {e}"))?;
 
@@ -2779,18 +2789,54 @@ fn fetch_model_suggestions(
     Err("No provider credentials found to fetch models".to_string())
 }
 
+/// Spawn a background thread to fetch model suggestions, returning a Receiver.
+/// Use this instead of calling `fetch_model_suggestions` directly on the UI thread.
+fn spawn_model_fetch_bg(
+    provider: &str,
+    custom_base_url: &str,
+    custom_api_format: &str,
+) -> std::sync::mpsc::Receiver<Result<Vec<String>, String>> {
+    let provider = provider.to_string();
+    let base_url = custom_base_url.to_string();
+    let api_format = custom_api_format.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = fetch_model_suggestions(&provider, &base_url, &api_format);
+        let _ = tx.send(result);
+    });
+    rx
+}
+
 fn prev_word_boundary(s: &str, pos: usize) -> usize {
-    let bytes = s.as_bytes();
-    let mut p = pos.saturating_sub(1);
+    if pos == 0 {
+        return 0;
+    }
+    // Collect char boundaries up to pos
+    let mut boundaries: Vec<usize> = s.char_indices().map(|(i, _)| i).collect();
+    boundaries.push(s.len());
+    // Find current char index
+    let char_idx = boundaries
+        .iter()
+        .position(|&b| b >= pos)
+        .unwrap_or(boundaries.len());
+    let mut ci = char_idx.saturating_sub(1);
     // Skip whitespace backwards
-    while p > 0 && bytes[p].is_ascii_whitespace() {
-        p -= 1;
+    while ci > 0 {
+        let ch = s[boundaries[ci]..].chars().next().unwrap_or(' ');
+        if !ch.is_whitespace() {
+            break;
+        }
+        ci -= 1;
     }
     // Skip word chars backwards
-    while p > 0 && !bytes[p - 1].is_ascii_whitespace() {
-        p -= 1;
+    while ci > 0 {
+        let prev_ch = s[boundaries[ci - 1]..].chars().next().unwrap_or(' ');
+        if prev_ch.is_whitespace() {
+            break;
+        }
+        ci -= 1;
     }
-    p
+    boundaries.get(ci).copied().unwrap_or(0)
 }
 
 /// Copy text to system clipboard. Cross-platform: xclip/xsel (Linux), pbcopy (macOS), clip.exe (WSL/Windows).

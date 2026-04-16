@@ -36,6 +36,7 @@ use nocode_core::prompt::assembly::{self, TruncationBudget};
 use nocode_core::provider::Provider;
 use nocode_core::provider::ProviderBox;
 use nocode_core::provider::claude::ClaudeProvider;
+use nocode_core::provider::foundry::FoundryProvider;
 use nocode_core::provider::gemini::GeminiProvider;
 use nocode_core::provider::openai::OpenAiProvider;
 use nocode_core::provider::types::ModelProvider;
@@ -82,7 +83,7 @@ fn main() {
     }
 
     let provider_type = resolve_provider(&settings);
-    let model = resolve_model(&settings);
+    let model = resolve_model(&settings, &provider_type);
     let max_turns = settings.max_turns.unwrap_or(10);
     let max_tokens = settings.max_tokens.unwrap_or(16384);
 
@@ -362,14 +363,34 @@ fn resolve_provider(settings: &Settings) -> ModelProvider {
     ModelProvider::Claude
 }
 
-fn resolve_model(settings: &Settings) -> String {
+fn resolve_model(settings: &Settings, provider: &ModelProvider) -> String {
+    // 1. Explicit global override
     if let Ok(m) = env::var("NOCODE_MODEL") {
         return m;
     }
-    settings
-        .model
-        .clone()
-        .unwrap_or_else(|| String::from("claude-sonnet-4-20250514"))
+    // 2. Per-provider env var
+    let per_provider_var = match provider {
+        ModelProvider::Claude => "ANTHROPIC_MODEL",
+        ModelProvider::OpenAi => "OPENAI_MODEL",
+        ModelProvider::Gemini => "GEMINI_MODEL",
+        ModelProvider::Custom => "",
+    };
+    if !per_provider_var.is_empty()
+        && let Ok(m) = env::var(per_provider_var)
+    {
+        return m;
+    }
+    // 3. Settings file
+    if let Some(m) = settings.model.clone() {
+        return m;
+    }
+    // 4. Provider-appropriate default
+    match provider {
+        ModelProvider::Claude => String::from("claude-sonnet-4-20250514"),
+        ModelProvider::OpenAi => String::from("gpt-4.1"),
+        ModelProvider::Gemini => String::from("gemini-2.5-pro"),
+        ModelProvider::Custom => String::from("default"),
+    }
 }
 
 fn build_provider(provider: &ModelProvider, settings: &Settings) -> Box<dyn Provider> {
@@ -391,22 +412,49 @@ fn build_provider(provider: &ModelProvider, settings: &Settings) -> Box<dyn Prov
             Box::new(GeminiProvider::new(key))
         }
         ModelProvider::Custom => {
-            let key = env::var("ANTHROPIC_API_KEY")
+            let key = env::var("NOCODE_CUSTOM_API_KEY")
+                .or_else(|_| env::var("ANTHROPIC_API_KEY"))
                 .or_else(|_| env::var("OPENAI_API_KEY"))
                 .unwrap_or_default();
             let base = settings
                 .custom_base_url
                 .clone()
-                .or_else(|| env::var("NOCODE_CUSTOM_BASE_URL").ok())
-                .unwrap_or_else(|| String::from("http://localhost:8080"));
+                .or_else(|| env::var("NOCODE_CUSTOM_BASE_URL").ok());
+            let base = match base {
+                Some(url) => url,
+                None => {
+                    eprintln!("Warning: Custom provider selected but no base URL configured.");
+                    eprintln!("  Set NOCODE_CUSTOM_BASE_URL or custom_base_url in settings.");
+                    eprintln!("  Falling back to http://localhost:8080");
+                    String::from("http://localhost:8080")
+                }
+            };
             let format = settings
                 .custom_api_format
                 .clone()
                 .or_else(|| env::var("NOCODE_CUSTOM_API_FORMAT").ok())
                 .unwrap_or_else(|| String::from("openai"));
             match format.as_str() {
-                "anthropic" | "claude" => Box::new(ClaudeProvider::with_base_url(base, key)),
-                _ => Box::new(OpenAiProvider::with_base_url(base, key)),
+                "anthropic" | "claude" => {
+                    // Auto-detect Foundry endpoints: https://{id}.foundry.anthropic.com
+                    if let Some(foundry_id) = base
+                        .strip_prefix("https://")
+                        .and_then(|s| s.strip_suffix(".foundry.anthropic.com"))
+                    {
+                        Box::new(FoundryProvider::new(foundry_id, &key))
+                    } else {
+                        Box::new(ClaudeProvider::with_base_url(base, key))
+                    }
+                }
+                "openai" => Box::new(OpenAiProvider::with_base_url(base, key)),
+                "google" | "gemini" => Box::new(GeminiProvider::new(key)),
+                other => {
+                    eprintln!(
+                        "Warning: Unknown custom_api_format '{other}', defaulting to openai. \
+                         Valid values: anthropic, openai, google"
+                    );
+                    Box::new(OpenAiProvider::with_base_url(base, key))
+                }
             }
         }
     }
@@ -671,7 +719,7 @@ fn run_ide_server() {
         .unwrap_or_else(|_| String::from("."));
     let settings = Settings::load_merged(&cwd);
     let provider_type = resolve_provider(&settings);
-    let model = resolve_model(&settings);
+    let model = resolve_model(&settings, &provider_type);
     let registry = ToolRegistry::with_defaults(&cwd);
     let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
     let provider_box = build_provider(&provider_type, &settings);
@@ -745,7 +793,7 @@ fn run_mcp_server() {
         .unwrap_or_else(|_| String::from("."));
     let settings = Settings::load_merged(&cwd);
     let provider_type = resolve_provider(&settings);
-    let model = resolve_model(&settings);
+    let model = resolve_model(&settings, &provider_type);
     let registry = ToolRegistry::with_defaults(&cwd);
     let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
     let provider_box = build_provider(&provider_type, &settings);
@@ -924,7 +972,7 @@ fn run_agent_host() {
         .unwrap_or_else(|_| String::from("."));
     let settings = Settings::load_merged(&cwd);
     let provider_type = resolve_provider(&settings);
-    let model = resolve_model(&settings);
+    let model = resolve_model(&settings, &provider_type);
     let registry = ToolRegistry::with_defaults(&cwd);
     let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
     let provider_box = build_provider(&provider_type, &settings);
@@ -1036,5 +1084,26 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(resolve_provider(&settings), ModelProvider::Custom);
+    }
+
+    #[test]
+    fn resolve_model_defaults_per_provider() {
+        let settings = Settings::default();
+        assert!(resolve_model(&settings, &ModelProvider::Claude).contains("claude"));
+        assert!(resolve_model(&settings, &ModelProvider::OpenAi).contains("gpt"));
+        assert!(resolve_model(&settings, &ModelProvider::Gemini).contains("gemini"));
+        assert_eq!(resolve_model(&settings, &ModelProvider::Custom), "default");
+    }
+
+    #[test]
+    fn resolve_model_settings_override() {
+        let settings = Settings {
+            model: Some("my-custom-model".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_model(&settings, &ModelProvider::OpenAi),
+            "my-custom-model"
+        );
     }
 }

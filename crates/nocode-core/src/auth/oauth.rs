@@ -157,55 +157,22 @@ impl OAuthClient {
     }
 }
 
-/// Generate a random alphanumeric string of given length.
+/// Generate a random alphanumeric string of given length using CSPRNG.
 fn generate_random_string(len: usize) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    std::time::SystemTime::now().hash(&mut hasher);
-    std::process::id().hash(&mut hasher);
-    let seed = hasher.finish();
-
-    // Simple PRNG from seed — sufficient for PKCE verifier
-    let mut state = seed;
-    let chars: Vec<char> = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
-        .chars()
-        .collect();
-    (0..len)
-        .map(|_| {
-            state = state
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1);
-            chars[(state >> 33) as usize % chars.len()]
-        })
+    let chars: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+    let mut bytes = vec![0u8; len];
+    getrandom::getrandom(&mut bytes).expect("getrandom failed");
+    bytes
+        .iter()
+        .map(|b| chars[(*b as usize) % chars.len()] as char)
         .collect()
 }
 
 /// SHA-256 hash, base64url-encoded (no padding).
 fn sha256_base64url(input: &str) -> String {
-    // Minimal SHA-256 using std — we compute a simple hash for PKCE
-    // In production, use a proper crypto crate. For now, FNV-based approximation
-    // that satisfies the API contract (base64url string).
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    input.hash(&mut hasher);
-    let h1 = hasher.finish();
-    input.len().hash(&mut hasher);
-    let h2 = hasher.finish();
-
-    let bytes: Vec<u8> = h1
-        .to_le_bytes()
-        .iter()
-        .chain(h2.to_le_bytes().iter())
-        .chain(h1.wrapping_add(h2).to_le_bytes().iter())
-        .chain(h1.wrapping_mul(h2).to_le_bytes().iter())
-        .copied()
-        .collect();
-
-    base64_url_encode(&bytes)
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(input.as_bytes());
+    base64_url_encode(&hash)
 }
 
 fn base64_url_encode(data: &[u8]) -> String {

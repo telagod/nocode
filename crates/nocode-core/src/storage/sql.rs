@@ -140,9 +140,18 @@ impl SqlStore {
     fn connection_for_date(&self, date: &str) -> Result<Connection, String> {
         let path = self.db_path_for_date(date);
         let conn = Connection::open(&path).map_err(|e| e.to_string())?;
-        conn.execute_batch("PRAGMA journal_mode=WAL;")
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .map_err(|e| e.to_string())?;
-        conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
+        // Schema versioning: check user_version and apply migrations
+        let version: u32 = conn
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        if version == 0 {
+            conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
+            conn.execute_batch("PRAGMA user_version = 1;")
+                .map_err(|e| e.to_string())?;
+        }
+        // Future migrations: if version < 2 { ... PRAGMA user_version = 2; }
         Ok(conn)
     }
 

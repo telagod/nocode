@@ -306,6 +306,9 @@ impl ChatMessage {
                     if seg.bold {
                         style = style.add_modifier(Modifier::BOLD);
                     }
+                    if seg.strikethrough {
+                        style = style.add_modifier(Modifier::CROSSED_OUT);
+                    }
                     Span::styled(seg.text.as_str(), style)
                 }));
                 result.push(Line::from(spans));
@@ -326,6 +329,9 @@ impl ChatMessage {
                 }
                 if seg.italic {
                     style = style.add_modifier(Modifier::ITALIC);
+                }
+                if seg.strikethrough {
+                    style = style.add_modifier(Modifier::CROSSED_OUT);
                 }
                 Span::styled(seg.text.as_str(), style)
             }));
@@ -491,9 +497,9 @@ impl<'a> OverlayBlock<'a> {
 impl Widget for OverlayBlock<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = default_theme();
-        // Center the overlay at 80% width, 60% height
-        let w = (area.width * 4 / 5).max(20);
-        let h = (area.height * 3 / 5).max(8);
+        // Center the overlay at 80% width, 60% height, clamped to terminal size
+        let w = (area.width * 4 / 5).max(20).min(area.width);
+        let h = (area.height * 3 / 5).max(8).min(area.height);
         let x = area.x + (area.width.saturating_sub(w)) / 2;
         let y = area.y + (area.height.saturating_sub(h)) / 2;
         let overlay_area = Rect::new(x, y, w, h);

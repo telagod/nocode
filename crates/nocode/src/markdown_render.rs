@@ -1,8 +1,20 @@
 use crossterm::style::Color;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use std::sync::OnceLock;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SynStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
+
+/// Cached syntect resources — loaded once, reused across all renders.
+fn syntax_set() -> &'static SyntaxSet {
+    static SS: OnceLock<SyntaxSet> = OnceLock::new();
+    SS.get_or_init(SyntaxSet::load_defaults_newlines)
+}
+
+fn theme_set() -> &'static ThemeSet {
+    static TS: OnceLock<ThemeSet> = OnceLock::new();
+    TS.get_or_init(ThemeSet::load_defaults)
+}
 
 /// A single styled segment within a rendered line.
 #[derive(Debug, Clone)]
@@ -11,6 +23,7 @@ pub struct LineSegment {
     pub color: Color,
     pub bold: bool,
     pub italic: bool,
+    pub strikethrough: bool,
 }
 
 impl LineSegment {
@@ -20,6 +33,7 @@ impl LineSegment {
             color,
             bold: false,
             italic: false,
+            strikethrough: false,
         }
     }
 
@@ -30,6 +44,11 @@ impl LineSegment {
 
     pub fn italic(mut self) -> Self {
         self.italic = true;
+        self
+    }
+
+    pub fn strikethrough(mut self) -> Self {
+        self.strikethrough = true;
         self
     }
 }
@@ -73,6 +92,7 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
     let mut in_heading: Option<HeadingLevel> = None;
     let mut bold_depth: u32 = 0;
     let mut italic_depth: u32 = 0;
+    let mut strikethrough_depth: u32 = 0;
     let mut in_block_quote_depth: u32 = 0;
     let mut in_code_block = false;
     let mut code_block_lang = String::new();
@@ -196,6 +216,12 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
             Event::End(TagEnd::Strong) => {
                 bold_depth = bold_depth.saturating_sub(1);
             }
+            Event::Start(Tag::Strikethrough) => {
+                strikethrough_depth += 1;
+            }
+            Event::End(TagEnd::Strikethrough) => {
+                strikethrough_depth = strikethrough_depth.saturating_sub(1);
+            }
             Event::Start(Tag::Link { dest_url, .. }) => {
                 link_url = Some(dest_url.to_string());
             }
@@ -218,8 +244,8 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
                     }
                 } else if in_code_block {
                     // Each line of code block gets prefix + syntect highlighting
-                    let ss = SyntaxSet::load_defaults_newlines();
-                    let ts = ThemeSet::load_defaults();
+                    let ss = syntax_set();
+                    let ts = theme_set();
                     let theme = &ts.themes["base16-ocean.dark"];
                     let syntax = if code_block_lang.is_empty() {
                         ss.find_syntax_plain_text()
@@ -239,7 +265,7 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
                         }
                         if !code_line.is_empty() {
                             let line_with_nl = format!("{code_line}\n");
-                            match highlighter.highlight_line(&line_with_nl, &ss) {
+                            match highlighter.highlight_line(&line_with_nl, ss) {
                                 Ok(ranges) => {
                                     for (style, fragment) in ranges {
                                         let trimmed_frag = fragment.trim_end_matches('\n');
@@ -279,11 +305,25 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
                         }
                     }
                 } else if bold_depth > 0 && italic_depth > 0 {
-                    current.push(LineSegment::new(text_str, Color::Yellow).bold().italic());
+                    let mut seg = LineSegment::new(text_str, Color::Yellow).bold().italic();
+                    if strikethrough_depth > 0 {
+                        seg = seg.strikethrough();
+                    }
+                    current.push(seg);
                 } else if bold_depth > 0 {
-                    current.push(LineSegment::new(text_str, Color::Yellow).bold());
+                    let mut seg = LineSegment::new(text_str, Color::Yellow).bold();
+                    if strikethrough_depth > 0 {
+                        seg = seg.strikethrough();
+                    }
+                    current.push(seg);
                 } else if italic_depth > 0 {
-                    current.push(LineSegment::new(text_str, Color::Magenta).italic());
+                    let mut seg = LineSegment::new(text_str, Color::Magenta).italic();
+                    if strikethrough_depth > 0 {
+                        seg = seg.strikethrough();
+                    }
+                    current.push(seg);
+                } else if strikethrough_depth > 0 {
+                    current.push(LineSegment::new(text_str, Color::DarkGrey).strikethrough());
                 } else if link_url.is_some() {
                     current.push(LineSegment::new(text_str, Color::Blue));
                 } else {
