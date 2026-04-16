@@ -21,6 +21,7 @@ pub(crate) fn run_tui(
     model: String,
     max_tokens: u32,
     max_turns: u32,
+    warnings: Vec<String>,
 ) -> io::Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(io::Error::other("nocode tui requires an interactive TTY"));
@@ -43,6 +44,7 @@ pub(crate) fn run_tui(
         &model,
         max_tokens,
         max_turns,
+        warnings,
     );
 
     // Cleanup

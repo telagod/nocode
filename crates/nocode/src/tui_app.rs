@@ -1312,7 +1312,8 @@ impl TuiApp {
                                 }
                             }
                             let provider_type = crate::resolve_provider(&settings);
-                            let provider_impl = crate::build_provider(&provider_type, &settings);
+                            let (provider_impl, _) =
+                                crate::build_provider(&provider_type, &settings);
                             *status = Some(match provider_impl.verify_key() {
                                 Ok(msg) => format!("Connection OK: {msg}"),
                                 Err(err) => format!("Connection failed: {err}"),
@@ -1942,6 +1943,7 @@ pub(crate) enum HandleKeyResult {
 // Main event loop
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_app_loop(
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     provider: Box<dyn Provider>,
@@ -1950,8 +1952,15 @@ pub(crate) fn run_app_loop(
     model: &str,
     max_tokens: u32,
     max_turns: u32,
+    warnings: Vec<String>,
 ) -> io::Result<()> {
     let mut app = TuiApp::new(model);
+
+    // Display provider warnings via TUI message system
+    for w in &warnings {
+        app.push_error(w);
+    }
+
     let mut messages: Vec<Message> = Vec::new();
     let tool_defs = tool_definitions_for_model(&registry);
 
@@ -2314,7 +2323,8 @@ pub(crate) fn run_app_loop(
                                         .unwrap_or_default();
                                     let settings = Settings::load_merged(&cwd);
                                     let provider_type = crate::resolve_provider(&settings);
-                                    let provider = crate::build_provider(&provider_type, &settings);
+                                    let (provider, _) =
+                                        crate::build_provider(&provider_type, &settings);
                                     let executor =
                                         ToolExecutor::new(&r).with_prompter(&perm_bridge);
                                     let mut observer = ChannelObserver { tx };

@@ -91,9 +91,22 @@ fn main() {
 
     let registry = ToolRegistry::with_defaults(&cwd);
     initialize_runtime_global_registry(&cwd, &settings);
-    let provider_box = build_provider(&provider_type, &settings);
+    let (provider_box, provider_warnings) = build_provider(&provider_type, &settings);
 
-    // -- Run mode dispatch --
+    // Print warnings for non-TUI modes (TUI will display via push_system)
+    let is_tui = args.iter().any(|a| a == "--tui")
+        || (!args.iter().any(|a| a == "--repl")
+            && !args.iter().any(|a| a.starts_with("--bridge"))
+            && !args.iter().any(|a| a == "--status")
+            && !args.iter().any(|a| a == "--ide-server")
+            && !args.iter().any(|a| a == "--mcp-server")
+            && std::io::stdin().is_terminal()
+            && std::io::stdout().is_terminal());
+    if !is_tui {
+        for w in &provider_warnings {
+            eprintln!("Warning: {w}");
+        }
+    }
 
     if args.iter().any(|a| a == "--status") {
         run_status(&cwd, &provider_type, &model, &settings);
@@ -173,6 +186,7 @@ fn main() {
             model,
             max_tokens,
             max_turns,
+            provider_warnings,
         ) {
             eprintln!("TUI error: {e}");
         }
@@ -393,8 +407,12 @@ fn resolve_model(settings: &Settings, provider: &ModelProvider) -> String {
     }
 }
 
-fn build_provider(provider: &ModelProvider, settings: &Settings) -> Box<dyn Provider> {
-    match provider {
+fn build_provider(
+    provider: &ModelProvider,
+    settings: &Settings,
+) -> (Box<dyn Provider>, Vec<String>) {
+    let mut warnings = Vec::new();
+    let result: Box<dyn Provider> = match provider {
         ModelProvider::Claude => {
             let key = env::var("ANTHROPIC_API_KEY").unwrap_or_default();
             let base = env::var("ANTHROPIC_BASE_URL")
@@ -423,9 +441,12 @@ fn build_provider(provider: &ModelProvider, settings: &Settings) -> Box<dyn Prov
             let base = match base {
                 Some(url) => url,
                 None => {
-                    eprintln!("Warning: Custom provider selected but no base URL configured.");
-                    eprintln!("  Set NOCODE_CUSTOM_BASE_URL or custom_base_url in settings.");
-                    eprintln!("  Falling back to http://localhost:8080");
+                    warnings.push(
+                        "Custom provider selected but no base URL configured. \
+                         Set NOCODE_CUSTOM_BASE_URL or custom_base_url in settings. \
+                         Falling back to http://localhost:8080"
+                            .to_string(),
+                    );
                     String::from("http://localhost:8080")
                 }
             };
@@ -436,7 +457,6 @@ fn build_provider(provider: &ModelProvider, settings: &Settings) -> Box<dyn Prov
                 .unwrap_or_else(|| String::from("openai"));
             match format.as_str() {
                 "anthropic" | "claude" => {
-                    // Auto-detect Foundry endpoints: https://{id}.foundry.anthropic.com
                     if let Some(foundry_id) = base
                         .strip_prefix("https://")
                         .and_then(|s| s.strip_suffix(".foundry.anthropic.com"))
@@ -449,15 +469,16 @@ fn build_provider(provider: &ModelProvider, settings: &Settings) -> Box<dyn Prov
                 "openai" => Box::new(OpenAiResponsesProvider::with_base_url(base, key)),
                 "google" | "gemini" => Box::new(GeminiProvider::new(key)),
                 other => {
-                    eprintln!(
-                        "Warning: Unknown custom_api_format '{other}', defaulting to openai. \
+                    warnings.push(format!(
+                        "Unknown custom_api_format '{other}', defaulting to openai. \
                          Valid values: anthropic, openai, google"
-                    );
+                    ));
                     Box::new(OpenAiResponsesProvider::with_base_url(base, key))
                 }
             }
         }
-    }
+    };
+    (result, warnings)
 }
 
 // --- PLACEHOLDER_MODES ---
@@ -722,7 +743,10 @@ fn run_ide_server() {
     let model = resolve_model(&settings, &provider_type);
     let registry = ToolRegistry::with_defaults(&cwd);
     let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
-    let provider_box = build_provider(&provider_type, &settings);
+    let (provider_box, ide_warnings) = build_provider(&provider_type, &settings);
+    for w in &ide_warnings {
+        eprintln!("Warning: {w}");
+    }
     let max_tokens = settings.max_tokens.unwrap_or(16384);
     let max_turns = settings.max_turns.unwrap_or(10);
 
@@ -796,7 +820,10 @@ fn run_mcp_server() {
     let model = resolve_model(&settings, &provider_type);
     let registry = ToolRegistry::with_defaults(&cwd);
     let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
-    let provider_box = build_provider(&provider_type, &settings);
+    let (provider_box, mcp_warnings) = build_provider(&provider_type, &settings);
+    for w in &mcp_warnings {
+        eprintln!("Warning: {w}");
+    }
     let max_tokens = settings.max_tokens.unwrap_or(16384);
     let max_turns = settings.max_turns.unwrap_or(10);
 
@@ -975,7 +1002,10 @@ fn run_agent_host() {
     let model = resolve_model(&settings, &provider_type);
     let registry = ToolRegistry::with_defaults(&cwd);
     let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
-    let provider_box = build_provider(&provider_type, &settings);
+    let (provider_box, host_warnings) = build_provider(&provider_type, &settings);
+    for w in &host_warnings {
+        eprintln!("Warning: {w}");
+    }
     let executor = ToolExecutor::new(&registry);
     let max_tokens = settings.max_tokens.unwrap_or(16384);
     let max_turns = settings.max_turns.unwrap_or(10);
