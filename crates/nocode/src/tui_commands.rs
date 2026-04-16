@@ -360,6 +360,8 @@ fn cmd_export(path: Option<&str>, messages: &[Message], app: &mut TuiApp) {
 
 fn cmd_doctor(app: &mut TuiApp, model: &str) {
     let mut lines = Vec::new();
+    let mut warnings = 0usize;
+
     lines.push(format!("nocode v{}", env!("CARGO_PKG_VERSION")));
     lines.push(format!(
         "OS: {} ({})",
@@ -369,25 +371,43 @@ fn cmd_doctor(app: &mut TuiApp, model: &str) {
     lines.push(format!("Model: {model}"));
     lines.push(String::new());
 
+    // API keys
     let keys = [
         ("ANTHROPIC_API_KEY", "Claude"),
         ("OPENAI_API_KEY", "OpenAI"),
         ("GEMINI_API_KEY", "Gemini"),
     ];
     lines.push("API keys:".to_string());
+    let mut any_key = false;
     for (var, name) in &keys {
         let status = if std::env::var(var).is_ok() {
+            any_key = true;
             "set"
         } else {
             "not set"
         };
         lines.push(format!("  {name}: {status}"));
     }
+    if !any_key {
+        lines.push("  \u{26A0} No API keys configured".to_string());
+        warnings += 1;
+    }
     lines.push(String::new());
 
+    // Custom provider
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let settings = nocode_core::config::settings::Settings::load_merged(&cwd);
+    if let Some(ref url) = settings.custom_base_url {
+        let fmt = settings
+            .custom_api_format
+            .as_deref()
+            .unwrap_or("openai-responses");
+        lines.push(format!("Custom provider: {url} ({fmt})"));
+    }
+
+    // Settings files
     let home = std::env::var("HOME").unwrap_or_default();
     let paths = [
         (format!("{home}/.nocode/settings.json"), "User"),
@@ -405,12 +425,41 @@ fn cmd_doctor(app: &mut TuiApp, model: &str) {
     }
     lines.push(String::new());
 
+    // CLAUDE.md and sessions
     let md_files = nocode_core::prompt::assembly::discover_claude_md(&cwd);
     lines.push(format!("CLAUDE.md files: {}", md_files.len()));
     let sessions = nocode_core::session::persistence::SessionPersistence::list_sessions(&cwd);
     lines.push(format!("Saved sessions: {}", sessions.len()));
+
+    // Input history
+    let history_path = format!("{home}/.nocode/input_history.txt");
+    if std::path::Path::new(&history_path).exists() {
+        let count = std::fs::read_to_string(&history_path)
+            .map(|s| s.lines().filter(|l| !l.is_empty()).count())
+            .unwrap_or(0);
+        lines.push(format!("Input history: {count} entries"));
+    }
+
+    // MCP servers
+    {
+        let mgr = nocode_core::mcp::manager::global_mcp_manager();
+        let mgr = mgr.lock().unwrap_or_else(|e| e.into_inner());
+        let servers = mgr.list_servers();
+        if !servers.is_empty() {
+            lines.push(String::new());
+            lines.push(format!("MCP servers: {}", servers.len()));
+            for (name, phase, tool_count) in &servers {
+                lines.push(format!("  {name}: {phase:?} ({tool_count} tools)"));
+            }
+        }
+    }
+
     lines.push(String::new());
-    lines.push("All checks passed.".to_string());
+    if warnings > 0 {
+        lines.push(format!("{warnings} warning(s). Check configuration."));
+    } else {
+        lines.push("All checks passed.".to_string());
+    }
 
     app.push_system(&lines.join("\n"));
 }
