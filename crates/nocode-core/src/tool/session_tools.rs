@@ -39,6 +39,17 @@ pub fn exit_plan_mode() {
     plan_mode_active().store(false, Ordering::Relaxed);
 }
 
+/// Mutex guard for tests that touch plan mode global state.
+/// Prevents concurrent test threads from interfering with each other.
+#[cfg(test)]
+pub(crate) fn plan_mode_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
 // ---------------------------------------------------------------------------
 // EnterPlanMode
 // ---------------------------------------------------------------------------
@@ -227,13 +238,9 @@ impl Tool for ExitWorktreeTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
 
     fn test_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+        plan_mode_test_lock()
     }
 
     #[test]

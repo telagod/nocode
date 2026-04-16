@@ -600,7 +600,11 @@ mod tests {
 
     #[test]
     fn plan_mode_blocks_write_tools() {
-        use crate::tool::session_tools::{enter_plan_mode, exit_plan_mode, is_plan_mode};
+        use crate::tool::session_tools::{
+            enter_plan_mode, exit_plan_mode, is_plan_mode, plan_mode_test_lock,
+        };
+
+        let _guard = plan_mode_test_lock();
 
         // Clean slate
         exit_plan_mode();
