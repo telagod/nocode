@@ -106,7 +106,7 @@ impl TuiEventPermissionBridge {
     pub fn new(tx: mpsc::Sender<TuiEvent>) -> Self {
         Self {
             tx,
-            timeout: std::time::Duration::from_secs(60),
+            timeout: std::time::Duration::from_secs(120),
         }
     }
 }

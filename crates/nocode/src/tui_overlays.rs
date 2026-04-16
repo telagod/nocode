@@ -137,11 +137,11 @@ Commands:
                 lines.push(String::new());
                 if !tools.is_empty() {
                     lines.push(format!("Discovered tools ({}):", tools.len()));
-                    for (server, tool) in tools.iter().take(30) {
+                    for (server, tool) in tools.iter().take(100) {
                         lines.push(format!("  {server}:{}", tool.name));
                     }
-                    if tools.len() > 30 {
-                        lines.push(format!("  ... and {} more", tools.len() - 30));
+                    if tools.len() > 100 {
+                        lines.push(format!("  ... and {} more", tools.len() - 100));
                     }
                 }
                 lines.join(
