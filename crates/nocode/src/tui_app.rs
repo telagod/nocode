@@ -1720,6 +1720,8 @@ impl TuiApp {
                     // Jump to next match
                     if !self.search_matches.is_empty() => {
                         self.search_index = (self.search_index + 1) % self.search_matches.len();
+                        let msg_idx = self.search_matches[self.search_index];
+                        self.scroll_to_message(msg_idx);
                         self.dirty = true;
                     }
                 KeyCode::Backspace => {
@@ -2132,6 +2134,26 @@ impl TuiApp {
             }
         }
         self.search_index = 0;
+        // Auto-scroll to first match
+        if let Some(&msg_idx) = self.search_matches.first() {
+            self.scroll_to_message(msg_idx);
+        }
+    }
+
+    /// Scroll chat so that the message at `msg_idx` is visible.
+    fn scroll_to_message(&mut self, msg_idx: usize) {
+        if msg_idx >= self.height_cache.len() {
+            return;
+        }
+        // Calculate the row offset of this message from the bottom
+        let total = self.total_content_height();
+        let msg_top: u16 = self.height_cache[..msg_idx].iter().copied().sum();
+        let msg_bottom: u16 = msg_top + self.height_cache[msg_idx];
+        // scroll is measured from bottom (0 = at bottom)
+        let scroll_to_show = total.saturating_sub(msg_bottom);
+        self.chat_scroll = scroll_to_show;
+        self.sticky_scroll = scroll_to_show == 0;
+        self.dirty = true;
     }
 
     /// Get the search status line for display.
