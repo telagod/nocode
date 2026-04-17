@@ -373,7 +373,6 @@ fn fetch_openrouter() -> Option<HashMap<String, ModelCapabilities>> {
 }
 
 /// Initialize the global cache: load from disk or fetch from API.
-/// Call this once at startup (can be async via thread).
 pub fn init_cache() {
     if let Some(models) = load_disk_cache() {
         let cache = global_cache();
@@ -391,9 +390,37 @@ pub fn init_cache() {
     }
 }
 
-/// Spawn cache init on a background thread (non-blocking).
+/// Smart cache init: load fresh disk cache synchronously, refresh expired cache in background.
+/// If no cache exists at all, fetches synchronously (first run).
 pub fn init_cache_async() {
-    std::thread::spawn(init_cache);
+    let path = cache_path();
+    if path.exists() {
+        // Disk cache exists — load it synchronously (fast, no network)
+        let data = std::fs::read_to_string(&path).ok();
+        let cached: Option<CachedRegistry> = data.and_then(|d| serde_json::from_str(&d).ok());
+        if let Some(cached) = cached {
+            let cache = global_cache();
+            if let Ok(mut c) = cache.lock() {
+                *c = cached.models;
+            }
+            // If expired, refresh in background
+            let now = chrono::Utc::now().timestamp();
+            if now - cached.fetched_at > CACHE_TTL_SECS {
+                std::thread::spawn(|| {
+                    if let Some(models) = fetch_openrouter() {
+                        save_disk_cache(&models);
+                        let cache = global_cache();
+                        if let Ok(mut c) = cache.lock() {
+                            *c = models;
+                        }
+                    }
+                });
+            }
+            return;
+        }
+    }
+    // No cache at all — first run, fetch synchronously
+    init_cache();
 }
 
 /// Lookup model capabilities: dynamic cache → static table → fallback.
