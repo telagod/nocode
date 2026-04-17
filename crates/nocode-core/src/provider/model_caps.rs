@@ -27,216 +27,77 @@ const FALLBACK: ModelCapabilities = ModelCapabilities {
 
 // --- Static fallback table (prefix match) ---
 
-static MODEL_TABLE: &[(&str, ModelCapabilities)] = &[
-    (
-        "claude-opus-4",
-        ModelCapabilities {
-            context_window: 200_000,
-            max_output_tokens: 32_768,
-            supports_thinking: true,
-            default_thinking_budget: Some(10_000),
-            supports_vision: true,
-            supports_tool_use: true,
+const fn cap(
+    context_window: u32,
+    max_output_tokens: u32,
+    supports_thinking: bool,
+    thinking_budget: u32,
+    supports_vision: bool,
+) -> ModelCapabilities {
+    ModelCapabilities {
+        context_window,
+        max_output_tokens,
+        supports_thinking,
+        default_thinking_budget: if supports_thinking && thinking_budget > 0 {
+            Some(thinking_budget)
+        } else {
+            None
         },
-    ),
+        supports_vision,
+        supports_tool_use: true,
+    }
+}
+
+static MODEL_TABLE: &[(&str, ModelCapabilities)] = &[
+    // Anthropic (2026-04)
+    ("claude-opus-4", cap(1_000_000, 128_000, true, 10_000, true)),
     (
         "claude-sonnet-4",
-        ModelCapabilities {
-            context_window: 200_000,
-            max_output_tokens: 16_384,
-            supports_thinking: true,
-            default_thinking_budget: Some(8_000),
-            supports_vision: true,
-            supports_tool_use: true,
-        },
+        cap(1_000_000, 128_000, true, 8_000, true),
     ),
-    (
-        "claude-haiku-3.5",
-        ModelCapabilities {
-            context_window: 200_000,
-            max_output_tokens: 8_192,
-            supports_thinking: false,
-            default_thinking_budget: None,
-            supports_vision: true,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "claude-3",
-        ModelCapabilities {
-            context_window: 200_000,
-            max_output_tokens: 8_192,
-            supports_thinking: false,
-            default_thinking_budget: None,
-            supports_vision: true,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "gpt-4.1-nano",
-        ModelCapabilities {
-            context_window: 1_000_000,
-            max_output_tokens: 32_768,
-            supports_thinking: false,
-            default_thinking_budget: None,
-            supports_vision: true,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "gpt-4.1-mini",
-        ModelCapabilities {
-            context_window: 1_000_000,
-            max_output_tokens: 32_768,
-            supports_thinking: false,
-            default_thinking_budget: None,
-            supports_vision: true,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "gpt-4.1",
-        ModelCapabilities {
-            context_window: 1_000_000,
-            max_output_tokens: 32_768,
-            supports_thinking: false,
-            default_thinking_budget: None,
-            supports_vision: true,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "gpt-4o",
-        ModelCapabilities {
-            context_window: 128_000,
-            max_output_tokens: 16_384,
-            supports_thinking: false,
-            default_thinking_budget: None,
-            supports_vision: true,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "o4-mini",
-        ModelCapabilities {
-            context_window: 200_000,
-            max_output_tokens: 100_000,
-            supports_thinking: true,
-            default_thinking_budget: Some(10_000),
-            supports_vision: true,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "o3",
-        ModelCapabilities {
-            context_window: 200_000,
-            max_output_tokens: 100_000,
-            supports_thinking: true,
-            default_thinking_budget: Some(10_000),
-            supports_vision: true,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "o1",
-        ModelCapabilities {
-            context_window: 200_000,
-            max_output_tokens: 100_000,
-            supports_thinking: true,
-            default_thinking_budget: Some(10_000),
-            supports_vision: true,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "gemini-2.5-pro",
-        ModelCapabilities {
-            context_window: 1_000_000,
-            max_output_tokens: 65_536,
-            supports_thinking: true,
-            default_thinking_budget: Some(8_000),
-            supports_vision: true,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "gemini-2.5-flash",
-        ModelCapabilities {
-            context_window: 1_000_000,
-            max_output_tokens: 65_536,
-            supports_thinking: true,
-            default_thinking_budget: Some(8_000),
-            supports_vision: true,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "gemini-2.0",
-        ModelCapabilities {
-            context_window: 1_000_000,
-            max_output_tokens: 8_192,
-            supports_thinking: false,
-            default_thinking_budget: None,
-            supports_vision: true,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "gemini-1.5",
-        ModelCapabilities {
-            context_window: 1_000_000,
-            max_output_tokens: 8_192,
-            supports_thinking: false,
-            default_thinking_budget: None,
-            supports_vision: true,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "deepseek",
-        ModelCapabilities {
-            context_window: 64_000,
-            max_output_tokens: 8_192,
-            supports_thinking: true,
-            default_thinking_budget: Some(8_000),
-            supports_vision: false,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "qwen",
-        ModelCapabilities {
-            context_window: 128_000,
-            max_output_tokens: 8_192,
-            supports_thinking: true,
-            default_thinking_budget: Some(8_000),
-            supports_vision: true,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "llama",
-        ModelCapabilities {
-            context_window: 128_000,
-            max_output_tokens: 8_192,
-            supports_thinking: false,
-            default_thinking_budget: None,
-            supports_vision: false,
-            supports_tool_use: true,
-        },
-    ),
-    (
-        "mistral",
-        ModelCapabilities {
-            context_window: 128_000,
-            max_output_tokens: 8_192,
-            supports_thinking: false,
-            default_thinking_budget: None,
-            supports_vision: false,
-            supports_tool_use: true,
-        },
-    ),
+    ("claude-haiku-4", cap(200_000, 64_000, true, 8_000, true)),
+    // OpenAI GPT (2026-04)
+    ("gpt-5.4-pro", cap(1_050_000, 128_000, false, 0, true)),
+    ("gpt-5.4", cap(1_050_000, 128_000, false, 0, true)),
+    ("gpt-5.3", cap(400_000, 128_000, false, 0, true)),
+    ("gpt-5.2", cap(400_000, 128_000, false, 0, true)),
+    ("gpt-4.1", cap(1_000_000, 32_768, false, 0, true)),
+    ("gpt-4o", cap(128_000, 16_384, false, 0, true)),
+    // OpenAI reasoning
+    ("o4-mini", cap(200_000, 100_000, true, 10_000, true)),
+    ("o3", cap(200_000, 100_000, true, 10_000, true)),
+    ("o1", cap(200_000, 100_000, true, 10_000, true)),
+    // Google Gemini (2026-04)
+    ("gemini-3", cap(1_048_576, 65_536, true, 8_000, true)),
+    ("gemini-2.5", cap(1_048_576, 65_536, true, 8_000, true)),
+    // xAI Grok
+    ("grok-4", cap(2_000_000, 128_000, false, 0, true)),
+    ("grok-3", cap(131_072, 32_768, false, 0, true)),
+    // DeepSeek (2026-04)
+    ("deepseek-r1", cap(163_840, 16_384, true, 8_000, false)),
+    ("deepseek", cap(128_000, 16_384, true, 8_000, false)),
+    // Qwen (2026-04)
+    ("qwen3.6", cap(1_000_000, 65_536, true, 8_000, true)),
+    ("qwen3.5", cap(262_144, 65_536, true, 8_000, true)),
+    ("qwen3", cap(262_144, 32_768, true, 8_000, true)),
+    ("qwen", cap(131_072, 16_384, false, 0, false)),
+    // Meta Llama 4 (2026)
+    ("llama-4-scout", cap(10_000_000, 16_384, false, 0, true)),
+    ("llama-4-maverick", cap(1_000_000, 16_384, false, 0, true)),
+    ("llama-4", cap(1_000_000, 16_384, false, 0, true)),
+    ("llama", cap(131_072, 16_384, false, 0, false)),
+    // Mistral (2026)
+    ("mistral-large", cap(256_000, 16_384, false, 0, true)),
+    ("mistral-medium", cap(128_000, 16_384, false, 0, true)),
+    ("mistral-small", cap(262_144, 16_384, false, 0, true)),
+    ("codestral", cap(128_000, 16_384, false, 0, false)),
+    ("devstral", cap(262_144, 16_384, false, 0, false)),
+    ("mistral", cap(131_072, 16_384, false, 0, false)),
+    // Kimi / Moonshot
+    ("kimi-k2", cap(262_144, 65_535, true, 8_000, true)),
+    // GLM (Zhipu)
+    ("glm-5", cap(202_752, 131_072, false, 0, true)),
+    ("glm-4", cap(202_752, 65_535, false, 0, true)),
 ];
 
 fn static_lookup(model_name: &str) -> Option<ModelCapabilities> {
