@@ -29,6 +29,10 @@ if (!pkg) {
 
 try {
   require.resolve(`${pkg}/package.json`);
+  const pkgJson = require("../package.json");
+  console.log(
+    `[nocode] v${pkgJson.version} installed successfully (${key})`
+  );
 } catch {
   console.warn(
     `[nocode] Warning: platform package ${pkg} was not installed. ` +

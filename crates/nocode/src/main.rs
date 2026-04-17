@@ -77,6 +77,23 @@ fn main() {
     // Start async model capabilities cache fetch
     nocode_core::provider::model_caps::init_cache_async();
 
+    // Spawn background update check
+    let update_rx = {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let cache_path = format!("{home}/.nocode/update_cache.json");
+        let current_version = env!("CARGO_PKG_VERSION").to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let checker = nocode_core::update_checker::UpdateChecker::new(
+                &current_version,
+                &cache_path,
+                "telagod/nocode",
+            );
+            let _ = tx.send(checker.check());
+        });
+        rx
+    };
+
     // Load stored credentials into env (if no API keys set)
     let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
     if let Ok(creds) = nocode_core::storage::credentials::CredentialStore::load(&cred_path) {
@@ -179,6 +196,17 @@ fn main() {
     }
 
     if args.iter().any(|a| a == "--repl") {
+        // Check for updates (non-blocking)
+        if let Ok(nocode_core::update_checker::UpdateStatus::UpdateAvailable {
+            current,
+            latest,
+            ..
+        }) = update_rx.try_recv()
+        {
+            eprintln!("  Update available: {current} → {latest}");
+            eprintln!("  Run: npm i -g @telagod/nocode");
+            eprintln!();
+        }
         repl::run_repl(
             nocode_core::provider::ProviderBox::from_arc(Arc::from(provider_box)),
             &registry,
@@ -208,6 +236,14 @@ fn main() {
     }
 
     // Fallback: REPL mode for non-interactive environments.
+    if let Ok(nocode_core::update_checker::UpdateStatus::UpdateAvailable {
+        current, latest, ..
+    }) = update_rx.try_recv()
+    {
+        eprintln!("  Update available: {current} → {latest}");
+        eprintln!("  Run: npm i -g @telagod/nocode");
+        eprintln!();
+    }
     repl::run_repl(
         nocode_core::provider::ProviderBox::from_arc(Arc::from(provider_box)),
         &registry,
