@@ -255,42 +255,36 @@ fn build_worker_provider(
     use crate::provider::claude::ClaudeProvider;
     use crate::provider::gemini::GeminiProvider;
     use crate::provider::openai_responses::OpenAiResponsesProvider;
+    use crate::provider::resolve::{
+        resolve_api_key, resolve_custom_api_format, resolve_custom_base_url,
+    };
     use crate::provider::types::ModelProvider;
 
     match provider {
         ModelProvider::Claude => {
-            let key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+            let key = resolve_api_key(ModelProvider::Claude, settings);
             let base = std::env::var("ANTHROPIC_BASE_URL")
                 .unwrap_or_else(|_| String::from("https://api.anthropic.com"));
             Box::new(ClaudeProvider::with_base_url(base, key))
         }
         ModelProvider::OpenAi => {
-            let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+            let key = resolve_api_key(ModelProvider::OpenAi, settings);
             let base = std::env::var("OPENAI_BASE_URL")
                 .unwrap_or_else(|_| String::from("https://api.openai.com"));
             Box::new(OpenAiResponsesProvider::with_base_url(base, key))
         }
         ModelProvider::Gemini => {
-            let key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
+            let key = resolve_api_key(ModelProvider::Gemini, settings);
             Box::new(GeminiProvider::new(key))
         }
         ModelProvider::Custom => {
-            let key = std::env::var("NOCODE_CUSTOM_API_KEY")
-                .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
-                .or_else(|_| std::env::var("OPENAI_API_KEY"))
-                .unwrap_or_default();
-            let base = settings
-                .custom_base_url
-                .clone()
-                .or_else(|| std::env::var("NOCODE_CUSTOM_BASE_URL").ok())
-                .unwrap_or_else(|| String::from("http://localhost:8080"));
-            let format_raw = settings
-                .custom_api_format
-                .clone()
-                .or_else(|| std::env::var("NOCODE_CUSTOM_API_FORMAT").ok())
-                .unwrap_or_else(|| String::from("openai-responses"));
-            let format = crate::config::settings::normalize_api_format(&format_raw);
-            match format {
+            let key = resolve_api_key(ModelProvider::Custom, settings);
+            let base = resolve_custom_base_url(settings).unwrap_or_else(|msg| {
+                eprintln!("Agent error: {msg}");
+                String::new()
+            });
+            let format = resolve_custom_api_format(settings);
+            match format.as_str() {
                 "anthropic" => Box::new(ClaudeProvider::with_base_url(base, key)),
                 "openai-chat" => {
                     use crate::provider::openai::OpenAiProvider;

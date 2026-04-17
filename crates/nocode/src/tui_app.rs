@@ -3289,12 +3289,13 @@ fn cycle_provider(current: &str, forward: bool) -> String {
 }
 
 fn provider_display_name(provider: &str) -> &'static str {
-    match provider.to_ascii_lowercase().as_str() {
-        "claude" | "anthropic" => "Anthropic",
-        "openai" => "OpenAI",
-        "gemini" | "google" => "Gemini",
-        "custom" => "Custom",
-        _ => "Auto",
+    use nocode_core::provider::types::ModelProvider;
+    match ModelProvider::parse(provider) {
+        Some(ModelProvider::Claude) => "Anthropic",
+        Some(ModelProvider::OpenAi) => "OpenAI",
+        Some(ModelProvider::Gemini) => "Gemini",
+        Some(ModelProvider::Custom) => "Custom",
+        None => "Auto",
     }
 }
 
@@ -3309,11 +3310,12 @@ fn provider_key_slot(
     api_format: &str,
     preset_name: Option<&str>,
 ) -> (&'static str, &'static str) {
-    match provider.to_ascii_lowercase().as_str() {
-        "claude" | "anthropic" => ("anthropic", "ANTHROPIC_API_KEY"),
-        "openai" => ("openai", "OPENAI_API_KEY"),
-        "gemini" | "google" => ("gemini", "GEMINI_API_KEY"),
-        "custom" => {
+    use nocode_core::provider::types::ModelProvider;
+    match ModelProvider::parse(provider) {
+        Some(ModelProvider::Claude) => ("anthropic", "ANTHROPIC_API_KEY"),
+        Some(ModelProvider::OpenAi) => ("openai", "OPENAI_API_KEY"),
+        Some(ModelProvider::Gemini) => ("gemini", "GEMINI_API_KEY"),
+        Some(ModelProvider::Custom) => {
             if let Some(preset) = preset_name.and_then(find_preset_by_name) {
                 if preset.env_key_name.is_empty() {
                     return (preset.credential_slot, "");
@@ -3327,7 +3329,7 @@ fn provider_key_slot(
                 _ => ("openai", "OPENAI_API_KEY"),
             }
         }
-        _ => ("anthropic", "ANTHROPIC_API_KEY"),
+        None => ("anthropic", "ANTHROPIC_API_KEY"),
     }
 }
 
@@ -3467,11 +3469,18 @@ fn restore_api_key_from_source(
 }
 
 pub(crate) fn provider_auth_help(provider: &str, api_format: &str) -> &'static str {
-    match provider.to_ascii_lowercase().as_str() {
-        "claude" | "anthropic" => "Paste an Anthropic key; T verifies against the Messages API.",
-        "openai" => "Paste an OpenAI key; R loads /v1/models and T verifies access.",
-        "gemini" | "google" => "Paste a Gemini key; R loads v1beta/models and T checks API access.",
-        "custom" => {
+    use nocode_core::provider::types::ModelProvider;
+    match ModelProvider::parse(provider) {
+        Some(ModelProvider::Claude) => {
+            "Paste an Anthropic key; T verifies against the Messages API."
+        }
+        Some(ModelProvider::OpenAi) => {
+            "Paste an OpenAI key; R loads /v1/models and T verifies access."
+        }
+        Some(ModelProvider::Gemini) => {
+            "Paste a Gemini key; R loads v1beta/models and T checks API access."
+        }
+        Some(ModelProvider::Custom) => {
             let normalized = nocode_core::config::settings::normalize_api_format(api_format);
             match normalized {
                 "anthropic" => "Custom Anthropic-compatible: use an Anthropic-style key.",
@@ -3480,13 +3489,14 @@ pub(crate) fn provider_auth_help(provider: &str, api_format: &str) -> &'static s
                 _ => "Custom OpenAI Responses API: use an OpenAI-style key.",
             }
         }
-        _ => "Auto mode inherits whichever configured provider is available first.",
+        None => "Auto mode inherits whichever configured provider is available first.",
     }
 }
 
 pub(crate) fn provider_endpoint_help(provider: &str, api_format: &str) -> &'static str {
-    match provider.to_ascii_lowercase().as_str() {
-        "custom" => {
+    use nocode_core::provider::types::ModelProvider;
+    match ModelProvider::parse(provider) {
+        Some(ModelProvider::Custom) => {
             let normalized = nocode_core::config::settings::normalize_api_format(api_format);
             match normalized {
                 "anthropic" => "Endpoint: base_url + /v1/messages",
@@ -3495,10 +3505,12 @@ pub(crate) fn provider_endpoint_help(provider: &str, api_format: &str) -> &'stat
                 _ => "Endpoint: base_url + /v1/responses",
             }
         }
-        "claude" | "anthropic" => "Official Anthropic endpoint: api.anthropic.com/v1/messages",
-        "openai" => "Official OpenAI endpoint: api.openai.com/v1/responses",
-        "gemini" | "google" => "Official Gemini endpoint: generativelanguage.googleapis.com",
-        _ => "Auto mode uses the first available configured provider endpoint.",
+        Some(ModelProvider::Claude) => "Official Anthropic endpoint: api.anthropic.com/v1/messages",
+        Some(ModelProvider::OpenAi) => "Official OpenAI endpoint: api.openai.com/v1/responses",
+        Some(ModelProvider::Gemini) => {
+            "Official Gemini endpoint: generativelanguage.googleapis.com"
+        }
+        None => "Auto mode uses the first available configured provider endpoint.",
     }
 }
 

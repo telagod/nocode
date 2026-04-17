@@ -5,6 +5,7 @@ pub mod model_caps;
 pub mod openai;
 pub mod openai_responses;
 pub mod pricing;
+pub mod resolve;
 pub mod transport;
 pub mod types;
 

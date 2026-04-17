@@ -196,13 +196,15 @@ MCP servers configured in `settings.json` under `mcp_servers` are auto-connected
 
 - `NOCODE_MODEL_PROVIDER` — force provider (`anthropic`, `openai`, `google`, `custom`, `mock`)
 - `NOCODE_MODEL` — override model name
-- `NOCODE_CUSTOM_BASE_URL` / `NOCODE_CUSTOM_API_FORMAT` — Custom provider config
+- `NOCODE_CUSTOM_BASE_URL` — Custom provider base URL (required for `custom` provider)
+- `NOCODE_CUSTOM_API_FORMAT` — Custom provider API format (`openai-responses`, `openai-chat`, `anthropic`, `google`)
 - `NOCODE_SYSTEM_PROMPT` — override system prompt
 - `NOCODE_MODEL_REASONING_EFFORT` — `low`, `medium`, `high`
 - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` — provider API keys
 - `ANTHROPIC_MODEL` / `OPENAI_MODEL` / `GEMINI_MODEL` — per-provider model override
 - `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` — per-provider base URL override
 - `NOCODE_BRIDGE_BASE_URL` / `NOCODE_BRIDGE_AUTH_TOKEN` — remote bridge config
+- Preset env keys: `OPENROUTER_API_KEY`, `TOGETHER_API_KEY`, `GROQ_API_KEY`, `FIREWORKS_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `VLLM_API_KEY`, `LITELLM_API_KEY`
 
 ## Run Modes
 

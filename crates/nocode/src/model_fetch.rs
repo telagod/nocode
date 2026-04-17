@@ -3,6 +3,8 @@ pub fn fetch_model_suggestions(
     custom_base_url: &str,
     custom_api_format: &str,
 ) -> Result<Vec<String>, String> {
+    use nocode_core::provider::types::ModelProvider;
+
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .build()
@@ -14,50 +16,52 @@ pub fn fetch_model_suggestions(
         nocode_core::config::settings::normalize_api_format(custom_api_format)
     };
 
-    if provider.eq_ignore_ascii_case("custom") || !custom_base_url.is_empty() {
+    let parsed = ModelProvider::parse(provider);
+
+    if parsed == Some(ModelProvider::Custom) || !custom_base_url.is_empty() {
         let normalized = format;
         if normalized == "openai-responses" || normalized == "openai-chat" {
-            let key = std::env::var("NOCODE_CUSTOM_API_KEY")
-                .or_else(|_| std::env::var("OPENAI_API_KEY"))
-                .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
-                .unwrap_or_default();
+            let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
             return fetch_openai_models(&client, custom_base_url, &key);
         }
         if normalized == "anthropic" {
-            let key = std::env::var("NOCODE_CUSTOM_API_KEY")
-                .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
-                .unwrap_or_default();
+            let key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
             return fetch_anthropic_models(&client, custom_base_url, &key);
+        }
+        if normalized == "google" {
+            let key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
+            return fetch_gemini_models(&client, &key);
         }
         return Err(format!("Unsupported custom API format: {normalized}"));
     }
 
-    if provider.eq_ignore_ascii_case("openai") {
-        let key = std::env::var("OPENAI_API_KEY").map_err(|e| e.to_string())?;
-        return fetch_openai_models(&client, "https://api.openai.com", &key);
+    match parsed {
+        Some(ModelProvider::OpenAi) => {
+            let key = std::env::var("OPENAI_API_KEY").map_err(|e| e.to_string())?;
+            fetch_openai_models(&client, "https://api.openai.com", &key)
+        }
+        Some(ModelProvider::Gemini) => {
+            let key = std::env::var("GEMINI_API_KEY").map_err(|e| e.to_string())?;
+            fetch_gemini_models(&client, &key)
+        }
+        Some(ModelProvider::Claude) => {
+            let key = std::env::var("ANTHROPIC_API_KEY").map_err(|e| e.to_string())?;
+            fetch_anthropic_models(&client, "https://api.anthropic.com", &key)
+        }
+        _ => {
+            // Auto-detect from available keys
+            if std::env::var("OPENAI_API_KEY").is_ok() {
+                return fetch_model_suggestions("openai", custom_base_url, custom_api_format);
+            }
+            if std::env::var("GEMINI_API_KEY").is_ok() {
+                return fetch_model_suggestions("gemini", custom_base_url, custom_api_format);
+            }
+            if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+                return fetch_model_suggestions("claude", custom_base_url, custom_api_format);
+            }
+            Err("No provider credentials found to fetch models".to_string())
+        }
     }
-
-    if provider.eq_ignore_ascii_case("gemini") || provider.eq_ignore_ascii_case("google") {
-        let key = std::env::var("GEMINI_API_KEY").map_err(|e| e.to_string())?;
-        return fetch_gemini_models(&client, &key);
-    }
-
-    if provider.eq_ignore_ascii_case("claude") || provider.eq_ignore_ascii_case("anthropic") {
-        let key = std::env::var("ANTHROPIC_API_KEY").map_err(|e| e.to_string())?;
-        return fetch_anthropic_models(&client, "https://api.anthropic.com", &key);
-    }
-
-    if std::env::var("OPENAI_API_KEY").is_ok() {
-        return fetch_model_suggestions("openai", custom_base_url, custom_api_format);
-    }
-    if std::env::var("GEMINI_API_KEY").is_ok() {
-        return fetch_model_suggestions("gemini", custom_base_url, custom_api_format);
-    }
-    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-        return fetch_model_suggestions("claude", custom_base_url, custom_api_format);
-    }
-
-    Err("No provider credentials found to fetch models".to_string())
 }
 
 pub fn fetch_model_suggestions_with_key(

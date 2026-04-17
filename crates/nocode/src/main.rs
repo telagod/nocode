@@ -257,10 +257,7 @@ fn main() {
 // --- PLACEHOLDER_REST ---
 
 fn has_any_api_key() -> bool {
-    env::var("ANTHROPIC_API_KEY").is_ok()
-        || env::var("OPENAI_API_KEY").is_ok()
-        || env::var("GEMINI_API_KEY").is_ok()
-        || env::var("NOCODE_MODEL_PROVIDER").is_ok()
+    nocode_core::provider::resolve::has_any_api_key()
 }
 
 fn resolve_provider(settings: &Settings) -> ModelProvider {
@@ -329,66 +326,38 @@ fn build_provider(
     settings: &Settings,
 ) -> (Box<dyn Provider>, Vec<String>) {
     let mut warnings = Vec::new();
+    let resolve_key = nocode_core::provider::resolve::resolve_api_key;
     let result: Box<dyn Provider> = match provider {
         ModelProvider::Claude => {
-            let key = env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+            let key = resolve_key(ModelProvider::Claude, settings);
             let base = env::var("ANTHROPIC_BASE_URL")
                 .unwrap_or_else(|_| String::from("https://api.anthropic.com"));
             Box::new(ClaudeProvider::with_base_url(base, key))
         }
         ModelProvider::OpenAi => {
-            let key = env::var("OPENAI_API_KEY").unwrap_or_default();
+            let key = resolve_key(ModelProvider::OpenAi, settings);
             let base = env::var("OPENAI_BASE_URL")
                 .unwrap_or_else(|_| String::from("https://api.openai.com"));
             Box::new(OpenAiResponsesProvider::with_base_url(base, key))
         }
         ModelProvider::Gemini => {
-            let key = env::var("GEMINI_API_KEY").unwrap_or_default();
+            let key = resolve_key(ModelProvider::Gemini, settings);
             Box::new(GeminiProvider::new(key))
         }
         ModelProvider::Custom => {
-            // Preset-aware API key resolution
-            let key = if let Some(preset_name) = settings.custom_preset.as_deref() {
-                // Find matching preset and use its dedicated env var
-                crate::tui_app::find_preset_by_name(preset_name)
-                    .and_then(|p| {
-                        if p.env_key_name.is_empty() {
-                            Some(String::new())
-                        } else {
-                            env::var(p.env_key_name).ok()
-                        }
-                    })
-                    .unwrap_or_default()
-            } else {
-                // Legacy fallback for truly custom setups
-                env::var("NOCODE_CUSTOM_API_KEY")
-                    .or_else(|_| env::var("ANTHROPIC_API_KEY"))
-                    .or_else(|_| env::var("OPENAI_API_KEY"))
-                    .unwrap_or_default()
+            use nocode_core::provider::resolve::{
+                resolve_custom_api_format, resolve_custom_base_url,
             };
-            let base = settings
-                .custom_base_url
-                .clone()
-                .or_else(|| env::var("NOCODE_CUSTOM_BASE_URL").ok());
-            let base = match base {
-                Some(url) => url,
-                None => {
-                    warnings.push(
-                        "Custom provider: no base URL configured.\n\
-                         Set NOCODE_CUSTOM_BASE_URL or custom_base_url in settings.\n\
-                         Falling back to http://localhost:8080"
-                            .to_string(),
-                    );
-                    String::from("http://localhost:8080")
+            let key = resolve_key(ModelProvider::Custom, settings);
+            let base = match resolve_custom_base_url(settings) {
+                Ok(url) => url,
+                Err(msg) => {
+                    eprintln!("Error: {msg}");
+                    std::process::exit(1);
                 }
             };
-            let format_raw = settings
-                .custom_api_format
-                .clone()
-                .or_else(|| env::var("NOCODE_CUSTOM_API_FORMAT").ok())
-                .unwrap_or_else(|| String::from("openai-responses"));
-            let format = nocode_core::config::settings::normalize_api_format(&format_raw);
-            match format {
+            let format = resolve_custom_api_format(settings);
+            match format.as_str() {
                 "anthropic" => {
                     if let Some(foundry_id) = base
                         .strip_prefix("https://")
