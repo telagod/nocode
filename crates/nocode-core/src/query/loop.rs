@@ -19,6 +19,8 @@ pub struct LoopConfig {
     pub tools: Vec<ToolDefinition>,
     /// Enable parallel tool execution (default: true).
     pub parallel_tool_execution: bool,
+    /// Reasoning effort: "low", "medium", "high" (default: medium).
+    pub reasoning_effort: Option<String>,
 }
 
 /// Result of running the agentic loop.
@@ -150,7 +152,7 @@ pub fn run_agentic_loop(
         config,
         initial_messages,
         observer,
-        &mut TokenBudget::default(),
+        &mut TokenBudget::for_model(&config.model, Some(config.max_tokens)),
         None,
     )
 }
@@ -242,6 +244,25 @@ pub fn run_agentic_loop_with_cancel(
             .effective_max_tokens()
             .min(u64::from(config.max_tokens)) as u32;
 
+        // Resolve thinking config from model capabilities + reasoning_effort
+        let thinking = {
+            use crate::provider::model_caps;
+            use crate::provider::types::ThinkingConfig;
+            let caps = model_caps::lookup(&current_model);
+            if caps.supports_thinking {
+                let effort = config.reasoning_effort.as_deref().unwrap_or("medium");
+                match effort {
+                    "low" | "off" | "none" => None,
+                    "high" => caps.default_thinking_budget.map(ThinkingConfig::enabled),
+                    _ => caps
+                        .default_thinking_budget
+                        .map(|b| ThinkingConfig::enabled(b / 2)),
+                }
+            } else {
+                None
+            }
+        };
+
         let request = CreateMessageRequest {
             model: current_model.clone(),
             max_tokens: effective_max,
@@ -249,7 +270,7 @@ pub fn run_agentic_loop_with_cancel(
             messages: messages.clone(),
             tools: config.tools.clone(),
             stream: true,
-            thinking: None,
+            thinking,
             response_format: None,
         };
 

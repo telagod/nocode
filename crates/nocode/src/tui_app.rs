@@ -2893,6 +2893,7 @@ pub(crate) fn run_app_loop(
                                     system: system.clone(),
                                     tools: tool_defs.clone(),
                                     parallel_tool_execution: true,
+                                    reasoning_effort: None,
                                 };
 
                                 let tx_complete = tx.clone();

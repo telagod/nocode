@@ -366,6 +366,7 @@ fn handle_query(stream: &mut TcpStream, req: &HttpRequest, runtime: Option<&Brid
         system: rt.system.clone(),
         tools: tool_defs,
         parallel_tool_execution: true,
+        reasoning_effort: None,
     };
 
     let executor = ToolExecutor::new(&rt.registry);

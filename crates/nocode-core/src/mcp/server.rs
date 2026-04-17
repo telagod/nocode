@@ -362,6 +362,7 @@ impl McpServer {
             system: self.system_blocks.clone(),
             tools: tool_definitions_for_model(&self.registry),
             parallel_tool_execution: true,
+            reasoning_effort: None,
         };
         let mut observer = NoopObserver;
 

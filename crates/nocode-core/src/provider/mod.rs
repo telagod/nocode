@@ -1,6 +1,7 @@
 pub mod claude;
 pub mod foundry;
 pub mod gemini;
+pub mod model_caps;
 pub mod openai;
 pub mod openai_responses;
 pub mod pricing;

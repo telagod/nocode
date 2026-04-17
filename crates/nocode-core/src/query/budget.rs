@@ -29,6 +29,15 @@ impl TokenBudget {
         }
     }
 
+    /// Create a budget auto-configured from model capabilities.
+    pub fn for_model(model: &str, max_turn_override: Option<u32>) -> Self {
+        let caps = crate::provider::model_caps::lookup(model);
+        let max_turn = max_turn_override
+            .map(|o| o.min(caps.max_output_tokens))
+            .unwrap_or(caps.max_output_tokens);
+        Self::new(u64::from(caps.context_window), u64::from(max_turn))
+    }
+
     /// Record token usage for a turn.
     pub fn record(&mut self, input: u64, output: u64) {
         self.total_input += input;

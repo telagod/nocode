@@ -918,6 +918,7 @@ mod tests {
                 system: Vec::new(),
                 tools: tool_definitions_for_model(&registry),
                 parallel_tool_execution: true,
+                reasoning_effort: None,
             };
             let mut observer = WsEventObserver::new(query_id.clone(), tx.clone());
             let result = r#loop::run_agentic_loop(

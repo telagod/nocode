@@ -645,6 +645,7 @@ pub fn run_repl(
             system: system.to_vec(),
             tools: tool_definitions_for_model(registry),
             parallel_tool_execution: true,
+            reasoning_effort: None,
         };
 
         let mut observer = ReplObserver::new();

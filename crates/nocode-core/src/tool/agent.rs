@@ -148,6 +148,7 @@ pub fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&
         let executor = ToolExecutor::new(&tool_registry);
 
         let messages = vec![Message::user_text(prompt)];
+        let mut budget = TokenBudget::for_model(&model, Some(max_tokens));
         let config = LoopConfig {
             model,
             max_tokens,
@@ -155,10 +156,8 @@ pub fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&
             system: system_blocks,
             tools: tool_definitions_for_model(&tool_registry),
             parallel_tool_execution: true,
+            reasoning_effort: None,
         };
-
-        // Use WorkerObserver if event channel available, otherwise NoopObserver
-        let mut budget = TokenBudget::default();
         let cancel_ref = cancel_token.as_deref();
 
         let loop_result = if let Some(tx) = event_tx {

@@ -71,6 +71,9 @@ fn main() {
 
     let mut settings = Settings::load_merged(&cwd);
 
+    // Start async model capabilities cache fetch
+    nocode_core::provider::model_caps::init_cache_async();
+
     // Load stored credentials into env (if no API keys set)
     let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
     if let Ok(creds) = nocode_core::storage::credentials::CredentialStore::load(&cred_path) {
@@ -86,7 +89,8 @@ fn main() {
     let provider_type = resolve_provider(&settings);
     let model = resolve_model(&settings, &provider_type);
     let max_turns = settings.max_turns.unwrap_or(10);
-    let max_tokens = settings.max_tokens.unwrap_or(16384);
+    let caps = nocode_core::provider::model_caps::lookup(&model);
+    let max_tokens = settings.max_tokens.unwrap_or(caps.max_output_tokens);
 
     let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
 
@@ -578,6 +582,7 @@ fn execute_prompt(
         system: system_blocks.to_vec(),
         tools: tool_definitions_for_model(registry),
         parallel_tool_execution: true,
+        reasoning_effort: None,
     };
     let mut observer = NoopObserver;
     let result = r#loop::run_agentic_loop(provider, &executor, &config, messages, &mut observer)
@@ -689,6 +694,7 @@ fn run_ws_server_mode(
             system: system.clone(),
             tools: tool_definitions_for_model(&registry),
             parallel_tool_execution: true,
+            reasoning_effort: None,
         };
         let mut observer =
             nocode_core::ws_bridge::WsEventObserver::new(query_id.clone(), tx.clone());
@@ -1021,6 +1027,7 @@ fn run_agent_host() {
         system: system_blocks,
         tools: tool_definitions_for_model(&registry),
         parallel_tool_execution: true,
+        reasoning_effort: settings.reasoning_effort.clone(),
     };
     let mut observer = r#loop::NoopObserver;
 
