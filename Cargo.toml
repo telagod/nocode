@@ -8,7 +8,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "MIT"
-version = "0.2.50"
+version = "0.2.51"
 authors = ["telagod"]
 
 [workspace.lints.clippy]
