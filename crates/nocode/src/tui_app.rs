@@ -599,16 +599,15 @@ impl TuiApp {
 
         let is_busy = self.thinking_spinner.is_some();
         let hints_height: u16 = if is_busy || total_height < 8 { 0 } else { 1 };
-        let input_lines =
-            (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).min(10) + 1; // +1 for top border
+        let input_lines = (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).min(10);
 
-        // Layout: Chat → Input → Status (fused with input bottom) → Hints
+        // Layout: Chat → Status (separator) → Input → Hints
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(4),
-                Constraint::Length(input_lines),
                 Constraint::Length(1),
+                Constraint::Length(input_lines),
                 Constraint::Length(hints_height),
             ])
             .split(frame.area());
@@ -621,19 +620,7 @@ impl TuiApp {
             self.draw_chat_area(frame, chunks[0]);
         }
 
-        // 2. Input
-        let mode_label = if self.input_mode == InputMode::Normal {
-            self.input_mode.label()
-        } else {
-            ""
-        };
-        let input_widget = InputBox::new(&self.input, self.cursor_pos)
-            .with_mode(mode_label)
-            .with_view_offset(self.input_view_offset)
-            .with_scroll_y(self.input_scroll_y);
-        frame.render_widget(input_widget, chunks[1]);
-
-        // 3. Status line (fused as input bottom border)
+        // 2. Status line (separator between chat and input)
         let pending_img_hint = if self.pending_images.is_empty() {
             None
         } else {
@@ -673,7 +660,19 @@ impl TuiApp {
             status_base.push_str(&format!(" | {} new", self.unseen_count));
         }
         let status = StatusBar::new(&status_base);
-        frame.render_widget(status, chunks[2]);
+        frame.render_widget(status, chunks[1]);
+
+        // 3. Input
+        let mode_label = if self.input_mode == InputMode::Normal {
+            self.input_mode.label()
+        } else {
+            ""
+        };
+        let input_widget = InputBox::new(&self.input, self.cursor_pos)
+            .with_mode(mode_label)
+            .with_view_offset(self.input_view_offset)
+            .with_scroll_y(self.input_scroll_y);
+        frame.render_widget(input_widget, chunks[2]);
 
         // 4. Hints
         if !is_busy {
@@ -697,7 +696,7 @@ impl TuiApp {
         };
         let char_col = line_text.chars().count();
         // Update horizontal scroll so cursor stays visible
-        let usable_width = chunks[1].width.saturating_sub(2 + mode_prefix_width) as usize;
+        let usable_width = chunks[2].width.saturating_sub(2 + mode_prefix_width) as usize;
         if usable_width > 0 {
             if char_col < self.input_view_offset {
                 self.input_view_offset = char_col;
@@ -707,23 +706,22 @@ impl TuiApp {
         }
         let visible_col = char_col.saturating_sub(self.input_view_offset) as u16;
         let cursor_col = visible_col + 2 + mode_prefix_width;
-        let cursor_x = chunks[1].x + cursor_col;
+        let cursor_x = chunks[2].x + cursor_col;
         // Update vertical scroll so cursor line stays visible
-        let visible_lines = input_lines.saturating_sub(1); // subtract top border
-        if visible_lines > 0 {
+        if input_lines > 0 {
             if cursor_line < self.input_scroll_y {
                 self.input_scroll_y = cursor_line;
-            } else if cursor_line >= self.input_scroll_y + visible_lines {
-                self.input_scroll_y = cursor_line.saturating_sub(visible_lines) + 1;
+            } else if cursor_line >= self.input_scroll_y + input_lines {
+                self.input_scroll_y = cursor_line.saturating_sub(input_lines) + 1;
             }
         }
         let visible_cursor_line = cursor_line.saturating_sub(self.input_scroll_y);
-        let cursor_y = chunks[1].y + 1 + visible_cursor_line; // +1 for top border
+        let cursor_y = chunks[2].y + visible_cursor_line;
         frame.set_cursor_position((cursor_x, cursor_y));
 
         // 5. Command completion popup (above input box)
         if self.completion_selected.is_some() && !self.overlay.is_open() {
-            self.draw_completion_popup(frame, chunks[1]);
+            self.draw_completion_popup(frame, chunks[2]);
         }
 
         // 6. Overlay
