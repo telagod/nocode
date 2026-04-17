@@ -44,38 +44,112 @@ pub(crate) struct ProviderPreset {
     pub base_url: &'static str,
     pub api_format: &'static str,
     pub auth_hint: &'static str,
+    pub env_key_name: &'static str,
+    pub credential_slot: &'static str,
+    pub default_model: &'static str,
 }
 
 pub(crate) static CUSTOM_PRESETS: &[ProviderPreset] = &[
+    // --- Cloud API proxies ---
+    ProviderPreset {
+        name: "OpenRouter",
+        base_url: "https://openrouter.ai/api/v1",
+        api_format: "openai-chat",
+        auth_hint: "Get key at openrouter.ai/keys",
+        env_key_name: "OPENROUTER_API_KEY",
+        credential_slot: "openrouter",
+        default_model: "anthropic/claude-sonnet-4",
+    },
+    ProviderPreset {
+        name: "Together",
+        base_url: "https://api.together.xyz/v1",
+        api_format: "openai-chat",
+        auth_hint: "Get key at api.together.xyz/settings/api-keys",
+        env_key_name: "TOGETHER_API_KEY",
+        credential_slot: "together",
+        default_model: "meta-llama/Llama-3-70b-chat-hf",
+    },
+    ProviderPreset {
+        name: "Groq",
+        base_url: "https://api.groq.com/openai/v1",
+        api_format: "openai-chat",
+        auth_hint: "Get key at console.groq.com/keys",
+        env_key_name: "GROQ_API_KEY",
+        credential_slot: "groq",
+        default_model: "llama-3.3-70b-versatile",
+    },
+    ProviderPreset {
+        name: "Fireworks",
+        base_url: "https://api.fireworks.ai/inference/v1",
+        api_format: "openai-chat",
+        auth_hint: "Get key at fireworks.ai/account/api-keys",
+        env_key_name: "FIREWORKS_API_KEY",
+        credential_slot: "fireworks",
+        default_model: "accounts/fireworks/models/llama-v3p1-70b-instruct",
+    },
+    ProviderPreset {
+        name: "DeepSeek",
+        base_url: "https://api.deepseek.com/v1",
+        api_format: "openai-chat",
+        auth_hint: "Get key at platform.deepseek.com/api_keys",
+        env_key_name: "DEEPSEEK_API_KEY",
+        credential_slot: "deepseek",
+        default_model: "deepseek-chat",
+    },
+    ProviderPreset {
+        name: "Mistral",
+        base_url: "https://api.mistral.ai/v1",
+        api_format: "openai-chat",
+        auth_hint: "Get key at console.mistral.ai/api-keys",
+        env_key_name: "MISTRAL_API_KEY",
+        credential_slot: "mistral",
+        default_model: "mistral-large-latest",
+    },
+    // --- Local inference ---
     ProviderPreset {
         name: "Ollama",
         base_url: "http://localhost:11434/v1",
         api_format: "openai-chat",
         auth_hint: "No API key needed for local Ollama",
+        env_key_name: "",
+        credential_slot: "ollama",
+        default_model: "",
     },
     ProviderPreset {
         name: "vLLM",
         base_url: "http://localhost:8000/v1",
         api_format: "openai-chat",
         auth_hint: "Use --api-key flag if set on server",
+        env_key_name: "VLLM_API_KEY",
+        credential_slot: "vllm",
+        default_model: "",
     },
     ProviderPreset {
         name: "LiteLLM",
         base_url: "http://localhost:4000/v1",
         api_format: "openai-chat",
         auth_hint: "Set LITELLM_API_KEY or use proxy key",
+        env_key_name: "LITELLM_API_KEY",
+        credential_slot: "litellm",
+        default_model: "",
     },
     ProviderPreset {
         name: "LocalAI",
         base_url: "http://localhost:8080/v1",
         api_format: "openai-chat",
         auth_hint: "Optional, depends on config",
+        env_key_name: "",
+        credential_slot: "localai",
+        default_model: "",
     },
     ProviderPreset {
         name: "LM Studio",
         base_url: "http://localhost:1234/v1",
         api_format: "openai-chat",
         auth_hint: "No key required for local LM Studio",
+        env_key_name: "",
+        credential_slot: "lmstudio",
+        default_model: "",
     },
 ];
 
@@ -192,19 +266,34 @@ impl TuiApp {
             .model_provider
             .clone()
             .unwrap_or_else(|| resolve_provider(&settings).as_str().to_string());
+        let detected_preset = settings
+            .custom_preset
+            .as_deref()
+            .and_then(|name| {
+                CUSTOM_PRESETS
+                    .iter()
+                    .position(|p| p.name.eq_ignore_ascii_case(name))
+            })
+            .or_else(|| detect_preset(&custom_base_url));
+        let preset_name_str = detected_preset
+            .and_then(|i| CUSTOM_PRESETS.get(i))
+            .map(|p| p.name);
         let credential_store = load_credential_store();
-        let (api_key_slot, api_key_env_var) = provider_key_slot(&provider, &custom_api_format);
-        let api_key = std::env::var(api_key_env_var)
-            .ok()
-            .or_else(|| credential_store.get_key(api_key_slot))
-            .unwrap_or_default();
+        let (api_key_slot, api_key_env_var) =
+            provider_key_slot(&provider, &custom_api_format, preset_name_str);
+        let api_key = if !api_key_env_var.is_empty() {
+            std::env::var(api_key_env_var).ok()
+        } else {
+            None
+        }
+        .or_else(|| credential_store.get_key(api_key_slot))
+        .unwrap_or_default();
         // Spawn background model fetch instead of blocking the UI
         self.spawn_model_fetch(
             provider.as_str(),
             custom_base_url.trim(),
             custom_api_format.trim(),
         );
-        let detected_preset = detect_preset(&custom_base_url);
         self.overlay = Overlay::Config(Box::new(ConfigState {
             selected: 0,
             tier: 0,
@@ -1006,8 +1095,14 @@ impl TuiApp {
                             } else {
                                 None
                             };
-                            let (slot, env_var) =
-                                provider_key_slot(provider.as_str(), custom_api_format.as_str());
+                            let pn = preset_index
+                                .and_then(|i| CUSTOM_PRESETS.get(i))
+                                .map(|p| p.name);
+                            let (slot, env_var) = provider_key_slot(
+                                provider.as_str(),
+                                custom_api_format.as_str(),
+                                pn,
+                            );
                             let store = load_credential_store();
                             *api_key = std::env::var(env_var)
                                 .ok()
@@ -1027,7 +1122,14 @@ impl TuiApp {
                                 *suggestion_scroll = 0;
                                 *status = Some("Switched provider to auto".to_string());
                             } else {
-                                apply_api_key_to_env(provider, custom_api_format, api_key);
+                                apply_api_key_to_env(
+                                    provider,
+                                    custom_api_format,
+                                    api_key,
+                                    preset_index
+                                        .and_then(|i| CUSTOM_PRESETS.get(i))
+                                        .map(|p| p.name),
+                                );
                                 self.model_fetch_rx = Some(spawn_model_fetch_bg(
                                     provider,
                                     custom_base_url.trim(),
@@ -1070,7 +1172,14 @@ impl TuiApp {
                             *custom_api_format = formats[next_idx].to_string();
                             // Re-detect preset after format toggle
                             *preset_index = detect_preset(custom_base_url);
-                            apply_api_key_to_env(provider, custom_api_format, api_key);
+                            apply_api_key_to_env(
+                                provider,
+                                custom_api_format,
+                                api_key,
+                                preset_index
+                                    .and_then(|i| CUSTOM_PRESETS.get(i))
+                                    .map(|p| p.name),
+                            );
                             self.model_fetch_rx = Some(spawn_model_fetch_bg(
                                 provider,
                                 custom_base_url.trim(),
@@ -1156,7 +1265,14 @@ impl TuiApp {
                                     if *selected == 3 || *selected == 4 {
                                         // Re-detect preset after manual edit
                                         *preset_index = detect_preset(custom_base_url);
-                                        apply_api_key_to_env(provider, custom_api_format, api_key);
+                                        apply_api_key_to_env(
+                                            provider,
+                                            custom_api_format,
+                                            api_key,
+                                            preset_index
+                                                .and_then(|i| CUSTOM_PRESETS.get(i))
+                                                .map(|p| p.name),
+                                        );
                                         self.model_fetch_rx = Some(spawn_model_fetch_bg(
                                             provider,
                                             custom_base_url.trim(),
@@ -1192,7 +1308,14 @@ impl TuiApp {
                                     *suggestion_scroll = 0;
                                     *status = Some("Switched provider to auto".to_string());
                                 } else {
-                                    apply_api_key_to_env(provider, custom_api_format, api_key);
+                                    apply_api_key_to_env(
+                                        provider,
+                                        custom_api_format,
+                                        api_key,
+                                        preset_index
+                                            .and_then(|i| CUSTOM_PRESETS.get(i))
+                                            .map(|p| p.name),
+                                    );
                                     self.model_fetch_rx = Some(spawn_model_fetch_bg(
                                         provider,
                                         custom_base_url.trim(),
@@ -1273,14 +1396,24 @@ impl TuiApp {
                                     );
                                     *provider = value;
                                     *provider_source = source;
-                                    let (value, source) =
-                                        restore_api_key_from_source(provider, custom_api_format);
+                                    let (value, source) = restore_api_key_from_source(
+                                        provider,
+                                        custom_api_format,
+                                        preset_index
+                                            .and_then(|i| CUSTOM_PRESETS.get(i))
+                                            .map(|p| p.name),
+                                    );
                                     *api_key = value;
                                     *api_key_source = source;
                                 }
                                 1 => {
-                                    let (value, source) =
-                                        restore_api_key_from_source(provider, custom_api_format);
+                                    let (value, source) = restore_api_key_from_source(
+                                        provider,
+                                        custom_api_format,
+                                        preset_index
+                                            .and_then(|i| CUSTOM_PRESETS.get(i))
+                                            .map(|p| p.name),
+                                    );
                                     *api_key = value;
                                     *api_key_source = source;
                                 }
@@ -1327,7 +1460,14 @@ impl TuiApp {
                                     *suggestion_index = 0;
                                     *suggestion_scroll = 0;
                                 } else {
-                                    apply_api_key_to_env(provider, custom_api_format, api_key);
+                                    apply_api_key_to_env(
+                                        provider,
+                                        custom_api_format,
+                                        api_key,
+                                        preset_index
+                                            .and_then(|i| CUSTOM_PRESETS.get(i))
+                                            .map(|p| p.name),
+                                    );
                                     self.model_fetch_rx = Some(spawn_model_fetch_bg(
                                         provider,
                                         custom_base_url.trim(),
@@ -1387,6 +1527,14 @@ impl TuiApp {
                                     tier_value,
                                     &cwd,
                                 ),
+                                Settings::persist_key_value(
+                                    "custom_preset",
+                                    preset_index
+                                        .and_then(|i| CUSTOM_PRESETS.get(i))
+                                        .map(|p| p.name),
+                                    tier_value,
+                                    &cwd,
+                                ),
                             ]
                             .into_iter()
                             .find_map(Result::err);
@@ -1395,6 +1543,9 @@ impl TuiApp {
                                     let (slot, env_var) = provider_key_slot(
                                         provider.as_str(),
                                         custom_api_format.as_str(),
+                                        preset_index
+                                            .and_then(|i| CUSTOM_PRESETS.get(i))
+                                            .map(|p| p.name),
                                     );
                                     if api_key.trim().is_empty() {
                                         let mut store = load_credential_store();
@@ -1568,6 +1719,9 @@ impl TuiApp {
                                 let (_, env_var) = provider_key_slot(
                                     provider.as_str(),
                                     custom_api_format.as_str(),
+                                    preset_index
+                                        .and_then(|i| CUSTOM_PRESETS.get(i))
+                                        .map(|p| p.name),
                                 );
                                 unsafe {
                                     std::env::set_var(env_var, api_key.trim());
@@ -1583,7 +1737,14 @@ impl TuiApp {
                             self.dirty = true;
                         }
                         KeyCode::Char('r') | KeyCode::Char('R') if !*editing => {
-                            apply_api_key_to_env(provider, custom_api_format, api_key);
+                            apply_api_key_to_env(
+                                provider,
+                                custom_api_format,
+                                api_key,
+                                preset_index
+                                    .and_then(|i| CUSTOM_PRESETS.get(i))
+                                    .map(|p| p.name),
+                            );
                             self.model_fetch_rx = Some(spawn_model_fetch_bg(
                                 provider,
                                 custom_base_url.trim(),
@@ -1610,6 +1771,32 @@ impl TuiApp {
                                 *custom_api_format = preset.api_format.to_string();
                                 *custom_base_url_source = "preset".to_string();
                                 *custom_api_format_source = "preset".to_string();
+                                // Load preset-specific API key
+                                if !preset.env_key_name.is_empty() {
+                                    let store = load_credential_store();
+                                    *api_key = std::env::var(preset.env_key_name)
+                                        .ok()
+                                        .or_else(|| store.get_key(preset.credential_slot))
+                                        .unwrap_or_default();
+                                    *api_key_source = if std::env::var(preset.env_key_name).is_ok()
+                                    {
+                                        "env".to_string()
+                                    } else if load_credential_store()
+                                        .get_key(preset.credential_slot)
+                                        .is_some()
+                                    {
+                                        "credentials".to_string()
+                                    } else {
+                                        "unset".to_string()
+                                    };
+                                } else {
+                                    *api_key = String::new();
+                                    *api_key_source = "not required".to_string();
+                                }
+                                // Auto-fill default model if empty
+                                if model.is_empty() && !preset.default_model.is_empty() {
+                                    *model = preset.default_model.to_string();
+                                }
                                 *status = Some(format!(
                                     "Applied {} preset: {} ({})",
                                     preset.name, preset.base_url, preset.api_format
@@ -1623,7 +1810,14 @@ impl TuiApp {
                                     Some("Switched to manual endpoint configuration".to_string());
                             }
                             // Refresh model suggestions for new endpoint
-                            apply_api_key_to_env(provider, custom_api_format, api_key);
+                            apply_api_key_to_env(
+                                provider,
+                                custom_api_format,
+                                api_key,
+                                preset_index
+                                    .and_then(|i| CUSTOM_PRESETS.get(i))
+                                    .map(|p| p.name),
+                            );
                             self.model_fetch_rx = Some(spawn_model_fetch_bg(
                                 provider,
                                 custom_base_url.trim(),
@@ -3096,12 +3290,28 @@ fn provider_display_name(provider: &str) -> &'static str {
     }
 }
 
-fn provider_key_slot<'a>(provider: &'a str, api_format: &'a str) -> (&'static str, &'static str) {
+pub(crate) fn find_preset_by_name(name: &str) -> Option<&'static ProviderPreset> {
+    CUSTOM_PRESETS
+        .iter()
+        .find(|p| p.name.eq_ignore_ascii_case(name))
+}
+
+fn provider_key_slot(
+    provider: &str,
+    api_format: &str,
+    preset_name: Option<&str>,
+) -> (&'static str, &'static str) {
     match provider.to_ascii_lowercase().as_str() {
         "claude" | "anthropic" => ("anthropic", "ANTHROPIC_API_KEY"),
         "openai" => ("openai", "OPENAI_API_KEY"),
         "gemini" | "google" => ("gemini", "GEMINI_API_KEY"),
         "custom" => {
+            if let Some(preset) = preset_name.and_then(find_preset_by_name) {
+                if preset.env_key_name.is_empty() {
+                    return (preset.credential_slot, "");
+                }
+                return (preset.credential_slot, preset.env_key_name);
+            }
             let normalized = nocode_core::config::settings::normalize_api_format(api_format);
             match normalized {
                 "anthropic" => ("anthropic", "ANTHROPIC_API_KEY"),
@@ -3130,11 +3340,19 @@ fn apply_model_filter(all_models: &[String], filter: &str) -> Vec<String> {
         .collect()
 }
 
-fn apply_api_key_to_env(provider: &str, api_format: &str, api_key: &str) {
+fn apply_api_key_to_env(
+    provider: &str,
+    api_format: &str,
+    api_key: &str,
+    preset_name: Option<&str>,
+) {
     if api_key.trim().is_empty() {
         return;
     }
-    let (_, env_var) = provider_key_slot(provider, api_format);
+    let (_, env_var) = provider_key_slot(provider, api_format, preset_name);
+    if env_var.is_empty() {
+        return;
+    }
     unsafe {
         std::env::set_var(env_var, api_key.trim());
     }
@@ -3230,10 +3448,16 @@ fn restore_setting_from_source(
     }
 }
 
-fn restore_api_key_from_source(provider: &str, api_format: &str) -> (String, String) {
+fn restore_api_key_from_source(
+    provider: &str,
+    api_format: &str,
+    preset_name: Option<&str>,
+) -> (String, String) {
     let store = load_credential_store();
-    let (slot, env_var) = provider_key_slot(provider, api_format);
-    if let Ok(value) = std::env::var(env_var) {
+    let (slot, env_var) = provider_key_slot(provider, api_format, preset_name);
+    if !env_var.is_empty()
+        && let Ok(value) = std::env::var(env_var)
+    {
         return (value, "env".to_string());
     }
     if let Some(value) = store.get_key(slot) {
@@ -3617,29 +3841,38 @@ mod tests {
 
     #[test]
     fn detect_preset_exact_match() {
-        assert_eq!(detect_preset("http://localhost:11434/v1"), Some(0)); // Ollama
-        assert_eq!(detect_preset("http://localhost:8000/v1"), Some(1)); // vLLM
-        assert_eq!(detect_preset("http://localhost:4000/v1"), Some(2)); // LiteLLM
-        assert_eq!(detect_preset("http://localhost:8080/v1"), Some(3)); // LocalAI
-        assert_eq!(detect_preset("http://localhost:1234/v1"), Some(4)); // LM Studio
+        assert_eq!(detect_preset("https://openrouter.ai/api/v1"), Some(0)); // OpenRouter
+        assert_eq!(detect_preset("https://api.together.xyz/v1"), Some(1)); // Together
+        assert_eq!(detect_preset("https://api.groq.com/openai/v1"), Some(2)); // Groq
+        assert_eq!(
+            detect_preset("https://api.fireworks.ai/inference/v1"),
+            Some(3)
+        ); // Fireworks
+        assert_eq!(detect_preset("https://api.deepseek.com/v1"), Some(4)); // DeepSeek
+        assert_eq!(detect_preset("https://api.mistral.ai/v1"), Some(5)); // Mistral
+        assert_eq!(detect_preset("http://localhost:11434/v1"), Some(6)); // Ollama
+        assert_eq!(detect_preset("http://localhost:8000/v1"), Some(7)); // vLLM
+        assert_eq!(detect_preset("http://localhost:4000/v1"), Some(8)); // LiteLLM
+        assert_eq!(detect_preset("http://localhost:8080/v1"), Some(9)); // LocalAI
+        assert_eq!(detect_preset("http://localhost:1234/v1"), Some(10)); // LM Studio
     }
 
     #[test]
     fn detect_preset_trailing_slash() {
-        assert_eq!(detect_preset("http://localhost:11434/v1/"), Some(0));
-        assert_eq!(detect_preset("http://localhost:8000/v1/"), Some(1));
+        assert_eq!(detect_preset("https://openrouter.ai/api/v1/"), Some(0));
+        assert_eq!(detect_preset("http://localhost:11434/v1/"), Some(6));
     }
 
     #[test]
     fn detect_preset_whitespace() {
-        assert_eq!(detect_preset("  http://localhost:11434/v1  "), Some(0));
-        assert_eq!(detect_preset("\thttp://localhost:8000/v1\n"), Some(1));
+        assert_eq!(detect_preset("  https://openrouter.ai/api/v1  "), Some(0));
+        assert_eq!(detect_preset("\thttp://localhost:8000/v1\n"), Some(7));
     }
 
     #[test]
     fn detect_preset_case_insensitive() {
-        assert_eq!(detect_preset("HTTP://LOCALHOST:11434/V1"), Some(0));
-        assert_eq!(detect_preset("Http://Localhost:8000/V1"), Some(1));
+        assert_eq!(detect_preset("HTTPS://OPENROUTER.AI/API/V1"), Some(0));
+        assert_eq!(detect_preset("HTTP://LOCALHOST:11434/V1"), Some(6));
     }
 
     #[test]
@@ -3656,11 +3889,11 @@ mod tests {
 
     #[test]
     fn preset_label_valid_indices() {
-        assert_eq!(preset_label(Some(0)), "Ollama");
-        assert_eq!(preset_label(Some(1)), "vLLM");
-        assert_eq!(preset_label(Some(2)), "LiteLLM");
-        assert_eq!(preset_label(Some(3)), "LocalAI");
-        assert_eq!(preset_label(Some(4)), "LM Studio");
+        assert_eq!(preset_label(Some(0)), "OpenRouter");
+        assert_eq!(preset_label(Some(1)), "Together");
+        assert_eq!(preset_label(Some(6)), "Ollama");
+        assert_eq!(preset_label(Some(7)), "vLLM");
+        assert_eq!(preset_label(Some(10)), "LM Studio");
     }
 
     #[test]

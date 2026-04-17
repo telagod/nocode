@@ -435,10 +435,25 @@ fn build_provider(
             Box::new(GeminiProvider::new(key))
         }
         ModelProvider::Custom => {
-            let key = env::var("NOCODE_CUSTOM_API_KEY")
-                .or_else(|_| env::var("ANTHROPIC_API_KEY"))
-                .or_else(|_| env::var("OPENAI_API_KEY"))
-                .unwrap_or_default();
+            // Preset-aware API key resolution
+            let key = if let Some(preset_name) = settings.custom_preset.as_deref() {
+                // Find matching preset and use its dedicated env var
+                crate::tui_app::find_preset_by_name(preset_name)
+                    .and_then(|p| {
+                        if p.env_key_name.is_empty() {
+                            Some(String::new())
+                        } else {
+                            env::var(p.env_key_name).ok()
+                        }
+                    })
+                    .unwrap_or_default()
+            } else {
+                // Legacy fallback for truly custom setups
+                env::var("NOCODE_CUSTOM_API_KEY")
+                    .or_else(|_| env::var("ANTHROPIC_API_KEY"))
+                    .or_else(|_| env::var("OPENAI_API_KEY"))
+                    .unwrap_or_default()
+            };
             let base = settings
                 .custom_base_url
                 .clone()

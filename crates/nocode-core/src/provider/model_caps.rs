@@ -49,55 +49,48 @@ const fn cap(
 }
 
 static MODEL_TABLE: &[(&str, ModelCapabilities)] = &[
-    // Anthropic (2026-04)
-    ("claude-opus-4", cap(1_000_000, 128_000, true, 10_000, true)),
+    // Anthropic — Opus 4.7, Sonnet 4.6, Haiku 4.5 (2026-04)
     (
-        "claude-sonnet-4",
+        "claude-opus-4-7",
+        cap(1_000_000, 128_000, true, 10_000, true),
+    ),
+    (
+        "claude-opus-4-6",
+        cap(1_000_000, 128_000, true, 10_000, true),
+    ),
+    (
+        "claude-sonnet-4-6",
         cap(1_000_000, 128_000, true, 8_000, true),
     ),
-    ("claude-haiku-4", cap(200_000, 64_000, true, 8_000, true)),
-    // OpenAI GPT (2026-04)
+    ("claude-haiku-4-5", cap(200_000, 64_000, true, 8_000, true)),
+    // OpenAI — GPT-5.4 family, 5.3-codex (2026-04)
     ("gpt-5.4-pro", cap(1_050_000, 128_000, false, 0, true)),
+    ("gpt-5.4-mini", cap(400_000, 128_000, false, 0, true)),
     ("gpt-5.4", cap(1_050_000, 128_000, false, 0, true)),
-    ("gpt-5.3", cap(400_000, 128_000, false, 0, true)),
-    ("gpt-5.2", cap(400_000, 128_000, false, 0, true)),
-    ("gpt-4.1", cap(1_000_000, 32_768, false, 0, true)),
-    ("gpt-4o", cap(128_000, 16_384, false, 0, true)),
-    // OpenAI reasoning
-    ("o4-mini", cap(200_000, 100_000, true, 10_000, true)),
-    ("o3", cap(200_000, 100_000, true, 10_000, true)),
-    ("o1", cap(200_000, 100_000, true, 10_000, true)),
-    // Google Gemini (2026-04)
-    ("gemini-3", cap(1_048_576, 65_536, true, 8_000, true)),
-    ("gemini-2.5", cap(1_048_576, 65_536, true, 8_000, true)),
-    // xAI Grok
-    ("grok-4", cap(2_000_000, 128_000, false, 0, true)),
-    ("grok-3", cap(131_072, 32_768, false, 0, true)),
-    // DeepSeek (2026-04)
-    ("deepseek-r1", cap(163_840, 16_384, true, 8_000, false)),
+    ("gpt-5.3-codex-spark", cap(128_000, 32_000, false, 0, true)),
+    ("gpt-5.3-codex", cap(400_000, 128_000, false, 0, true)),
+    // Google — Gemini 3.1 Pro/Flash (2026-04)
+    ("gemini-3.1-pro", cap(1_048_576, 65_536, true, 8_000, true)),
+    (
+        "gemini-3.1-flash",
+        cap(1_048_576, 65_536, true, 8_000, true),
+    ),
+    ("gemini-3.1", cap(1_048_576, 65_536, true, 8_000, true)),
+    // DeepSeek — V3.2 (2026-04)
+    ("deepseek-v3.2", cap(128_000, 64_000, true, 8_000, false)),
     ("deepseek", cap(128_000, 16_384, true, 8_000, false)),
-    // Qwen (2026-04)
+    // Qwen — 3.6 Plus (2026-04)
     ("qwen3.6", cap(1_000_000, 65_536, true, 8_000, true)),
-    ("qwen3.5", cap(262_144, 65_536, true, 8_000, true)),
-    ("qwen3", cap(262_144, 32_768, true, 8_000, true)),
-    ("qwen", cap(131_072, 16_384, false, 0, false)),
-    // Meta Llama 4 (2026)
-    ("llama-4-scout", cap(10_000_000, 16_384, false, 0, true)),
-    ("llama-4-maverick", cap(1_000_000, 16_384, false, 0, true)),
-    ("llama-4", cap(1_000_000, 16_384, false, 0, true)),
-    ("llama", cap(131_072, 16_384, false, 0, false)),
-    // Mistral (2026)
-    ("mistral-large", cap(256_000, 16_384, false, 0, true)),
-    ("mistral-medium", cap(128_000, 16_384, false, 0, true)),
-    ("mistral-small", cap(262_144, 16_384, false, 0, true)),
-    ("codestral", cap(128_000, 16_384, false, 0, false)),
-    ("devstral", cap(262_144, 16_384, false, 0, false)),
-    ("mistral", cap(131_072, 16_384, false, 0, false)),
-    // Kimi / Moonshot
-    ("kimi-k2", cap(262_144, 65_535, true, 8_000, true)),
-    // GLM (Zhipu)
+    // MiniMax — M2.7, M2.5 (2026-04)
+    ("minimax-m2.7", cap(204_800, 131_072, true, 8_000, true)),
+    ("minimax-m2.5", cap(204_800, 128_000, true, 8_000, true)),
+    // Kimi — K2.6, K2.5 (2026-04)
+    ("kimi-k2.6", cap(256_000, 65_535, true, 8_000, true)),
+    ("kimi-k2.5", cap(256_000, 65_535, true, 8_000, true)),
+    ("kimi-k2", cap(256_000, 65_535, true, 8_000, true)),
+    // GLM — 5.1, 5 (2026-04)
+    ("glm-5.1", cap(202_752, 131_072, false, 0, true)),
     ("glm-5", cap(202_752, 131_072, false, 0, true)),
-    ("glm-4", cap(202_752, 65_535, false, 0, true)),
 ];
 
 fn static_lookup(model_name: &str) -> Option<ModelCapabilities> {

@@ -361,6 +361,17 @@ Commands:
                 } else {
                     provider_auth_help(provider, custom_api_format)
                 }),
+                if is_custom_provider {
+                    if let Some(idx) = preset_index {
+                        crate::tui_app::CUSTOM_PRESETS.get(*idx)
+                            .filter(|p| !p.env_key_name.is_empty())
+                            .map_or(String::new(), |p| format!("API key env: {}", p.env_key_name))
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                },
                 format!("Endpoint hint: {}", provider_endpoint_help(provider, custom_api_format)),
                 String::new(),
                 format!(

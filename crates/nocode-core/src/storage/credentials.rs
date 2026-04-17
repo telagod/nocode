@@ -79,6 +79,14 @@ impl CredentialStore {
             ("anthropic", "ANTHROPIC_API_KEY"),
             ("openai", "OPENAI_API_KEY"),
             ("gemini", "GEMINI_API_KEY"),
+            ("openrouter", "OPENROUTER_API_KEY"),
+            ("together", "TOGETHER_API_KEY"),
+            ("groq", "GROQ_API_KEY"),
+            ("fireworks", "FIREWORKS_API_KEY"),
+            ("deepseek", "DEEPSEEK_API_KEY"),
+            ("mistral", "MISTRAL_API_KEY"),
+            ("vllm", "VLLM_API_KEY"),
+            ("litellm", "LITELLM_API_KEY"),
         ];
         for (provider, env_var) in &mappings {
             if std::env::var(env_var).is_err()

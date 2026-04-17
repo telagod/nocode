@@ -53,6 +53,8 @@ pub struct Settings {
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_preset: Option<String>,
     /// MCP servers — merged key-by-key across tiers.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub mcp_servers: HashMap<String, McpServerConfig>,
@@ -128,6 +130,7 @@ impl Settings {
         self.custom_api_format = other.custom_api_format.or(self.custom_api_format);
         self.system_prompt = other.system_prompt.or(self.system_prompt);
         self.reasoning_effort = other.reasoning_effort.or(self.reasoning_effort);
+        self.custom_preset = other.custom_preset.or(self.custom_preset);
 
         // Maps: merged key-by-key
         for (k, v) in other.mcp_servers {
@@ -182,10 +185,11 @@ impl Settings {
             "custom_api_format" => self.custom_api_format = None,
             "system_prompt" => self.system_prompt = None,
             "reasoning_effort" => self.reasoning_effort = None,
+            "custom_preset" => self.custom_preset = None,
             "telemetry_enabled" => self.telemetry_enabled = None,
             _ => {
                 return Err(format!(
-                    "Unknown setting key: '{key}'. Supported: model_provider, model, permission_mode, max_turns, max_tokens, custom_base_url, custom_api_format, system_prompt, reasoning_effort, telemetry_enabled"
+                    "Unknown setting key: '{key}'. Supported: model_provider, model, permission_mode, max_turns, max_tokens, custom_base_url, custom_api_format, system_prompt, reasoning_effort, custom_preset, telemetry_enabled"
                 ));
             }
         }
@@ -224,6 +228,7 @@ impl Settings {
             "custom_api_format" => self.custom_api_format = Some(value.to_string()),
             "system_prompt" => self.system_prompt = Some(value.to_string()),
             "reasoning_effort" => self.reasoning_effort = Some(value.to_string()),
+            "custom_preset" => self.custom_preset = Some(value.to_string()),
             "telemetry_enabled" => {
                 self.telemetry_enabled = Some(
                     value
@@ -233,7 +238,7 @@ impl Settings {
             }
             _ => {
                 return Err(format!(
-                    "Unknown setting key: '{key}'. Supported: model_provider, model, permission_mode, max_turns, max_tokens, custom_base_url, custom_api_format, system_prompt, reasoning_effort, telemetry_enabled"
+                    "Unknown setting key: '{key}'. Supported: model_provider, model, permission_mode, max_turns, max_tokens, custom_base_url, custom_api_format, system_prompt, reasoning_effort, custom_preset, telemetry_enabled"
                 ));
             }
         }
@@ -252,6 +257,7 @@ impl Settings {
             "custom_api_format" => self.custom_api_format.clone(),
             "system_prompt" => self.system_prompt.clone(),
             "reasoning_effort" => self.reasoning_effort.clone(),
+            "custom_preset" => self.custom_preset.clone(),
             "telemetry_enabled" => self.telemetry_enabled.map(|v| v.to_string()),
             _ => None,
         }
@@ -286,6 +292,9 @@ impl Settings {
         }
         if let Some(v) = &self.reasoning_effort {
             result.push(("reasoning_effort".into(), v.clone()));
+        }
+        if let Some(v) = &self.custom_preset {
+            result.push(("custom_preset".into(), v.clone()));
         }
         if let Some(v) = self.telemetry_enabled {
             result.push(("telemetry_enabled".into(), v.to_string()));
