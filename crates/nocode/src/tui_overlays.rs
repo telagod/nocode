@@ -4,9 +4,10 @@ use crate::command_registry::CommandRegistry;
 use crate::tui_widgets::OverlayBlock;
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::widgets::Widget;
 
 use crate::status_hud::StatusHud;
-use crate::tui_app::{Overlay, preset_label, provider_auth_help, provider_endpoint_help};
+use crate::tui_app::{Overlay, preset_label};
 
 /// Draw the active overlay on top of the main UI.
 pub(crate) fn draw_overlay(
@@ -225,6 +226,11 @@ Commands:
             frame.render_widget(overlay_w, area);
         }
         Overlay::Config(cs) => {
+            use ratatui::style::{Modifier, Style};
+            use ratatui::text::{Line, Span};
+            use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+
+            let theme = crate::tui_theme::default_theme();
             let crate::tui_app::ConfigState {
                 selected,
                 tier,
@@ -249,27 +255,42 @@ Commands:
                 model_suggestions,
                 preset_index,
             } = cs.as_ref();
-            let is_custom_provider = provider == "custom";
+
+            let is_custom = provider == "custom";
             let tier_label = match tier {
                 0 => "user",
                 1 => "project",
                 _ => "local",
             };
-            let active = |idx: usize, current: usize| if idx == current { ">" } else { " " };
-            let field_value =
-                |idx: usize, current: usize, editing: bool, input: &str, value: &str| {
-                    if idx == current && editing {
-                        format!("{input}_")
-                    } else if value.is_empty() {
-                        "(not set)".to_string()
-                    } else {
-                        value.to_string()
-                    }
-                };
-            let api_key_value = if *selected == 1 && *editing && !*filtering_models {
-                format!("{input}_")
+            let dim = Style::default().fg(theme.text_dim);
+            let normal = Style::default().fg(theme.text);
+            let highlight = Style::default()
+                .fg(theme.claude)
+                .add_modifier(Modifier::BOLD);
+            let section_style = Style::default().fg(theme.claude);
+            let sel_marker = |idx: usize| {
+                if idx == *selected {
+                    Span::styled("▸ ", highlight)
+                } else {
+                    Span::raw("  ")
+                }
+            };
+            let source_span = |src: &str| Span::styled(format!("  ({src})"), dim);
+            let field_val = |idx: usize, val: &str| -> Span {
+                if idx == *selected && *editing && !*filtering_models {
+                    Span::styled(format!("{input}█"), highlight)
+                } else if val.is_empty() {
+                    Span::styled("(not set)", dim)
+                } else {
+                    Span::styled(val.to_string(), normal)
+                }
+            };
+
+            // API key display
+            let key_display = if *selected == 1 && *editing && !*filtering_models {
+                Span::styled(format!("{input}█"), highlight)
             } else if api_key.is_empty() {
-                "(not set)".to_string()
+                Span::styled("(not set)", dim)
             } else {
                 let tail: String = api_key
                     .chars()
@@ -279,169 +300,205 @@ Commands:
                     .chars()
                     .rev()
                     .collect();
-                format!("configured (…{tail})")
+                Span::styled(format!("···{tail}"), normal)
             };
-            let filter_value = if *selected == 2 && *editing && *filtering_models {
-                format!("{input}_")
-            } else if model_filter.is_empty() {
-                "(none)".to_string()
-            } else {
-                model_filter.clone()
-            };
-            let mut lines = vec![
-                "Editable configuration".to_string(),
-                String::new(),
-                "[Provider]".to_string(),
-                format!(
-                    "{} Provider:     {} ({})",
-                    active(0, *selected),
-                    provider,
-                    provider_source
-                ),
-                String::new(),
-                "[Auth]".to_string(),
-                format!(
-                    "{} API Key:      {} ({})",
-                    active(1, *selected),
-                    api_key_value,
-                    api_key_source
-                ),
-                String::new(),
-                "[Model]".to_string(),
-                format!(
-                    "{} Model:        {} ({})",
-                    active(2, *selected),
-                    field_value(2, *selected, *editing && !*filtering_models, input, model),
-                    model_source
-                ),
-                format!("  Filter:       {filter_value}"),
-                String::new(),
-                if is_custom_provider {
-                    format!("[Endpoint — {} preset]", preset_label(*preset_index))
+
+            let mut lines: Vec<Line> = Vec::with_capacity(32);
+
+            // === Section: Provider + Auth ===
+            lines.push(Line::from(vec![
+                Span::styled("── Provider ", section_style),
+                Span::styled("─".repeat(20), dim),
+            ]));
+            lines.push(Line::from(vec![
+                sel_marker(0),
+                Span::styled("Provider  ", dim),
+                if 0 == *selected {
+                    Span::styled(provider.as_str(), highlight)
                 } else {
-                    "[Endpoint]".to_string()
+                    Span::styled(provider.as_str(), normal)
                 },
-            ];
-            if is_custom_provider {
-                lines.push(format!(
-                    "{} Custom URL:   {} ({})",
-                    active(3, *selected),
-                    field_value(3, *selected, *editing, input, custom_base_url),
-                    custom_base_url_source
-                ));
-                lines.push(format!(
-                    "{} API Format:   {} ({})",
-                    active(4, *selected),
-                    field_value(4, *selected, *editing, input, custom_api_format),
-                    custom_api_format_source
-                ));
+                source_span(provider_source),
+                if 0 == *selected {
+                    Span::styled("  ◀ ▶", dim)
+                } else {
+                    Span::raw("")
+                },
+            ]));
+            lines.push(Line::from(vec![
+                sel_marker(1),
+                Span::styled("API Key   ", dim),
+                key_display,
+                source_span(api_key_source),
+            ]));
+            lines.push(Line::raw(""));
+
+            // === Section: Endpoint (custom only) ===
+            if is_custom {
+                let preset_name = preset_label(*preset_index);
+                lines.push(Line::from(vec![
+                    Span::styled("── Endpoint ", section_style),
+                    Span::styled("─".repeat(10), dim),
+                    Span::styled(format!(" {preset_name} "), section_style),
+                    Span::styled("─".repeat(6), dim),
+                ]));
+                lines.push(Line::from(vec![
+                    sel_marker(3),
+                    Span::styled("Base URL  ", dim),
+                    field_val(3, custom_base_url),
+                    source_span(custom_base_url_source),
+                ]));
+                lines.push(Line::from(vec![
+                    sel_marker(4),
+                    Span::styled("Format    ", dim),
+                    field_val(4, custom_api_format),
+                    source_span(custom_api_format_source),
+                    if 4 == *selected {
+                        Span::styled("  ◀ ▶", dim)
+                    } else {
+                        Span::raw("")
+                    },
+                ]));
             } else {
-                lines.push("  Custom URL:   (set Provider to custom to edit)".to_string());
-                lines.push("  API Format:   (set Provider to custom to edit)".to_string());
+                lines.push(Line::from(vec![
+                    Span::styled("── Endpoint ", section_style),
+                    Span::styled("─".repeat(20), dim),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled("Set Provider to custom to configure", dim),
+                ]));
             }
-            lines.extend([
-                String::new(),
-                format!("Save tier: {tier_label}  [Tab to cycle]"),
-                String::new(),
-                "Controls: ↑/↓ navigate  ←/→ toggle  Enter/E edit  S save  T test  R refresh  Esc close".to_string(),
-                if is_custom_provider {
-                    "         P preset  / filter models  X reset field".to_string()
+            lines.push(Line::raw(""));
+
+            // === Section: Model list ===
+            let filter_info = if model_filter.is_empty() {
+                String::new()
+            } else {
+                format!(" /{model_filter}")
+            };
+            let count_info = if model_suggestions.is_empty() {
+                String::new()
+            } else {
+                format!(" {}/{}", suggestion_index + 1, model_suggestions.len())
+            };
+            lines.push(Line::from(vec![
+                Span::styled("── Model ", section_style),
+                Span::styled("─".repeat(8), dim),
+                Span::styled(filter_info, section_style),
+                Span::styled(" ─".to_string(), dim),
+                Span::styled(count_info, dim),
+                Span::styled(" ─", dim),
+            ]));
+
+            // Current model
+            lines.push(Line::from(vec![
+                sel_marker(2),
+                Span::styled("Current   ", dim),
+                if 2 == *selected && *editing && !*filtering_models {
+                    Span::styled(format!("{input}█"), highlight)
+                } else if model.is_empty() {
+                    Span::styled("(default)", dim)
                 } else {
-                    "         / filter models  X reset field".to_string()
+                    Span::styled(model.as_str(), normal)
                 },
-                format!("Auth hint: {}", if is_custom_provider {
-                    if let Some(idx) = preset_index {
-                        crate::tui_app::CUSTOM_PRESETS.get(*idx).map_or(
-                            provider_auth_help(provider, custom_api_format),
-                            |p| p.auth_hint,
-                        )
-                    } else {
-                        provider_auth_help(provider, custom_api_format)
-                    }
-                } else {
-                    provider_auth_help(provider, custom_api_format)
-                }),
-                if is_custom_provider {
-                    if let Some(idx) = preset_index {
-                        crate::tui_app::CUSTOM_PRESETS.get(*idx)
-                            .filter(|p| !p.env_key_name.is_empty())
-                            .map_or(String::new(), |p| format!("API key env: {}", p.env_key_name))
-                    } else {
-                        String::new()
-                    }
-                } else {
-                    String::new()
-                },
-                format!("Endpoint hint: {}", provider_endpoint_help(provider, custom_api_format)),
-                String::new(),
-                format!(
-                    "Provider preview: {}",
-                    if provider == "custom" {
-                        format!(
-                            "custom ({})",
-                            if custom_api_format.is_empty() {
-                                "openai"
-                            } else {
-                                custom_api_format
-                            }
-                        )
-                    } else if provider == "auto" {
-                        "auto".to_string()
-                    } else {
-                        provider.clone()
-                    }
-                ),
-                "Default launch mode: TUI".to_string(),
-            ]);
+                source_span(model_source),
+            ]));
+
+            // Model suggestions list
             if !model_suggestions.is_empty() {
-                lines.push(String::new());
-                lines.push(
-                    "Model suggestions (auto-loaded; ←/→ move, Home/End jump, PgUp/PgDn scroll, Enter/1-8 apply):"
-                        .to_string(),
-                );
+                let max_visible = 5;
                 let visible = model_suggestions
                     .iter()
                     .enumerate()
                     .skip(*suggestion_scroll)
-                    .take(8);
-                for (actual_idx, suggestion) in visible {
-                    let marker = if actual_idx == *suggestion_index {
-                        ">"
+                    .take(max_visible);
+                for (idx, suggestion) in visible {
+                    let is_current = suggestion == model;
+                    let is_selected = idx == *suggestion_index;
+                    let marker = if is_selected { "▸ " } else { "  " };
+                    let style = if is_selected {
+                        highlight
+                    } else if is_current {
+                        Style::default().fg(theme.success)
                     } else {
-                        " "
+                        normal
                     };
-                    lines.push(format!(
-                        "  {marker} {}. {suggestion}",
-                        actual_idx - *suggestion_scroll + 1
-                    ));
+                    let mut spans = vec![
+                        Span::raw("  "),
+                        Span::styled(marker, if is_selected { highlight } else { dim }),
+                        Span::styled(suggestion.as_str(), style),
+                    ];
+                    if is_current {
+                        spans.push(Span::styled(" ●", Style::default().fg(theme.success)));
+                    }
+                    lines.push(Line::from(spans));
                 }
-                let shown_end = (*suggestion_scroll + 8).min(model_suggestions.len());
-                lines.push(format!(
-                    "  showing {}-{} of {}",
-                    *suggestion_scroll + 1,
-                    shown_end,
-                    model_suggestions.len()
-                ));
-                if shown_end < model_suggestions.len() {
-                    lines.push(format!(
-                        "  ... and {} more",
-                        model_suggestions.len() - shown_end
-                    ));
-                }
+            } else if status.as_deref() == Some("Loading models...") {
+                lines.push(Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled("Loading...", dim),
+                ]));
             } else if !model_filter.is_empty() {
-                lines.push(String::new());
-                lines.push(format!("No model suggestions match filter: {model_filter}"));
+                lines.push(Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled("No matches", dim),
+                ]));
             }
-            if let Some(status) = status {
-                lines.push(String::new());
-                lines.push(format!("Status: {status}"));
+            lines.push(Line::raw(""));
+
+            // === Footer: controls + status ===
+            let mut ctrl_spans = vec![
+                Span::styled(format!("Save: {tier_label}"), normal),
+                Span::styled(" [Tab]  ", dim),
+                Span::styled("S", normal),
+                Span::styled(" save  ", dim),
+                Span::styled("T", normal),
+                Span::styled(" test  ", dim),
+                Span::styled("R", normal),
+                Span::styled(" refresh  ", dim),
+            ];
+            if is_custom {
+                ctrl_spans.push(Span::styled("P", normal));
+                ctrl_spans.push(Span::styled(" preset  ", dim));
             }
-            let config_text = lines.join(
-                "
-",
-            );
-            let overlay_w = OverlayBlock::new("Configuration", &config_text);
-            frame.render_widget(overlay_w, area);
+            ctrl_spans.push(Span::styled("/", normal));
+            ctrl_spans.push(Span::styled(" filter  ", dim));
+            ctrl_spans.push(Span::styled("Esc", normal));
+            ctrl_spans.push(Span::styled(" ×", dim));
+            lines.push(Line::from(ctrl_spans));
+
+            if let Some(status_msg) = status {
+                lines.push(Line::from(vec![
+                    Span::styled("Status: ", dim),
+                    Span::styled(status_msg.as_str(), normal),
+                ]));
+            }
+
+            // === Render ===
+            let w = (area.width * 4 / 5).max(20).min(area.width);
+            let content_h = lines.len() as u16 + 2; // +2 for border
+            let h = content_h.max(12).min(area.height * 3 / 5).min(area.height);
+            let x = area.x + (area.width.saturating_sub(w)) / 2;
+            let y = area.y + (area.height.saturating_sub(h)) / 2;
+            let overlay_area = ratatui::layout::Rect::new(x, y, w, h);
+
+            Clear.render(overlay_area, frame.buffer_mut());
+
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.claude))
+                .title(" Configuration ")
+                .title_style(
+                    Style::default()
+                        .fg(theme.claude)
+                        .add_modifier(Modifier::BOLD),
+                );
+            let inner = block.inner(overlay_area);
+            block.render(overlay_area, frame.buffer_mut());
+
+            let paragraph = Paragraph::new(lines);
+            paragraph.render(inner, frame.buffer_mut());
         }
         Overlay::Memory => {
             use nocode_core::storage::memory::MemoryStore;

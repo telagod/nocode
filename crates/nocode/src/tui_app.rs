@@ -1072,13 +1072,37 @@ impl TuiApp {
                             self.dirty = true;
                         }
                         KeyCode::Up if !*editing => {
-                            if *selected > 0 {
+                            if *selected == 2 && !model_suggestions.is_empty() {
+                                // Navigate model list
+                                if *suggestion_index > 0 {
+                                    *suggestion_index -= 1;
+                                    if *suggestion_index < *suggestion_scroll {
+                                        *suggestion_scroll = *suggestion_index;
+                                    }
+                                } else {
+                                    // At top of list, move to previous field
+                                    *selected -= 1;
+                                }
+                            } else if *selected > 0 {
                                 *selected -= 1;
                             }
                             self.dirty = true;
                         }
                         KeyCode::Down if !*editing => {
-                            if *selected + 1 < field_count {
+                            if *selected == 2 && !model_suggestions.is_empty() {
+                                // Navigate model list
+                                if *suggestion_index + 1 < model_suggestions.len() {
+                                    *suggestion_index += 1;
+                                    if *suggestion_index >= *suggestion_scroll + 5 {
+                                        *suggestion_scroll = suggestion_index.saturating_sub(4);
+                                    }
+                                } else {
+                                    // At bottom of list, move to next field
+                                    if *selected + 1 < field_count {
+                                        *selected += 1;
+                                    }
+                                }
+                            } else if *selected + 1 < field_count {
                                 *selected += 1;
                             }
                             self.dirty = true;
@@ -1197,8 +1221,8 @@ impl TuiApp {
                             if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
                         {
                             *suggestion_index = (*suggestion_index + 1) % model_suggestions.len();
-                            if *suggestion_index >= *suggestion_scroll + 8 {
-                                *suggestion_scroll = suggestion_index.saturating_sub(7);
+                            if *suggestion_index >= *suggestion_scroll + 5 {
+                                *suggestion_scroll = suggestion_index.saturating_sub(4);
                             }
                             *status = Some("Moved model suggestion selection".to_string());
                             self.dirty = true;
@@ -1206,8 +1230,8 @@ impl TuiApp {
                         KeyCode::PageUp
                             if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
                         {
-                            *suggestion_index = (*suggestion_index).saturating_sub(8);
-                            *suggestion_scroll = (*suggestion_scroll).saturating_sub(8);
+                            *suggestion_index = (*suggestion_index).saturating_sub(5);
+                            *suggestion_scroll = (*suggestion_scroll).saturating_sub(5);
                             *status = Some("Scrolled model suggestions up".to_string());
                             self.dirty = true;
                         }
@@ -1215,9 +1239,9 @@ impl TuiApp {
                             if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
                         {
                             let max_index = model_suggestions.len().saturating_sub(1);
-                            *suggestion_index = (*suggestion_index + 8).min(max_index);
+                            *suggestion_index = (*suggestion_index + 5).min(max_index);
                             *suggestion_scroll =
-                                (*suggestion_scroll + 8).min(max_index.saturating_sub(7));
+                                (*suggestion_scroll + 5).min(max_index.saturating_sub(4));
                             *status = Some("Scrolled model suggestions down".to_string());
                             self.dirty = true;
                         }
@@ -1234,7 +1258,7 @@ impl TuiApp {
                         {
                             let max_index = model_suggestions.len().saturating_sub(1);
                             *suggestion_index = max_index;
-                            *suggestion_scroll = max_index.saturating_sub(7);
+                            *suggestion_scroll = max_index.saturating_sub(4);
                             *status = Some("Jumped to last model suggestion".to_string());
                             self.dirty = true;
                         }
@@ -3466,52 +3490,6 @@ fn restore_api_key_from_source(
         return (value, "credentials".to_string());
     }
     (String::new(), "unset".to_string())
-}
-
-pub(crate) fn provider_auth_help(provider: &str, api_format: &str) -> &'static str {
-    use nocode_core::provider::types::ModelProvider;
-    match ModelProvider::parse(provider) {
-        Some(ModelProvider::Claude) => {
-            "Paste an Anthropic key; T verifies against the Messages API."
-        }
-        Some(ModelProvider::OpenAi) => {
-            "Paste an OpenAI key; R loads /v1/models and T verifies access."
-        }
-        Some(ModelProvider::Gemini) => {
-            "Paste a Gemini key; R loads v1beta/models and T checks API access."
-        }
-        Some(ModelProvider::Custom) => {
-            let normalized = nocode_core::config::settings::normalize_api_format(api_format);
-            match normalized {
-                "anthropic" => "Custom Anthropic-compatible: use an Anthropic-style key.",
-                "google" => "Custom Google-compatible: use a Gemini-style key.",
-                "openai-chat" => "Custom OpenAI Chat Completions: use an OpenAI-style key.",
-                _ => "Custom OpenAI Responses API: use an OpenAI-style key.",
-            }
-        }
-        None => "Auto mode inherits whichever configured provider is available first.",
-    }
-}
-
-pub(crate) fn provider_endpoint_help(provider: &str, api_format: &str) -> &'static str {
-    use nocode_core::provider::types::ModelProvider;
-    match ModelProvider::parse(provider) {
-        Some(ModelProvider::Custom) => {
-            let normalized = nocode_core::config::settings::normalize_api_format(api_format);
-            match normalized {
-                "anthropic" => "Endpoint: base_url + /v1/messages",
-                "openai-chat" => "Endpoint: base_url + /v1/chat/completions",
-                "google" => "Endpoint: base_url + /v1beta/models/{model}:generateContent",
-                _ => "Endpoint: base_url + /v1/responses",
-            }
-        }
-        Some(ModelProvider::Claude) => "Official Anthropic endpoint: api.anthropic.com/v1/messages",
-        Some(ModelProvider::OpenAi) => "Official OpenAI endpoint: api.openai.com/v1/responses",
-        Some(ModelProvider::Gemini) => {
-            "Official Gemini endpoint: generativelanguage.googleapis.com"
-        }
-        None => "Auto mode uses the first available configured provider endpoint.",
-    }
 }
 
 fn setting_source_label(
