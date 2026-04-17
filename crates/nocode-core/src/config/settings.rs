@@ -35,35 +35,35 @@ impl SettingsTier {
 /// Runtime configuration merged from 3 tiers.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Settings {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_mode: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_base_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_api_format: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
     /// MCP servers — merged key-by-key across tiers.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub mcp_servers: HashMap<String, McpServerConfig>,
     /// Hooks — replaced wholesale by later tier.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hooks: Option<HookConfig>,
     /// Sandbox — replaced wholesale by later tier.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox: Option<SandboxConfig>,
     /// Telemetry opt-in/out (default: not set → use feature flag).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telemetry_enabled: Option<bool>,
 }
 
