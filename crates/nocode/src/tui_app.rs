@@ -2441,6 +2441,17 @@ impl TuiApp {
         const MAX_DIMENSION: usize = 4096;
         const MAX_BYTES: usize = 20 * 1024 * 1024; // 20MB
 
+        // Check if current model supports vision
+        let caps = nocode_core::provider::model_caps::lookup(&self.hud.model_name);
+        if !caps.supports_vision {
+            self.push_system(&format!(
+                "Model '{}' does not support images.",
+                self.hud.model_name
+            ));
+            self.dirty = true;
+            return true;
+        }
+
         let Ok(mut clipboard) = arboard::Clipboard::new() else {
             return false;
         };

@@ -369,6 +369,39 @@ fn cmd_doctor(app: &mut TuiApp, model: &str) {
         std::env::consts::ARCH
     ));
     lines.push(format!("Model: {model}"));
+
+    // Model capabilities
+    {
+        let caps = nocode_core::provider::model_caps::lookup(model);
+        let ctx = if caps.context_window >= 1_000_000 {
+            format!("{}M", caps.context_window / 1_000_000)
+        } else {
+            format!("{}K", caps.context_window / 1_000)
+        };
+        let thinking = if caps.supports_thinking {
+            caps.default_thinking_budget
+                .map_or("yes".to_string(), |b| format!("yes ({b} budget)"))
+        } else {
+            "no".to_string()
+        };
+        let vision = if caps.supports_vision { "yes" } else { "no" };
+        let tools = if caps.supports_tool_use { "yes" } else { "no" };
+        let cache_status = if nocode_core::provider::model_caps::cache_loaded() {
+            format!(
+                "{} models",
+                nocode_core::provider::model_caps::cache_count()
+            )
+        } else {
+            "static fallback".to_string()
+        };
+        lines.push(format!(
+            "  Context: {ctx} | Max output: {} | Thinking: {thinking}",
+            caps.max_output_tokens
+        ));
+        lines.push(format!(
+            "  Vision: {vision} | Tools: {tools} | Registry: {cache_status}"
+        ));
+    }
     lines.push(String::new());
 
     // API keys
