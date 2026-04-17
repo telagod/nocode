@@ -30,7 +30,10 @@ mod tui_theme;
 #[allow(dead_code)]
 mod tui_widgets;
 
-use nocode_core::config::settings::{Settings, SettingsTier};
+mod login;
+mod model_fetch;
+
+use nocode_core::config::settings::Settings;
 use nocode_core::message::Message;
 use nocode_core::prompt::assembly::{self, TruncationBudget};
 use nocode_core::provider::Provider;
@@ -80,9 +83,15 @@ fn main() {
         creds.load_into_env();
     }
 
+    // --login: interactive provider configuration
+    if args.iter().any(|a| a == "--login") {
+        login::run_login(&cwd);
+        return;
+    }
+
     // Onboarding: check if any API key is available
     if !has_any_api_key() && !args.iter().any(|a| a == "--status" || a == "--help") {
-        run_onboarding(&cwd);
+        login::run_login(&cwd);
         settings = Settings::load_merged(&cwd);
     }
 
@@ -216,139 +225,6 @@ fn has_any_api_key() -> bool {
         || env::var("OPENAI_API_KEY").is_ok()
         || env::var("GEMINI_API_KEY").is_ok()
         || env::var("NOCODE_MODEL_PROVIDER").is_ok()
-}
-
-fn prompt_line(prompt: &str) -> Option<String> {
-    use std::io::{self, Write};
-
-    print!("{prompt}");
-    let _ = io::stdout().flush();
-    let mut value = String::new();
-    if io::stdin().read_line(&mut value).is_err() {
-        return None;
-    }
-    Some(value.trim().to_string())
-}
-
-fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
-    let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
-    let mut store =
-        nocode_core::storage::credentials::CredentialStore::load(&cred_path).unwrap_or_default();
-    store.set_key(provider, key);
-    store
-        .save(&cred_path)
-        .map_err(|e| format!("Failed to save credentials: {e}"))?;
-    println!("  Key saved to {}", cred_path.display());
-    Ok(())
-}
-
-fn run_onboarding(cwd: &str) {
-    println!();
-    println!("  Welcome to nocode v{}!", env!("CARGO_PKG_VERSION"));
-    println!();
-    println!("  No API key detected. Let's set one up.");
-    println!();
-    println!("  Which provider?");
-    println!("    1) Anthropic (Claude)");
-    println!("    2) OpenAI");
-    println!("    3) Google (Gemini)");
-    println!("    4) Custom (OpenAI-compatible)");
-    println!("    5) Custom (Anthropic-compatible)");
-    println!("    6) Skip (set env vars manually)");
-    println!();
-    let Some(choice) = prompt_line("  Choice [1-6]: ") else {
-        return;
-    };
-
-    let (provider, env_var, prompt_text, custom_format) = match choice.trim() {
-        "1" => (
-            "anthropic",
-            "ANTHROPIC_API_KEY",
-            "Anthropic API key (sk-ant-...)",
-            None,
-        ),
-        "2" => ("openai", "OPENAI_API_KEY", "OpenAI API key (sk-...)", None),
-        "3" => ("gemini", "GEMINI_API_KEY", "Gemini API key", None),
-        "4" => (
-            "openai",
-            "OPENAI_API_KEY",
-            "API key for your OpenAI-compatible endpoint",
-            Some("openai"),
-        ),
-        "5" => (
-            "anthropic",
-            "ANTHROPIC_API_KEY",
-            "API key for your Anthropic-compatible endpoint",
-            Some("anthropic"),
-        ),
-        _ => {
-            println!();
-            println!("  Set your API key via environment variable:");
-            println!("    export ANTHROPIC_API_KEY=sk-ant-...");
-            println!("    export OPENAI_API_KEY=sk-...");
-            println!("    export GEMINI_API_KEY=...");
-            println!("    export NOCODE_MODEL_PROVIDER=custom");
-            println!("    export NOCODE_CUSTOM_BASE_URL=https://your-endpoint");
-            println!("    export NOCODE_CUSTOM_API_FORMAT=openai");
-            println!();
-            return;
-        }
-    };
-
-    let Some(key) = prompt_line(&format!("  {prompt_text}: ")) else {
-        return;
-    };
-    if key.is_empty() {
-        println!("  No key entered. Skipping.");
-        return;
-    }
-
-    if let Err(e) = save_api_key(provider, &key) {
-        eprintln!("  {e}");
-        return;
-    }
-
-    // Set in current process
-    // SAFETY: called during single-threaded startup
-    unsafe {
-        env::set_var(env_var, &key);
-    }
-
-    if let Some(format) = custom_format {
-        let Some(base_url) = prompt_line("  Base URL: ") else {
-            return;
-        };
-        if base_url.is_empty() {
-            println!("  Base URL is required for custom providers.");
-            return;
-        }
-
-        let model = prompt_line("  Model name (optional): ").unwrap_or_default();
-        let mut settings = Settings::load_merged(cwd);
-        settings.custom_base_url = Some(base_url.clone());
-        settings.custom_api_format = Some(format.to_string());
-        if !model.is_empty() {
-            settings.model = Some(model.clone());
-        }
-
-        if let Err(e) = settings.save_tier(SettingsTier::User, cwd) {
-            eprintln!("  Failed to save custom settings: {e}");
-            return;
-        }
-
-        // SAFETY: called during single-threaded startup
-        unsafe {
-            env::set_var("NOCODE_MODEL_PROVIDER", "custom");
-            env::set_var("NOCODE_CUSTOM_BASE_URL", &base_url);
-            env::set_var("NOCODE_CUSTOM_API_FORMAT", format);
-            if !model.is_empty() {
-                env::set_var("NOCODE_MODEL", &model);
-            }
-        }
-        println!("  Custom endpoint configured: {base_url}");
-    }
-    println!("  {} configured. Ready to go!", provider);
-    println!();
 }
 
 fn resolve_provider(settings: &Settings) -> ModelProvider {
@@ -1098,6 +974,7 @@ fn print_help() {
          Modes:\n\
          \x20 --repl                    Interactive REPL mode\n\
          \x20 --tui                     Terminal UI mode (default)\n\
+         \x20 --login                   Interactive provider configuration\n\
          \x20 --status                  System diagnostics\n\
          \x20 --bridge-once \"prompt\"    Single-turn local execution\n\
          \x20 --bridge-remote-once \"p\"  Single-turn HTTP bridge\n\

@@ -3174,6 +3174,14 @@ pub(crate) fn run_app_loop(
         }
     }
 
+    // Show resume hint if session has messages
+    if !messages.is_empty() && !app.hud.session_id.is_empty() {
+        eprintln!(
+            "\n  To resume this session: nocode --resume {}\n",
+            app.hud.session_id
+        );
+    }
+
     Ok(())
 }
 
@@ -3329,15 +3337,7 @@ fn load_credential_store() -> nocode_core::storage::credentials::CredentialStore
 }
 
 fn apply_model_filter(all_models: &[String], filter: &str) -> Vec<String> {
-    let needle = filter.trim().to_ascii_lowercase();
-    if needle.is_empty() {
-        return all_models.to_vec();
-    }
-    all_models
-        .iter()
-        .filter(|model| model.to_ascii_lowercase().contains(&needle))
-        .cloned()
-        .collect()
+    crate::model_fetch::apply_model_filter(all_models, filter)
 }
 
 fn apply_api_key_to_env(
@@ -3530,179 +3530,15 @@ fn fetch_model_suggestions(
     custom_base_url: &str,
     custom_api_format: &str,
 ) -> Result<Vec<String>, String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(3))
-        .build()
-        .map_err(|e| format!("HTTP client build failed: {e}"))?;
-
-    let format = if custom_api_format.is_empty() {
-        "openai-responses"
-    } else {
-        nocode_core::config::settings::normalize_api_format(custom_api_format)
-    };
-
-    if provider.eq_ignore_ascii_case("custom") || !custom_base_url.is_empty() {
-        let normalized = format;
-        if normalized == "openai-responses" || normalized == "openai-chat" {
-            let key = std::env::var("NOCODE_CUSTOM_API_KEY")
-                .or_else(|_| std::env::var("OPENAI_API_KEY"))
-                .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
-                .map_err(|_| "Set an API key first".to_string())?;
-            let body = client
-                .get(format!(
-                    "{}/v1/models",
-                    custom_base_url.trim_end_matches('/')
-                ))
-                .bearer_auth(key)
-                .send()
-                .map_err(|e| format!("Request failed: {e}"))?
-                .text()
-                .map_err(|e| format!("Read failed: {e}"))?;
-            let json: serde_json::Value =
-                serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))?;
-            let mut models: Vec<String> = json["data"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|item| item["id"].as_str().map(ToString::to_string))
-                .collect();
-            models.sort();
-            models.dedup();
-            return Ok(models);
-        }
-
-        if normalized == "anthropic" {
-            let key = std::env::var("NOCODE_CUSTOM_API_KEY")
-                .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
-                .map_err(|_| "Set ANTHROPIC_API_KEY first".to_string())?;
-            let body = client
-                .get(format!(
-                    "{}/v1/models",
-                    custom_base_url.trim_end_matches('/')
-                ))
-                .header("x-api-key", key)
-                .header("anthropic-version", "2024-06-01")
-                .send()
-                .map_err(|e| format!("Request failed: {e}"))?
-                .text()
-                .map_err(|e| format!("Read failed: {e}"))?;
-            let json: serde_json::Value =
-                serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))?;
-            let mut models: Vec<String> = json["data"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|item| item["id"].as_str().map(ToString::to_string))
-                .collect();
-            models.sort();
-            models.dedup();
-            return Ok(models);
-        }
-
-        return Err(format!("Unsupported custom API format: {normalized}"));
-    }
-
-    if provider.eq_ignore_ascii_case("openai") {
-        let key = std::env::var("OPENAI_API_KEY").map_err(|e| e.to_string())?;
-        let body = client
-            .get("https://api.openai.com/v1/models")
-            .bearer_auth(key)
-            .send()
-            .map_err(|e| format!("Request failed: {e}"))?
-            .text()
-            .map_err(|e| format!("Read failed: {e}"))?;
-        let json: serde_json::Value =
-            serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))?;
-        let mut models: Vec<String> = json["data"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|item| item["id"].as_str().map(ToString::to_string))
-            .collect();
-        models.sort();
-        models.dedup();
-        return Ok(models);
-    }
-
-    if provider.eq_ignore_ascii_case("gemini") || provider.eq_ignore_ascii_case("google") {
-        let key = std::env::var("GEMINI_API_KEY").map_err(|e| e.to_string())?;
-        let body = client
-            .get(format!(
-                "https://generativelanguage.googleapis.com/v1beta/models?key={key}"
-            ))
-            .send()
-            .map_err(|e| format!("Request failed: {e}"))?
-            .text()
-            .map_err(|e| format!("Read failed: {e}"))?;
-        let json: serde_json::Value =
-            serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))?;
-        let mut models: Vec<String> = json["models"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|item| {
-                item["name"]
-                    .as_str()
-                    .map(|s| s.trim_start_matches("models/").to_string())
-            })
-            .collect();
-        models.sort();
-        models.dedup();
-        return Ok(models);
-    }
-
-    if provider.eq_ignore_ascii_case("claude") || provider.eq_ignore_ascii_case("anthropic") {
-        let key = std::env::var("ANTHROPIC_API_KEY").map_err(|e| e.to_string())?;
-        let body = client
-            .get("https://api.anthropic.com/v1/models")
-            .header("x-api-key", key)
-            .header("anthropic-version", "2024-06-01")
-            .send()
-            .map_err(|e| format!("Request failed: {e}"))?
-            .text()
-            .map_err(|e| format!("Read failed: {e}"))?;
-        let json: serde_json::Value =
-            serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))?;
-        let mut models: Vec<String> = json["data"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|item| item["id"].as_str().map(ToString::to_string))
-            .collect();
-        models.sort();
-        models.dedup();
-        return Ok(models);
-    }
-
-    if std::env::var("OPENAI_API_KEY").is_ok() {
-        return fetch_model_suggestions("openai", custom_base_url, custom_api_format);
-    }
-    if std::env::var("GEMINI_API_KEY").is_ok() {
-        return fetch_model_suggestions("gemini", custom_base_url, custom_api_format);
-    }
-    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-        return fetch_model_suggestions("claude", custom_base_url, custom_api_format);
-    }
-
-    Err("No provider credentials found to fetch models".to_string())
+    crate::model_fetch::fetch_model_suggestions(provider, custom_base_url, custom_api_format)
 }
 
-/// Spawn a background thread to fetch model suggestions, returning a Receiver.
-/// Use this instead of calling `fetch_model_suggestions` directly on the UI thread.
 fn spawn_model_fetch_bg(
     provider: &str,
     custom_base_url: &str,
     custom_api_format: &str,
 ) -> std::sync::mpsc::Receiver<Result<Vec<String>, String>> {
-    let provider = provider.to_string();
-    let base_url = custom_base_url.to_string();
-    let api_format = custom_api_format.to_string();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let result = fetch_model_suggestions(&provider, &base_url, &api_format);
-        let _ = tx.send(result);
-    });
-    rx
+    crate::model_fetch::spawn_model_fetch_bg(provider, custom_base_url, custom_api_format)
 }
 
 fn prev_word_boundary(s: &str, pos: usize) -> usize {
