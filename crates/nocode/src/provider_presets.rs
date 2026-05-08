@@ -8,7 +8,6 @@ pub struct ProviderPreset {
     pub credential_slot: &'static str,
     pub default_model: &'static str,
     pub provider_type: &'static str,
-    pub requires_api_key: bool,
 }
 
 pub static ALL_PRESETS: &[ProviderPreset] = &[
@@ -22,7 +21,6 @@ pub static ALL_PRESETS: &[ProviderPreset] = &[
         credential_slot: "anthropic",
         default_model: "claude-sonnet-4-20250514",
         provider_type: "anthropic",
-        requires_api_key: true,
     },
     ProviderPreset {
         name: "OpenAI",
@@ -33,7 +31,6 @@ pub static ALL_PRESETS: &[ProviderPreset] = &[
         credential_slot: "openai",
         default_model: "gpt-4.1",
         provider_type: "openai",
-        requires_api_key: true,
     },
     ProviderPreset {
         name: "Gemini",
@@ -44,7 +41,6 @@ pub static ALL_PRESETS: &[ProviderPreset] = &[
         credential_slot: "gemini",
         default_model: "gemini-2.5-pro",
         provider_type: "gemini",
-        requires_api_key: true,
     },
     // --- Cloud API proxies ---
     ProviderPreset {
@@ -56,7 +52,6 @@ pub static ALL_PRESETS: &[ProviderPreset] = &[
         credential_slot: "openrouter",
         default_model: "anthropic/claude-sonnet-4",
         provider_type: "custom",
-        requires_api_key: true,
     },
     ProviderPreset {
         name: "Together",
@@ -67,7 +62,6 @@ pub static ALL_PRESETS: &[ProviderPreset] = &[
         credential_slot: "together",
         default_model: "meta-llama/Llama-3-70b-chat-hf",
         provider_type: "custom",
-        requires_api_key: true,
     },
     ProviderPreset {
         name: "Groq",
@@ -78,7 +72,6 @@ pub static ALL_PRESETS: &[ProviderPreset] = &[
         credential_slot: "groq",
         default_model: "llama-3.3-70b-versatile",
         provider_type: "custom",
-        requires_api_key: true,
     },
     ProviderPreset {
         name: "Fireworks",
@@ -89,7 +82,6 @@ pub static ALL_PRESETS: &[ProviderPreset] = &[
         credential_slot: "fireworks",
         default_model: "accounts/fireworks/models/llama-v3p1-70b-instruct",
         provider_type: "custom",
-        requires_api_key: true,
     },
     ProviderPreset {
         name: "DeepSeek",
@@ -100,7 +92,6 @@ pub static ALL_PRESETS: &[ProviderPreset] = &[
         credential_slot: "deepseek",
         default_model: "deepseek-chat",
         provider_type: "custom",
-        requires_api_key: true,
     },
     ProviderPreset {
         name: "Mistral",
@@ -111,7 +102,6 @@ pub static ALL_PRESETS: &[ProviderPreset] = &[
         credential_slot: "mistral",
         default_model: "mistral-large-latest",
         provider_type: "custom",
-        requires_api_key: true,
     },
     // --- Local inference ---
     ProviderPreset {
@@ -123,7 +113,6 @@ pub static ALL_PRESETS: &[ProviderPreset] = &[
         credential_slot: "ollama",
         default_model: "",
         provider_type: "custom",
-        requires_api_key: false,
     },
     ProviderPreset {
         name: "vLLM",
@@ -134,7 +123,6 @@ pub static ALL_PRESETS: &[ProviderPreset] = &[
         credential_slot: "vllm",
         default_model: "",
         provider_type: "custom",
-        requires_api_key: true,
     },
     ProviderPreset {
         name: "LiteLLM",
@@ -145,7 +133,6 @@ pub static ALL_PRESETS: &[ProviderPreset] = &[
         credential_slot: "litellm",
         default_model: "",
         provider_type: "custom",
-        requires_api_key: true,
     },
     ProviderPreset {
         name: "LocalAI",
@@ -156,7 +143,6 @@ pub static ALL_PRESETS: &[ProviderPreset] = &[
         credential_slot: "localai",
         default_model: "",
         provider_type: "custom",
-        requires_api_key: false,
     },
     ProviderPreset {
         name: "LM Studio",
@@ -167,7 +153,6 @@ pub static ALL_PRESETS: &[ProviderPreset] = &[
         credential_slot: "lmstudio",
         default_model: "",
         provider_type: "custom",
-        requires_api_key: false,
     },
 ];
 
@@ -244,24 +229,6 @@ mod tests {
         assert_eq!(preset_env_key("LocalAI"), Some(""));
         assert_eq!(preset_env_key("LM Studio"), Some(""));
         assert_eq!(preset_env_key("nonexistent"), None);
-    }
-
-    #[test]
-    fn requires_api_key_field_correct() {
-        let ollama = find_preset_by_name("Ollama").unwrap();
-        assert!(!ollama.requires_api_key);
-
-        let localai = find_preset_by_name("LocalAI").unwrap();
-        assert!(!localai.requires_api_key);
-
-        let lmstudio = find_preset_by_name("LM Studio").unwrap();
-        assert!(!lmstudio.requires_api_key);
-
-        let anthropic = find_preset_by_name("Anthropic").unwrap();
-        assert!(anthropic.requires_api_key);
-
-        let openrouter = find_preset_by_name("OpenRouter").unwrap();
-        assert!(openrouter.requires_api_key);
     }
 
     #[test]

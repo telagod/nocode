@@ -771,7 +771,7 @@ impl TuiApp {
                     config.handle_key(key);
                     if config.saved {
                         // Save the configuration
-                        save_config_from_flow(&config.flow);
+                        save_config_from_flow(&config.form);
                         self.config_overlay = None;
                         self.overlay = Overlay::None;
                         self.push_system("Configuration saved. Restart nocode to apply changes.");
@@ -1543,7 +1543,7 @@ impl TuiApp {
         if matches!(self.overlay, Overlay::Config) {
             // Paste into config overlay input
             if let Some(ref mut config) = self.config_overlay {
-                config.input.push_str(text);
+                config.form.edit_buffer.push_str(text);
             }
             self.dirty = true;
             return;
@@ -2310,7 +2310,7 @@ fn encode_rgba_to_png(
     Ok(())
 }
 
-fn save_config_from_flow(flow: &crate::config_flow::ConfigFlowState) {
+fn save_config_from_flow(flow: &crate::config_flow::ConfigFormState) {
     use nocode_core::config::settings::{Settings, SettingsTier};
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().into_owned())
