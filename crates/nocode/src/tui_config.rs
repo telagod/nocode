@@ -152,12 +152,8 @@ impl TuiConfigOverlay {
                         };
                     }
                 }
-                ConfigField::Provider => {
-                    self.form.cycle_provider_forward();
-                }
-                ConfigField::Format => {
-                    self.form.cycle_format_forward();
-                }
+                // Provider and Format only cycle via ←→
+                ConfigField::Provider | ConfigField::Format => {}
             },
 
             // Shortcuts
@@ -339,7 +335,11 @@ impl TuiConfigOverlay {
         let mut lines: Vec<Line> = Vec::with_capacity(32);
 
         let sel = |field: ConfigField| -> Span {
-            if self.form.focus == field && matches!(self.form.mode, EditMode::Normal) {
+            let focused = self.form.focus == field;
+            let editing = matches!(&self.form.mode, EditMode::EditingText(f) if *f == field);
+            if editing {
+                Span::styled("● ", highlight)
+            } else if focused && matches!(self.form.mode, EditMode::Normal) {
                 Span::styled("▸ ", highlight)
             } else {
                 Span::raw("  ")
@@ -374,19 +374,29 @@ impl TuiConfigOverlay {
 
         // API Key
         let api_key_display_str = self.form.display_api_key();
-        let key_display = if matches!(self.form.mode, EditMode::EditingText(ConfigField::ApiKey)) {
-            Span::styled(
-                format!("{}█", mask_input(&self.form.edit_buffer)),
-                highlight,
-            )
+        let editing_key = matches!(self.form.mode, EditMode::EditingText(ConfigField::ApiKey));
+        let key_display = if editing_key {
+            if self.form.edit_buffer.is_empty() {
+                Span::styled("█ paste or type new key", highlight)
+            } else {
+                Span::styled(
+                    format!("{}█", mask_input(&self.form.edit_buffer)),
+                    highlight,
+                )
+            }
         } else {
             field_display(&api_key_display_str, normal, dim)
+        };
+        let key_source = if editing_key {
+            Span::raw("")
+        } else {
+            source_span(&self.form.api_key_source)
         };
         lines.push(Line::from(vec![
             sel(ConfigField::ApiKey),
             Span::styled("API Key   ", dim),
             key_display,
-            source_span(&self.form.api_key_source),
+            key_source,
         ]));
         lines.push(Line::raw(""));
 
@@ -542,18 +552,18 @@ impl TuiConfigOverlay {
 
         // ── Footer ───────────────────────────────
         let ctrl_spans = vec![
+            Span::styled("↑↓", normal),
+            Span::styled(" nav  ", dim),
+            Span::styled("◀▶", normal),
+            Span::styled(" cycle  ", dim),
+            Span::styled("Enter", normal),
+            Span::styled(" edit  ", dim),
             Span::styled("S", normal),
             Span::styled(" save  ", dim),
             Span::styled("T", normal),
             Span::styled(" test  ", dim),
             Span::styled("R", normal),
-            Span::styled(" refresh  ", dim),
-            Span::styled("/", normal),
-            Span::styled(" filter  ", dim),
-            Span::styled("m", normal),
-            Span::styled(" manual  ", dim),
-            Span::styled("Enter", normal),
-            Span::styled(" edit  ", dim),
+            Span::styled(" fetch  ", dim),
             Span::styled("Esc", normal),
             Span::styled(" ×", dim),
         ];
