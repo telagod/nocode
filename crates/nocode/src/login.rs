@@ -20,6 +20,12 @@ struct LoginProvider {
     provider_type: &'static str,
 }
 
+/// Mutable overrides for base_url and api_format during login flow.
+struct EndpointOverride {
+    base_url: String,
+    api_format: String,
+}
+
 fn build_provider_list() -> Vec<LoginProvider> {
     ALL_PRESETS
         .iter()
@@ -150,21 +156,133 @@ fn step_api_key(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<Str
     }
 }
 
+fn step_endpoint(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<EndpointOverride> {
+    let formats = ["openai-responses", "openai-chat", "anthropic", "google"];
+    let mut base_url = provider.base_url.to_string();
+    let mut api_format = provider.api_format.to_string();
+    let mut editing_url = false;
+    let mut editing_fmt = false;
+    let mut url_buf = String::new();
+    let mut fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
+
+    loop {
+        clear_screen(stdout);
+        draw_header(stdout, "Step 2b: Endpoint (Enter to keep defaults)");
+        let _ = writeln!(stdout, "  Provider: {}\r", provider.name);
+        let _ = writeln!(stdout, "\r");
+
+        if editing_url {
+            let display = if url_buf.is_empty() {
+                base_url.clone()
+            } else {
+                url_buf.clone()
+            };
+            let _ = writeln!(stdout, "  Base URL: {display}█\r");
+            let _ = writeln!(stdout, "  Format:   {api_format}\r");
+            let _ = writeln!(stdout, "\r\n  Type URL, Enter confirm, Esc cancel\r");
+        } else if editing_fmt {
+            let _ = writeln!(stdout, "  Base URL: {base_url}\r");
+            let _ = writeln!(stdout, "  Format:   ◂ {} ▸\r", formats[fmt_idx]);
+            let _ = writeln!(stdout, "\r\n  ←/→ cycle  Enter confirm  Esc cancel\r");
+        } else {
+            let _ = writeln!(stdout, "  Base URL: {base_url}\r");
+            let _ = writeln!(stdout, "  Format:   {api_format}\r");
+            let _ = writeln!(stdout, "\r");
+            let _ = writeln!(
+                stdout,
+                "  [u] edit URL  [f] edit format  Enter next  Esc back\r"
+            );
+        }
+        let _ = stdout.flush();
+
+        let key = read_key()?;
+
+        if editing_url {
+            match key.code {
+                KeyCode::Enter => {
+                    let trimmed = url_buf.trim().trim_end_matches('/').to_string();
+                    if !trimmed.is_empty() {
+                        base_url = trimmed;
+                    }
+                    url_buf.clear();
+                    editing_url = false;
+                }
+                KeyCode::Esc => {
+                    url_buf.clear();
+                    editing_url = false;
+                }
+                KeyCode::Backspace => {
+                    url_buf.pop();
+                }
+                KeyCode::Char(c) => url_buf.push(c),
+                _ => {}
+            }
+        } else if editing_fmt {
+            match key.code {
+                KeyCode::Left => {
+                    fmt_idx = if fmt_idx == 0 {
+                        formats.len() - 1
+                    } else {
+                        fmt_idx - 1
+                    };
+                }
+                KeyCode::Right => {
+                    fmt_idx = (fmt_idx + 1) % formats.len();
+                }
+                KeyCode::Enter => {
+                    api_format = formats[fmt_idx].to_string();
+                    editing_fmt = false;
+                }
+                KeyCode::Esc => {
+                    fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
+                    editing_fmt = false;
+                }
+                _ => {}
+            }
+        } else {
+            match key.code {
+                KeyCode::Char('u') | KeyCode::Char('U') => {
+                    editing_url = true;
+                    url_buf.clear();
+                }
+                KeyCode::Char('f') | KeyCode::Char('F') => {
+                    editing_fmt = true;
+                    fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
+                }
+                KeyCode::Enter => {
+                    return Some(EndpointOverride {
+                        base_url,
+                        api_format,
+                    });
+                }
+                KeyCode::Esc => return None,
+                _ => {}
+            }
+        }
+    }
+}
+
 fn step_select_model(
     stdout: &mut io::Stdout,
     provider: &LoginProvider,
     api_key: &str,
+    endpoint: &EndpointOverride,
 ) -> Option<String> {
     clear_screen(stdout);
     draw_header(stdout, "Step 3: Select Model");
     let _ = writeln!(stdout, "  Fetching models from {}...\r", provider.name);
     let _ = stdout.flush();
 
-    let is_native = matches!(provider.provider_type, "anthropic" | "openai" | "gemini");
+    let is_native = matches!(provider.provider_type, "anthropic" | "openai" | "gemini")
+        && endpoint.base_url == provider.base_url;
     let (prov_str, base, fmt) = if is_native {
         (provider.provider_type, "", "")
     } else {
-        ("custom", provider.base_url, provider.api_format)
+        (
+            "custom",
+            endpoint.base_url.as_str(),
+            endpoint.api_format.as_str(),
+        )
     };
 
     if !api_key.is_empty() && !provider.env_key_name.is_empty() {
@@ -274,14 +392,24 @@ fn step_confirm_save(
     provider: &LoginProvider,
     api_key: &str,
     model: &str,
+    endpoint: &EndpointOverride,
     cwd: &str,
 ) -> bool {
+    let url_changed = endpoint.base_url != provider.base_url;
+    let fmt_changed = endpoint.api_format != provider.api_format;
+
     clear_screen(stdout);
     draw_header(stdout, "Step 4: Confirm & Save");
     let _ = writeln!(stdout, "  Provider:  {}\r", provider.name);
     let _ = writeln!(stdout, "  Model:     {model}\r");
     if !api_key.is_empty() {
         let _ = writeln!(stdout, "  Key:       {}\r", mask_key(api_key));
+    }
+    if url_changed {
+        let _ = writeln!(stdout, "  Base URL:  {}\r", endpoint.base_url);
+    }
+    if fmt_changed {
+        let _ = writeln!(stdout, "  Format:    {}\r", endpoint.api_format);
     }
     let _ = writeln!(stdout, "\r");
     let _ = writeln!(stdout, "  Enter save  Esc cancel\r");
@@ -310,7 +438,9 @@ fn step_confirm_save(
                 // Save settings
                 use nocode_core::config::settings::{Settings, SettingsTier};
                 let _ = Settings::persist_key_value("model", Some(model), SettingsTier::User, cwd);
-                if provider.provider_type == "custom" {
+
+                let uses_custom = provider.provider_type == "custom" || url_changed || fmt_changed;
+                if uses_custom {
                     let _ = Settings::persist_key_value(
                         "model_provider",
                         Some("custom"),
@@ -319,13 +449,13 @@ fn step_confirm_save(
                     );
                     let _ = Settings::persist_key_value(
                         "custom_base_url",
-                        Some(provider.base_url),
+                        Some(&endpoint.base_url),
                         SettingsTier::User,
                         cwd,
                     );
                     let _ = Settings::persist_key_value(
                         "custom_api_format",
-                        Some(provider.api_format),
+                        Some(&endpoint.api_format),
                         SettingsTier::User,
                         cwd,
                     );
@@ -356,6 +486,9 @@ fn step_confirm_save(
                 draw_header(stdout, "Done!");
                 let _ = writeln!(stdout, "  Provider:  {}\r", provider.name);
                 let _ = writeln!(stdout, "  Model:     {model}\r");
+                if url_changed {
+                    let _ = writeln!(stdout, "  Base URL:  {}\r", endpoint.base_url);
+                }
                 let _ = writeln!(stdout, "  Saved to ~/.nocode/settings.json\r");
                 let _ = writeln!(stdout, "\r");
                 let _ = writeln!(stdout, "  Run `nocode` to start.\r");
@@ -397,12 +530,18 @@ fn run_login_inner(stdout: &mut io::Stdout, providers: &[LoginProvider], cwd: &s
         None => return false,
     };
 
+    // Step 2b: Endpoint (base URL + format)
+    let endpoint = match step_endpoint(stdout, provider) {
+        Some(e) => e,
+        None => return false,
+    };
+
     // Step 3: Select model
-    let model = match step_select_model(stdout, provider, &api_key) {
+    let model = match step_select_model(stdout, provider, &api_key, &endpoint) {
         Some(m) => m,
         None => return false,
     };
 
     // Step 4: Confirm & save
-    step_confirm_save(stdout, provider, &api_key, &model, cwd)
+    step_confirm_save(stdout, provider, &api_key, &model, &endpoint, cwd)
 }
