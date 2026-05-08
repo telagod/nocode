@@ -767,15 +767,8 @@ impl TuiApp {
         if self.overlay.is_open() {
             if matches!(self.overlay, Overlay::Config) {
                 if let Some(ref mut config) = self.config_overlay {
-                    config.poll();
                     config.handle_key(key);
-                    if config.saved {
-                        // Save the configuration
-                        save_config_from_flow(&config.form);
-                        self.config_overlay = None;
-                        self.overlay = Overlay::None;
-                        self.push_system("Configuration saved. Restart nocode to apply changes.");
-                    } else if config.closed {
+                    if config.closed {
                         self.config_overlay = None;
                         self.overlay = Overlay::None;
                     }
@@ -1541,11 +1534,6 @@ impl TuiApp {
 
     fn handle_paste(&mut self, text: &str) {
         if matches!(self.overlay, Overlay::Config) {
-            // Paste into config overlay input
-            if let Some(ref mut config) = self.config_overlay {
-                config.form.edit_buffer.push_str(text);
-            }
-            self.dirty = true;
             return;
         }
         self.input.insert_str(self.cursor_pos, text);
@@ -1656,14 +1644,8 @@ pub(crate) fn run_app_loop(
     max_tokens: u32,
     max_turns: u32,
     warnings: Vec<String>,
-    needs_onboarding: bool,
 ) -> io::Result<()> {
     let mut app = TuiApp::new(model);
-
-    // Auto-open config overlay if no API key configured
-    if needs_onboarding {
-        app.open_config_overlay();
-    }
 
     let mut messages: Vec<Message> = Vec::new();
     let tool_defs = tool_definitions_for_model(&registry);
@@ -1873,11 +1855,7 @@ pub(crate) fn run_app_loop(
             }
         }
 
-        // 2b. Poll new config overlay
-        if let Some(ref mut config) = app.config_overlay {
-            config.poll();
-            app.dirty = true;
-        }
+        // 2b. Config overlay (read-only, no polling needed)
 
         // 2c. Poll worker events
         {
@@ -2308,83 +2286,6 @@ fn encode_rgba_to_png(
         .write_image_data(rgba)
         .map_err(|e| format!("PNG data: {e}"))?;
     Ok(())
-}
-
-fn save_config_from_flow(flow: &crate::config_flow::ConfigFormState) {
-    use nocode_core::config::settings::{Settings, SettingsTier};
-    let cwd = std::env::current_dir()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
-
-    // Save API key
-    if !flow.api_key.is_empty() {
-        let slot = flow.credential_slot();
-        let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
-        let mut store = nocode_core::storage::credentials::CredentialStore::load(&cred_path)
-            .unwrap_or_default();
-        store.set_key(slot, &flow.api_key);
-        let _ = store.save(&cred_path);
-        // Also set env var for current session
-        if let Some(preset) = flow.preset
-            && !preset.env_key_name.is_empty()
-        {
-            unsafe { std::env::set_var(preset.env_key_name, &flow.api_key) };
-        }
-    }
-
-    // Save settings
-    let model_val = if flow.model.is_empty() {
-        None
-    } else {
-        Some(flow.model.as_str())
-    };
-    let _ = Settings::persist_key_value("model", model_val, SettingsTier::User, &cwd);
-    let provider_type = flow.provider_type_str();
-    let _ = Settings::persist_key_value(
-        "model_provider",
-        Some(provider_type),
-        SettingsTier::User,
-        &cwd,
-    );
-    // Set env vars for current session so provider resolution picks them up
-    unsafe {
-        if let Some(m) = model_val {
-            std::env::set_var("NOCODE_MODEL", m);
-        }
-        std::env::set_var("NOCODE_MODEL_PROVIDER", provider_type);
-    }
-
-    if flow.needs_custom_settings() {
-        let _ = Settings::persist_key_value(
-            "custom_base_url",
-            Some(&flow.base_url),
-            SettingsTier::User,
-            &cwd,
-        );
-        let _ = Settings::persist_key_value(
-            "custom_api_format",
-            Some(&flow.api_format),
-            SettingsTier::User,
-            &cwd,
-        );
-        if let Some(preset) = flow.preset {
-            let _ = Settings::persist_key_value(
-                "custom_preset",
-                Some(preset.name),
-                SettingsTier::User,
-                &cwd,
-            );
-        }
-        // Set env vars for current session
-        unsafe {
-            std::env::set_var("NOCODE_CUSTOM_BASE_URL", &flow.base_url);
-            std::env::set_var("NOCODE_CUSTOM_API_FORMAT", &flow.api_format);
-        }
-    } else {
-        let _ = Settings::persist_key_value("custom_base_url", None, SettingsTier::User, &cwd);
-        let _ = Settings::persist_key_value("custom_api_format", None, SettingsTier::User, &cwd);
-        let _ = Settings::persist_key_value("custom_preset", None, SettingsTier::User, &cwd);
-    }
 }
 
 #[cfg(test)]

@@ -164,6 +164,7 @@ pub fn find_preset_by_name(name: &str) -> Option<&'static ProviderPreset> {
 }
 
 /// Find a preset whose `base_url` is a prefix of the given URL.
+#[allow(dead_code)]
 pub fn find_preset_by_url(url: &str) -> Option<&'static ProviderPreset> {
     ALL_PRESETS.iter().find(|p| url.starts_with(p.base_url))
 }

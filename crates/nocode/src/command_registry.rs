@@ -151,7 +151,7 @@ impl CommandRegistry {
             CommandEntry {
                 name: "config",
                 aliases: &["settings", "login"],
-                summary: "Show effective config — use /config to change settings",
+                summary: "Show current configuration (read-only) — use nocode --login to change",
                 argument_hint: None,
                 action: CommandAction::Config,
             },

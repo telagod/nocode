@@ -264,7 +264,7 @@ pub fn run_repl(
                         if config.sandbox.enabled { "on" } else { "off" }
                     );
                     println!();
-                    println!("Use /config to change provider settings.");
+                    println!("Use `nocode --login` to change provider settings.");
                     println!("Or set API keys directly: export ANTHROPIC_API_KEY=sk-ant-...");
                 }
                 CommandAction::Memory => {

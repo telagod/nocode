@@ -10,6 +10,7 @@ mod markdown_render;
 mod markdown_stream;
 #[allow(dead_code)]
 mod model_fetch;
+#[allow(dead_code)]
 mod protocol_detect;
 mod provider_presets;
 #[allow(dead_code)]
@@ -115,15 +116,34 @@ fn main() {
         creds.load_into_env();
     }
 
-    // --login is removed; config is now done inside TUI via /config overlay.
-    // If --login is passed, warn and continue (backward compat).
+    // --login: run interactive login flow (select provider → key → model → save)
     if args.iter().any(|a| a == "--login") {
-        eprintln!("Note: --login is deprecated. Use /config inside the TUI instead.");
+        login::run_login(&cwd);
+        return;
     }
 
-    // Onboarding: if no API key is available, the TUI will auto-open config overlay
+    // No API key available → auto-launch login before TUI
     let needs_onboarding =
         !has_any_api_key() && !args.iter().any(|a| a == "--status" || a == "--help");
+    if needs_onboarding {
+        eprintln!("No API key found. Starting setup...\n");
+        login::run_login(&cwd);
+        // Reload credentials into env after login
+        let cred_path2 = nocode_core::storage::credentials::CredentialStore::default_path();
+        if let Ok(creds) = nocode_core::storage::credentials::CredentialStore::load(&cred_path2) {
+            creds.load_into_env();
+        }
+        if !has_any_api_key() {
+            eprintln!("No provider configured. Run `nocode --login` to set up.");
+            return;
+        }
+    }
+    // Reload settings in case login changed them
+    let settings = if needs_onboarding {
+        Settings::load_merged(&cwd)
+    } else {
+        settings
+    };
 
     let provider_type = resolve_provider(&settings);
     let model = resolve_model(&settings, &provider_type);
@@ -216,7 +236,6 @@ fn main() {
             max_tokens,
             max_turns,
             provider_warnings,
-            needs_onboarding,
         ) {
             eprintln!("TUI error: {e}");
         }
