@@ -158,8 +158,6 @@ pub fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&
             parallel_tool_execution: true,
             reasoning_effort: None,
         };
-        let cancel_ref = cancel_token.as_deref();
-
         let loop_result = if let Some(tx) = event_tx {
             let mut observer = WorkerObserver {
                 worker_id: worker_id.to_string(),
@@ -172,7 +170,7 @@ pub fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&
                 messages,
                 &mut observer,
                 &mut budget,
-                cancel_ref,
+                cancel_token.clone(),
             )?
         } else {
             let mut observer = r#loop::NoopObserver;
@@ -183,7 +181,7 @@ pub fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&
                 messages,
                 &mut observer,
                 &mut budget,
-                cancel_ref,
+                cancel_token.clone(),
             )?
         };
 

@@ -1,6 +1,6 @@
 # nocode DESIGN
 
-> Last updated: 2026-04-08 (v2 — Claude Code strict alignment)
+> Last updated: 2026-04-22 (TUI-only interactive interface)
 
 ## Design Goals
 
@@ -18,24 +18,22 @@
 ## Current Architecture
 
 ```
-nocode (CLI/TUI shell — crates/nocode, 18 modules)
-  main.rs           — entry point, 9 run modes, provider detection
-  repl.rs           — REPL session, 23 slash commands, session persistence
-  tui_app.rs        — 4-pane TUI, async streaming, ❯/⎿/∴/✖ visual language
-  tui_theme.rs      — dark/light theme system
-  tui_input.rs      — multi-line input, vim mode
-  tui_permission.rs — permission overlay (y/n/a)
-  tui_widgets.rs    — WelcomeBanner, StatusBar, ChatMessage, InputBox
-  command_registry.rs — 23 slash commands with aliases
+nocode (terminal shell — crates/nocode)
+  main.rs           — entry point, run mode dispatch, provider detection
+  tui.rs            — TUI entry point
+  tui_app.rs        — 4-pane TUI, streaming, overlays
+  login.rs          — interactive provider/bootstrap flow
+  provider_presets.rs — shared custom provider catalog
+  command_registry.rs — slash commands with aliases
   tool_render.rs    — Claude Code visual tool display
   markdown_render.rs — Markdown rendering with syntect
 
 nocode-core (library — crates/nocode-core, 70+ modules)
   provider/         — Claude (2024-06-01) / OpenAI / Gemini / Custom / Mock
-  provider/transport.rs — HTTP client, SSE, retry/backoff, status codes
+  provider/transport.rs — HTTP client, SSE, fast retry, status codes
   query/loop.rs     — agentic loop (stop_reason driven, auto-compaction, recovery)
   query/budget.rs   — token budget, diminishing returns
-  query/events.rs   — ModelStreamEvent for TUI/REPL
+  query/events.rs   — ModelStreamEvent for TUI and other stream consumers
   tool/             — 21 tools (Claude Code parity) + extra modules
   tool/executor.rs  — 9-stage pipeline (validate→trust→hooks→permission→sandbox→execute)
   tool/bash_validation.rs — 6 submodules (read_only, destructive, mode, sed, path, semantics)
@@ -97,7 +95,7 @@ Legacy `structured_output` retained only in provider JSON schema request name an
 | Tool call loop | Model → tool → result → model | Same pattern in runtime.rs | Done — all 3 provider formats |
 | Task runtime | Shell/agent/dream/daemon | Same 4 hosts + supervisor | Done — lacks persistence/resume |
 | Bridge | Deep remote + session system | Runner + HTTP transport demo | Functional, not production |
-| TUI | Ink REPL, 349 TSX components | 4-pane crossterm, overlays | Usable, not replacement-grade |
+| Interface | Ink REPL, 349 TSX components | 4-pane crossterm TUI | intentionally terminal-native |
 | MCP | Full client + auth + resources | JSON-RPC client, tool exec | Core done, lacks auth/resources |
 | Release | install.sh, variants, flags, doctor | CI + install.sh | Minimal |
 

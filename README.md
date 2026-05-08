@@ -33,8 +33,7 @@ export GEMINI_API_KEY="..."             # Gemini
 ## Usage
 
 ```bash
-nocode --repl                        # interactive REPL
-nocode --tui                         # 4-pane terminal UI
+nocode                               # 4-pane terminal UI (default)
 nocode --status                      # system diagnostics
 nocode --bridge-once "prompt"        # single-turn local execution
 nocode --bridge-remote-once "prompt" # single-turn remote execution
@@ -64,11 +63,11 @@ Use any OpenAI/Claude-compatible endpoint (Ollama, vLLM, LiteLLM, etc.):
 ```bash
 export NOCODE_MODEL_PROVIDER=custom
 export NOCODE_CUSTOM_BASE_URL=http://localhost:11434/v1
-export NOCODE_CUSTOM_API_FORMAT=openai   # anthropic (Messages API) | openai (Chat/Responses) | google (generateContent)
+export NOCODE_CUSTOM_API_FORMAT=openai-responses   # anthropic | openai-chat | openai-responses | google
 export NOCODE_MODEL=llama3
 ```
 
-## REPL Commands
+## Commands
 
 ### Session
 | Command | Description |
@@ -121,7 +120,6 @@ export NOCODE_MODEL=llama3
 ### Navigation
 | Command | Description |
 |---------|-------------|
-| `/focus <transcript\|tasks\|detail>` | Focus a TUI pane |
 | `/tasks-next` `/j` | Select next task |
 | `/tasks-prev` `/k` | Select previous task |
 | `/enter` | Open selected task |
@@ -130,26 +128,24 @@ export NOCODE_MODEL=llama3
 ### Account
 | Command | Description |
 |---------|-------------|
-| `/login <api-key>` | Store API key to `~/.nocode/credentials` |
+| `/config` | Open the settings center (`/settings`, legacy `/login`) |
 | `/logout` | Remove stored credentials |
 | `/doctor` | System diagnostics (provider, tools, connectivity) |
 | `/plugin list` | List discovered plugins |
 
 ## TUI
 
-4-pane fullscreen interface with Markdown rendering (pulldown-cmark + syntect syntax highlighting), RGB color support, and overlay system.
+`nocode` runs as a TUI-first interface. Use `nocode --login` to change provider settings interactively.
 
 | Key | Action |
 |-----|--------|
-| `Alt-1..4` | Focus pane (transcript / task list / task detail / events) |
-| `Tab` / `Shift-Tab` | Cycle pane focus |
 | `Up` / `Down` | Scroll or navigate |
 | `PgUp` / `PgDn` | Fast scroll |
 | `Ctrl-P` / `Ctrl-N` | Input history |
 | `Ctrl-U` | Clear input |
 | `F1` / `?` | Help overlay |
 | `F2` | Inspector overlay |
-| `F3` | Permission overlay (`a` approve / `d` deny) |
+| `F3` | Permission overlay |
 | `Esc` | Close overlay or quit |
 
 ## Environment Variables
@@ -159,7 +155,7 @@ export NOCODE_MODEL=llama3
 | `NOCODE_MODEL_PROVIDER` | Force provider: `anthropic`, `openai`, `google`, `custom`, `mock` |
 | `NOCODE_MODEL` | Override model name |
 | `NOCODE_CUSTOM_BASE_URL` | Base URL for Custom provider |
-| `NOCODE_CUSTOM_API_FORMAT` | API wire format: `anthropic` (Messages API), `openai` (Chat Completions / Responses), `google` (generateContent) |
+| `NOCODE_CUSTOM_API_FORMAT` | API wire format: `anthropic`, `openai-chat`, `openai-responses`, `google` |
 | `NOCODE_SYSTEM_PROMPT` | Override system prompt |
 | `NOCODE_MODEL_REASONING_EFFORT` | `low`, `medium`, `high` |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | Provider API keys |

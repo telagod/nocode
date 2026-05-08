@@ -172,7 +172,7 @@ pub fn run_repl(
                     repl_cmd_init();
                 }
                 CommandAction::History => {
-                    println!("(input history available in TUI mode)");
+                    println!("(input history is not available in line REPL)");
                 }
                 CommandAction::Permissions => {
                     println!("Permission mode: ask (default)");
@@ -264,8 +264,8 @@ pub fn run_repl(
                         if config.sandbox.enabled { "on" } else { "off" }
                     );
                     println!();
-                    println!("Tip: use TUI mode (nocode --tui) for interactive /config editing.");
-                    println!("     Or set API keys: export ANTHROPIC_API_KEY=sk-ant-...");
+                    println!("Use /config to change provider settings.");
+                    println!("Or set API keys directly: export ANTHROPIC_API_KEY=sk-ant-...");
                 }
                 CommandAction::Memory => {
                     let query = args.as_deref().unwrap_or("");
@@ -451,17 +451,16 @@ pub fn run_repl(
                      Enter        — send message\n\
                      Ctrl-C       — quit\n\
                      Up/Down      — scroll\n\
-                     Ctrl-P/N     — input history\n\
                      Ctrl-U       — clear input\n\
                      Ctrl-L       — clear screen\n\
                      Tab          — toggle tool output"
                     );
                 }
                 CommandAction::Theme => {
-                    println!("(theme switching available in TUI mode — use --tui)");
+                    println!("(theme switching available in TUI mode — use nocode)");
                 }
                 CommandAction::Vim => {
-                    println!("(vim mode available in TUI mode — use --tui)");
+                    println!("(vim mode available in TUI mode — use nocode)");
                 }
                 CommandAction::BugHunter | CommandAction::SecurityReview => {
                     let is_security = matches!(action, CommandAction::SecurityReview);
@@ -1018,7 +1017,7 @@ fn which_exists(program: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Append a single entry to the persistent input history file (shared with TUI).
+/// Append a single entry to the persistent input history file.
 fn save_repl_history_entry(entry: &str) {
     let Some(home) = std::env::var("HOME").ok() else {
         return;

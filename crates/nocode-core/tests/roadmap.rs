@@ -108,7 +108,6 @@ fn core_modules_exist() {
 fn cli_modules_exist() {
     let required = [
         "main.rs",
-        "repl.rs",
         "tui.rs",
         "tui_app.rs",
         "tui_theme.rs",
@@ -116,10 +115,13 @@ fn cli_modules_exist() {
         "tui_input.rs",
         "tui_permission.rs",
         "command_registry.rs",
-        "status_hud.rs",
-        "spinner.rs",
+        "login.rs",
+        "model_fetch.rs",
+        "provider_presets.rs",
         "markdown_render.rs",
         "markdown_stream.rs",
+        "status_hud.rs",
+        "spinner.rs",
         "tool_render.rs",
         "tool_truncate.rs",
     ];

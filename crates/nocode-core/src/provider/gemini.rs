@@ -2,13 +2,14 @@
 
 use crate::message::{ContentBlock, Message, Role};
 use crate::provider::Provider;
-use crate::provider::transport::HttpTransport;
+use crate::provider::transport::{HttpTransport, map_stream_read_error};
 use crate::provider::types::{
     CreateMessageRequest, CreateMessageResponse, ProviderError, StopReason, StreamDelta,
     StreamEvent, Usage,
 };
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
+use std::sync::{Arc, atomic::AtomicBool};
 
 pub struct GeminiProvider {
     transport: HttpTransport,
@@ -214,9 +215,20 @@ impl Provider for GeminiProvider {
         request: &CreateMessageRequest,
         on_event: &mut dyn FnMut(StreamEvent),
     ) -> Result<CreateMessageResponse, ProviderError> {
+        self.create_message_stream_with_cancel(request, on_event, None)
+    }
+
+    fn create_message_stream_with_cancel(
+        &self,
+        request: &CreateMessageRequest,
+        on_event: &mut dyn FnMut(StreamEvent),
+        cancel_token: Option<Arc<AtomicBool>>,
+    ) -> Result<CreateMessageResponse, ProviderError> {
         let body = self.build_request_body(request);
         let path = self.endpoint(&request.model, true);
-        let reader = self.transport.post_json_stream(&path, &body)?;
+        let reader =
+            self.transport
+                .post_json_stream_cancellable(&path, &body, cancel_token.clone())?;
         let buf = BufReader::new(reader);
 
         let mut all_content: Vec<ContentBlock> = Vec::new();
@@ -227,7 +239,14 @@ impl Provider for GeminiProvider {
         // Gemini streams JSON array chunks, each is a complete candidate response
         let mut json_buf = String::new();
         for line in buf.lines() {
-            let line = line.map_err(|e| ProviderError::retryable(format!("Stream error: {e}")))?;
+            let line = line.map_err(map_stream_read_error)?;
+
+            if cancel_token
+                .as_ref()
+                .is_some_and(|token| token.load(std::sync::atomic::Ordering::Relaxed))
+            {
+                return Err(ProviderError::non_retryable("Cancelled by user"));
+            }
             let trimmed = line.trim();
 
             // Skip array delimiters

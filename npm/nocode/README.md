@@ -10,7 +10,7 @@ npm install -g @telagod/nocode
 
 ## Features
 
-- Interactive REPL and 4-pane TUI with Markdown rendering and syntax highlighting
+- Interactive TUI
 - 25 built-in tools (Read, Edit, Write, Bash, Glob, Grep, WebFetch, Agent, Tasks, Teams, MCP, LSP, Memory...)
 - Multi-provider support: Claude, OpenAI, Gemini, or custom endpoints
 - Session compaction with structured summaries
@@ -22,8 +22,7 @@ npm install -g @telagod/nocode
 ## Usage
 
 ```bash
-nocode --repl          # interactive REPL
-nocode --tui           # 4-pane terminal UI
+nocode                 # interactive TUI (default)
 nocode --status        # system diagnostics
 ```
 

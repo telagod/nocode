@@ -9,6 +9,7 @@ use crate::provider::transport::{HttpTransport, with_retry};
 use crate::provider::types::{
     CreateMessageRequest, CreateMessageResponse, ProviderError, StreamEvent,
 };
+use std::sync::{Arc, atomic::AtomicBool};
 
 /// Anthropic Foundry provider.
 pub struct FoundryProvider {
@@ -62,7 +63,7 @@ impl Provider for FoundryProvider {
         req.stream = false;
         let body = self.serialize_request(&req)?;
 
-        let response_text = with_retry(3, || self.transport.post_json("/v1/messages", &body))?;
+        let response_text = with_retry(1, || self.transport.post_json("/v1/messages", &body))?;
 
         serde_json::from_str::<CreateMessageResponse>(&response_text)
             .map_err(|e| ProviderError::non_retryable(format!("Failed to parse response: {e}")))
@@ -77,9 +78,27 @@ impl Provider for FoundryProvider {
         req.stream = true;
         let body = self.serialize_request(&req)?;
 
-        let reader = with_retry(3, || self.transport.post_json_stream("/v1/messages", &body))?;
+        let reader = with_retry(1, || self.transport.post_json_stream("/v1/messages", &body))?;
 
         crate::provider::claude::parse_sse_stream(reader, on_event)
+    }
+
+    fn create_message_stream_with_cancel(
+        &self,
+        request: &CreateMessageRequest,
+        on_event: &mut dyn FnMut(StreamEvent),
+        cancel_token: Option<Arc<AtomicBool>>,
+    ) -> Result<CreateMessageResponse, ProviderError> {
+        let mut req = request.clone();
+        req.stream = true;
+        let body = self.serialize_request(&req)?;
+
+        let reader = with_retry(1, || {
+            self.transport
+                .post_json_stream_cancellable("/v1/messages", &body, cancel_token.clone())
+        })?;
+
+        crate::provider::claude::parse_sse_stream_with_cancel(reader, on_event, cancel_token)
     }
 
     fn verify_key(&self) -> Result<String, ProviderError> {

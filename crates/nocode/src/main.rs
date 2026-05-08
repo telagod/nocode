@@ -1,10 +1,17 @@
 #[allow(dead_code)]
 mod command_registry;
 #[allow(dead_code)]
+mod config_flow;
+#[allow(dead_code)]
+mod login;
+#[allow(dead_code)]
 mod markdown_render;
 #[allow(dead_code, clippy::collapsible_if)]
 mod markdown_stream;
-mod repl;
+#[allow(dead_code)]
+mod model_fetch;
+mod protocol_detect;
+mod provider_presets;
 #[allow(dead_code)]
 mod spinner;
 #[allow(dead_code)]
@@ -18,6 +25,8 @@ mod tui_app;
 #[allow(dead_code)]
 mod tui_commands;
 #[allow(dead_code)]
+mod tui_config;
+#[allow(dead_code)]
 mod tui_events;
 #[allow(dead_code)]
 mod tui_input;
@@ -29,9 +38,6 @@ mod tui_permission;
 mod tui_theme;
 #[allow(dead_code)]
 mod tui_widgets;
-
-mod login;
-mod model_fetch;
 
 use nocode_core::config::settings::Settings;
 use nocode_core::message::Message;
@@ -67,18 +73,27 @@ fn main() {
         return;
     }
 
+    if let Some(flag) = args
+        .iter()
+        .find(|a| a.as_str() == "--repl" || a.as_str() == "--tui")
+    {
+        eprintln!("Error: Unknown option: {flag}");
+        eprintln!("Run `nocode --help` for usage.");
+        std::process::exit(2);
+    }
+
     let cwd = env::current_dir()
         .expect("current directory should be accessible")
         .to_string_lossy()
         .into_owned();
 
-    let mut settings = Settings::load_merged(&cwd);
+    let settings = Settings::load_merged(&cwd);
 
     // Start async model capabilities cache fetch
     nocode_core::provider::model_caps::init_cache_async();
 
     // Spawn background update check
-    let update_rx = {
+    let _update_rx = {
         let home = std::env::var("HOME").unwrap_or_default();
         let cache_path = format!("{home}/.nocode/update_cache.json");
         let current_version = env!("CARGO_PKG_VERSION").to_string();
@@ -100,17 +115,15 @@ fn main() {
         creds.load_into_env();
     }
 
-    // --login: interactive provider configuration
+    // --login is removed; config is now done inside TUI via /config overlay.
+    // If --login is passed, warn and continue (backward compat).
     if args.iter().any(|a| a == "--login") {
-        login::run_login(&cwd);
-        return;
+        eprintln!("Note: --login is deprecated. Use /config inside the TUI instead.");
     }
 
-    // Onboarding: check if any API key is available
-    if !has_any_api_key() && !args.iter().any(|a| a == "--status" || a == "--help") {
-        login::run_login(&cwd);
-        settings = Settings::load_merged(&cwd);
-    }
+    // Onboarding: if no API key is available, the TUI will auto-open config overlay
+    let needs_onboarding =
+        !has_any_api_key() && !args.iter().any(|a| a == "--status" || a == "--help");
 
     let provider_type = resolve_provider(&settings);
     let model = resolve_model(&settings, &provider_type);
@@ -124,16 +137,15 @@ fn main() {
     initialize_runtime_global_registry(&cwd, &settings);
     let (provider_box, provider_warnings) = build_provider(&provider_type, &settings);
 
-    // Print warnings for non-TUI modes (TUI will display via push_system)
-    let is_tui = args.iter().any(|a| a == "--tui")
-        || (!args.iter().any(|a| a == "--repl")
-            && !args.iter().any(|a| a.starts_with("--bridge"))
-            && !args.iter().any(|a| a == "--status")
-            && !args.iter().any(|a| a == "--ide-server")
-            && !args.iter().any(|a| a == "--mcp-server")
-            && std::io::stdin().is_terminal()
-            && std::io::stdout().is_terminal());
-    if !is_tui {
+    let is_tui_mode = !args.iter().any(|a| a.starts_with("--bridge"))
+        && !args.iter().any(|a| a == "--status")
+        && !args.iter().any(|a| a == "--ide-server")
+        && !args.iter().any(|a| a == "--mcp-server")
+        && !args.iter().any(|a| a == "--process-agent-daemon")
+        && !args.iter().any(|a| a == "--process-agent-host")
+        && std::io::stdin().is_terminal()
+        && std::io::stdout().is_terminal();
+    if !is_tui_mode {
         for w in &provider_warnings {
             eprintln!("Warning: {w}");
         }
@@ -195,32 +207,7 @@ fn main() {
         return;
     }
 
-    if args.iter().any(|a| a == "--repl") {
-        // Check for updates (non-blocking)
-        if let Ok(nocode_core::update_checker::UpdateStatus::UpdateAvailable {
-            current,
-            latest,
-            ..
-        }) = update_rx.try_recv()
-        {
-            eprintln!("  Update available: {current} → {latest}");
-            eprintln!("  Run: npm i -g @telagod/nocode");
-            eprintln!();
-        }
-        repl::run_repl(
-            nocode_core::provider::ProviderBox::from_arc(Arc::from(provider_box)),
-            &registry,
-            &system_blocks,
-            &model,
-            max_tokens,
-            max_turns,
-        );
-        return;
-    }
-
-    if args.iter().any(|a| a == "--tui")
-        || (std::io::stdin().is_terminal() && std::io::stdout().is_terminal())
-    {
+    if is_tui_mode {
         if let Err(e) = tui::run_tui(
             provider_box,
             registry,
@@ -229,29 +216,15 @@ fn main() {
             max_tokens,
             max_turns,
             provider_warnings,
+            needs_onboarding,
         ) {
             eprintln!("TUI error: {e}");
         }
         return;
     }
 
-    // Fallback: REPL mode for non-interactive environments.
-    if let Ok(nocode_core::update_checker::UpdateStatus::UpdateAvailable {
-        current, latest, ..
-    }) = update_rx.try_recv()
-    {
-        eprintln!("  Update available: {current} → {latest}");
-        eprintln!("  Run: npm i -g @telagod/nocode");
-        eprintln!();
-    }
-    repl::run_repl(
-        nocode_core::provider::ProviderBox::from_arc(Arc::from(provider_box)),
-        &registry,
-        &system_blocks,
-        &model,
-        max_tokens,
-        max_turns,
-    );
+    eprintln!("nocode now runs in TUI mode only and requires an interactive TTY.");
+    std::process::exit(2);
 }
 
 // --- PLACEHOLDER_REST ---
@@ -974,12 +947,13 @@ fn print_help() {
     println!(
         "nocode — terminal-native AI coding assistant\n\
          \n\
-         Usage: nocode [OPTIONS]\n\
+         Usage: nocode\n\
+         \x20       nocode [OPTIONS]\n\
+         \n\
+         Interactive:\n\
+         \x20 nocode                    Terminal UI (default and only interactive mode)\n\
          \n\
          Modes:\n\
-         \x20 --repl                    Interactive REPL mode\n\
-         \x20 --tui                     Terminal UI mode (default)\n\
-         \x20 --login                   Interactive provider configuration\n\
          \x20 --status                  System diagnostics\n\
          \x20 --bridge-once \"prompt\"    Single-turn local execution\n\
          \x20 --bridge-remote-once \"p\"  Single-turn HTTP bridge\n\
@@ -1013,6 +987,12 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn resolve_provider_prefers_custom_settings() {
@@ -1025,11 +1005,39 @@ mod tests {
 
     #[test]
     fn resolve_model_defaults_per_provider() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let nocode_model = std::env::var("NOCODE_MODEL").ok();
+        let anthropic_model = std::env::var("ANTHROPIC_MODEL").ok();
+        let openai_model = std::env::var("OPENAI_MODEL").ok();
+        let gemini_model = std::env::var("GEMINI_MODEL").ok();
+
+        unsafe {
+            std::env::remove_var("NOCODE_MODEL");
+            std::env::remove_var("ANTHROPIC_MODEL");
+            std::env::remove_var("OPENAI_MODEL");
+            std::env::remove_var("GEMINI_MODEL");
+        }
+
         let settings = Settings::default();
         assert!(resolve_model(&settings, &ModelProvider::Claude).contains("claude"));
         assert!(resolve_model(&settings, &ModelProvider::OpenAi).contains("gpt"));
         assert!(resolve_model(&settings, &ModelProvider::Gemini).contains("gemini"));
         assert_eq!(resolve_model(&settings, &ModelProvider::Custom), "default");
+
+        unsafe {
+            if let Some(value) = nocode_model {
+                std::env::set_var("NOCODE_MODEL", value);
+            }
+            if let Some(value) = anthropic_model {
+                std::env::set_var("ANTHROPIC_MODEL", value);
+            }
+            if let Some(value) = openai_model {
+                std::env::set_var("OPENAI_MODEL", value);
+            }
+            if let Some(value) = gemini_model {
+                std::env::set_var("GEMINI_MODEL", value);
+            }
+        }
     }
 
     #[test]

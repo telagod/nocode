@@ -6,7 +6,6 @@
 
 use crate::command_registry::CommandRegistry;
 use crate::markdown_render::render_markdown_to_lines;
-use crate::resolve_provider;
 use crate::spinner::Spinner;
 use crate::status_hud::StatusHud;
 use crate::tui_commands::{SlashResult, handle_slash_command};
@@ -17,7 +16,7 @@ use crate::tui_widgets::{
 
 use base64::Engine as _;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use nocode_core::config::settings::{Settings, SettingsTier};
+use nocode_core::config::settings::Settings;
 use nocode_core::message::{ContentBlock, Message, SystemBlock};
 use nocode_core::provider::Provider;
 use nocode_core::query::r#loop::{self, LoopConfig};
@@ -36,127 +35,17 @@ use unicode_width::UnicodeWidthChar;
 const LOG_LIMIT: usize = 256;
 
 // ---------------------------------------------------------------------------
-// Custom provider presets
+// Provider presets (imported from single source of truth)
 // ---------------------------------------------------------------------------
 
-pub(crate) struct ProviderPreset {
-    pub name: &'static str,
-    pub base_url: &'static str,
-    pub api_format: &'static str,
-    pub auth_hint: &'static str,
-    pub env_key_name: &'static str,
-    pub credential_slot: &'static str,
-    pub default_model: &'static str,
-}
-
-pub(crate) static CUSTOM_PRESETS: &[ProviderPreset] = &[
-    // --- Cloud API proxies ---
-    ProviderPreset {
-        name: "OpenRouter",
-        base_url: "https://openrouter.ai/api/v1",
-        api_format: "openai-chat",
-        auth_hint: "Get key at openrouter.ai/keys",
-        env_key_name: "OPENROUTER_API_KEY",
-        credential_slot: "openrouter",
-        default_model: "anthropic/claude-sonnet-4",
-    },
-    ProviderPreset {
-        name: "Together",
-        base_url: "https://api.together.xyz/v1",
-        api_format: "openai-chat",
-        auth_hint: "Get key at api.together.xyz/settings/api-keys",
-        env_key_name: "TOGETHER_API_KEY",
-        credential_slot: "together",
-        default_model: "meta-llama/Llama-3-70b-chat-hf",
-    },
-    ProviderPreset {
-        name: "Groq",
-        base_url: "https://api.groq.com/openai/v1",
-        api_format: "openai-chat",
-        auth_hint: "Get key at console.groq.com/keys",
-        env_key_name: "GROQ_API_KEY",
-        credential_slot: "groq",
-        default_model: "llama-3.3-70b-versatile",
-    },
-    ProviderPreset {
-        name: "Fireworks",
-        base_url: "https://api.fireworks.ai/inference/v1",
-        api_format: "openai-chat",
-        auth_hint: "Get key at fireworks.ai/account/api-keys",
-        env_key_name: "FIREWORKS_API_KEY",
-        credential_slot: "fireworks",
-        default_model: "accounts/fireworks/models/llama-v3p1-70b-instruct",
-    },
-    ProviderPreset {
-        name: "DeepSeek",
-        base_url: "https://api.deepseek.com/v1",
-        api_format: "openai-chat",
-        auth_hint: "Get key at platform.deepseek.com/api_keys",
-        env_key_name: "DEEPSEEK_API_KEY",
-        credential_slot: "deepseek",
-        default_model: "deepseek-chat",
-    },
-    ProviderPreset {
-        name: "Mistral",
-        base_url: "https://api.mistral.ai/v1",
-        api_format: "openai-chat",
-        auth_hint: "Get key at console.mistral.ai/api-keys",
-        env_key_name: "MISTRAL_API_KEY",
-        credential_slot: "mistral",
-        default_model: "mistral-large-latest",
-    },
-    // --- Local inference ---
-    ProviderPreset {
-        name: "Ollama",
-        base_url: "http://localhost:11434/v1",
-        api_format: "openai-chat",
-        auth_hint: "No API key needed for local Ollama",
-        env_key_name: "",
-        credential_slot: "ollama",
-        default_model: "",
-    },
-    ProviderPreset {
-        name: "vLLM",
-        base_url: "http://localhost:8000/v1",
-        api_format: "openai-chat",
-        auth_hint: "Use --api-key flag if set on server",
-        env_key_name: "VLLM_API_KEY",
-        credential_slot: "vllm",
-        default_model: "",
-    },
-    ProviderPreset {
-        name: "LiteLLM",
-        base_url: "http://localhost:4000/v1",
-        api_format: "openai-chat",
-        auth_hint: "Set LITELLM_API_KEY or use proxy key",
-        env_key_name: "LITELLM_API_KEY",
-        credential_slot: "litellm",
-        default_model: "",
-    },
-    ProviderPreset {
-        name: "LocalAI",
-        base_url: "http://localhost:8080/v1",
-        api_format: "openai-chat",
-        auth_hint: "Optional, depends on config",
-        env_key_name: "",
-        credential_slot: "localai",
-        default_model: "",
-    },
-    ProviderPreset {
-        name: "LM Studio",
-        base_url: "http://localhost:1234/v1",
-        api_format: "openai-chat",
-        auth_hint: "No key required for local LM Studio",
-        env_key_name: "",
-        credential_slot: "lmstudio",
-        default_model: "",
-    },
-];
+#[cfg(test)]
+use crate::provider_presets::ALL_PRESETS;
 
 /// Detect which preset matches the current custom URL, if any.
+#[cfg(test)]
 pub(crate) fn detect_preset(base_url: &str) -> Option<usize> {
     let normalized = base_url.trim().trim_end_matches('/');
-    CUSTOM_PRESETS.iter().position(|p| {
+    ALL_PRESETS.iter().position(|p| {
         p.base_url
             .trim_end_matches('/')
             .eq_ignore_ascii_case(normalized)
@@ -164,9 +53,10 @@ pub(crate) fn detect_preset(base_url: &str) -> Option<usize> {
 }
 
 /// Get the preset name for display, or "Manual" if no preset matches.
+#[cfg(test)]
 pub(crate) fn preset_label(index: Option<usize>) -> &'static str {
     match index {
-        Some(i) if i < CUSTOM_PRESETS.len() => CUSTOM_PRESETS[i].name,
+        Some(i) if i < ALL_PRESETS.len() => ALL_PRESETS[i].name,
         _ => "Manual",
     }
 }
@@ -191,34 +81,6 @@ impl InputMode {
     }
 }
 
-/// All mutable state for the config overlay, extracted to keep `Overlay` small.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct ConfigState {
-    pub selected: usize,
-    pub tier: usize,
-    pub suggestion_index: usize,
-    pub suggestion_scroll: usize,
-    pub filtering_models: bool,
-    pub editing: bool,
-    pub input: String,
-    pub status: Option<String>,
-    pub provider: String,
-    pub provider_source: String,
-    pub api_key: String,
-    pub api_key_source: String,
-    pub model: String,
-    pub model_source: String,
-    pub custom_base_url: String,
-    pub custom_base_url_source: String,
-    pub custom_api_format: String,
-    pub custom_api_format_source: String,
-    pub model_filter: String,
-    pub all_model_suggestions: Vec<String>,
-    pub model_suggestions: Vec<String>,
-    /// Active preset index for custom provider, None = manual.
-    pub preset_index: Option<usize>,
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) enum Overlay {
     #[default]
@@ -228,7 +90,7 @@ pub(crate) enum Overlay {
     Sessions,
     Mcp,
     Agents,
-    Config(Box<ConfigState>),
+    Config,
     Memory,
     Cost,
     Permission {
@@ -250,108 +112,8 @@ impl Overlay {
 
 impl TuiApp {
     pub(crate) fn open_config_overlay(&mut self) {
-        let cwd = std::env::current_dir()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let settings = Settings::load_merged(&cwd);
-        let user_settings = Settings::load_tier(SettingsTier::User, &cwd);
-        let project_settings = Settings::load_tier(SettingsTier::Project, &cwd);
-        let local_settings = Settings::load_tier(SettingsTier::Local, &cwd);
-        let custom_base_url = settings.custom_base_url.clone().unwrap_or_default();
-        let custom_api_format = settings
-            .custom_api_format
-            .clone()
-            .unwrap_or_else(|| "openai-responses".to_string());
-        let provider = settings
-            .model_provider
-            .clone()
-            .unwrap_or_else(|| resolve_provider(&settings).as_str().to_string());
-        let detected_preset = settings
-            .custom_preset
-            .as_deref()
-            .and_then(|name| {
-                CUSTOM_PRESETS
-                    .iter()
-                    .position(|p| p.name.eq_ignore_ascii_case(name))
-            })
-            .or_else(|| detect_preset(&custom_base_url));
-        let preset_name_str = detected_preset
-            .and_then(|i| CUSTOM_PRESETS.get(i))
-            .map(|p| p.name);
-        let credential_store = load_credential_store();
-        let (api_key_slot, api_key_env_var) =
-            provider_key_slot(&provider, &custom_api_format, preset_name_str);
-        let api_key = if !api_key_env_var.is_empty() {
-            std::env::var(api_key_env_var).ok()
-        } else {
-            None
-        }
-        .or_else(|| credential_store.get_key(api_key_slot))
-        .unwrap_or_default();
-        // Spawn background model fetch instead of blocking the UI
-        self.spawn_model_fetch(
-            provider.as_str(),
-            custom_base_url.trim(),
-            custom_api_format.trim(),
-        );
-        self.overlay = Overlay::Config(Box::new(ConfigState {
-            selected: 0,
-            tier: 0,
-            suggestion_index: 0,
-            suggestion_scroll: 0,
-            filtering_models: false,
-            editing: false,
-            input: String::new(),
-            status: Some("Loading models...".to_string()),
-            provider,
-            provider_source: setting_source_label(
-                "model_provider",
-                "NOCODE_MODEL_PROVIDER",
-                &user_settings,
-                &project_settings,
-                &local_settings,
-                (!custom_base_url.is_empty() || !custom_api_format.is_empty()).then_some("derived"),
-            ),
-            api_key,
-            api_key_source: if std::env::var(api_key_env_var).is_ok() {
-                "env".to_string()
-            } else if credential_store.get_key(api_key_slot).is_some() {
-                "credentials".to_string()
-            } else {
-                "unset".to_string()
-            },
-            model: settings.model.unwrap_or_default(),
-            model_source: setting_source_label(
-                "model",
-                "NOCODE_MODEL",
-                &user_settings,
-                &project_settings,
-                &local_settings,
-                None,
-            ),
-            custom_base_url,
-            custom_base_url_source: setting_source_label(
-                "custom_base_url",
-                "NOCODE_CUSTOM_BASE_URL",
-                &user_settings,
-                &project_settings,
-                &local_settings,
-                None,
-            ),
-            custom_api_format,
-            custom_api_format_source: setting_source_label(
-                "custom_api_format",
-                "NOCODE_CUSTOM_API_FORMAT",
-                &user_settings,
-                &project_settings,
-                &local_settings,
-                Some("default"),
-            ),
-            model_filter: String::new(),
-            all_model_suggestions: Vec::new(),
-            model_suggestions: Vec::new(),
-            preset_index: detected_preset,
-        }));
+        self.config_overlay = Some(crate::tui_config::TuiConfigOverlay::new());
+        self.overlay = Overlay::Config;
         self.dirty = true;
     }
 }
@@ -394,8 +156,6 @@ pub(crate) struct TuiApp {
     pub(crate) search_active: bool,
     pub(crate) search_matches: Vec<usize>,
     pub(crate) search_index: usize,
-    /// Background model fetch receiver
-    pub(crate) model_fetch_rx: Option<std::sync::mpsc::Receiver<Result<Vec<String>, String>>>,
     /// Background worker event receiver
     pub(crate) worker_event_rx:
         Option<std::sync::mpsc::Receiver<nocode_core::agent::worker::WorkerEvent>>,
@@ -409,6 +169,8 @@ pub(crate) struct TuiApp {
     pub(crate) input_view_offset: usize,
     /// Vertical scroll offset for input box (multi-line input).
     pub(crate) input_scroll_y: u16,
+    /// New config overlay (state machine + TUI).
+    pub(crate) config_overlay: Option<crate::tui_config::TuiConfigOverlay>,
 }
 
 /// An image pasted from clipboard, waiting to be sent with the next message.
@@ -449,47 +211,13 @@ impl TuiApp {
             search_active: false,
             search_matches: Vec::new(),
             search_index: 0,
-            model_fetch_rx: None,
             worker_event_rx: None,
             completion_selected: None,
             pending_images: Vec::new(),
             overlay_scroll: 0,
             input_view_offset: 0,
             input_scroll_y: 0,
-        }
-    }
-
-    /// Spawn a background thread to fetch model suggestions without blocking the UI.
-    fn spawn_model_fetch(
-        &mut self,
-        provider: &str,
-        custom_base_url: &str,
-        custom_api_format: &str,
-    ) {
-        let provider = provider.to_string();
-        let base_url = custom_base_url.to_string();
-        let api_format = custom_api_format.to_string();
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.model_fetch_rx = Some(rx);
-        std::thread::spawn(move || {
-            let result = fetch_model_suggestions(&provider, &base_url, &api_format);
-            let _ = tx.send(result);
-        });
-    }
-
-    /// Poll for background model fetch results. Returns Some if results are ready.
-    fn poll_model_fetch(&mut self) -> Option<Result<Vec<String>, String>> {
-        let rx = self.model_fetch_rx.as_ref()?;
-        match rx.try_recv() {
-            Ok(result) => {
-                self.model_fetch_rx = None;
-                Some(result)
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => None,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.model_fetch_rx = None;
-                Some(Err("Model fetch thread disconnected".to_string()))
-            }
+            config_overlay: None,
         }
     }
 
@@ -815,7 +543,13 @@ impl TuiApp {
 
         // 6. Overlay
         if self.overlay.is_open() {
-            self.draw_overlay(frame, frame.area());
+            if matches!(self.overlay, Overlay::Config) {
+                if let Some(ref config) = self.config_overlay {
+                    config.draw(frame, frame.area());
+                }
+            } else {
+                self.draw_overlay(frame, frame.area());
+            }
         }
 
         self.dirty = false;
@@ -1031,857 +765,24 @@ impl TuiApp {
 
         // Overlay open — handle keys
         if self.overlay.is_open() {
-            if matches!(self.overlay, Overlay::Config(_)) {
-                let mut system_notice: Option<String> = None;
-                if let Overlay::Config(ref mut cs) = self.overlay {
-                    let ConfigState {
-                        ref mut selected,
-                        ref mut tier,
-                        ref mut suggestion_index,
-                        ref mut suggestion_scroll,
-                        ref mut filtering_models,
-                        ref mut editing,
-                        ref mut input,
-                        ref mut status,
-                        ref mut provider,
-                        ref mut provider_source,
-                        ref mut api_key,
-                        ref mut api_key_source,
-                        ref mut model,
-                        ref mut model_source,
-                        ref mut custom_base_url,
-                        ref mut custom_base_url_source,
-                        ref mut custom_api_format,
-                        ref mut custom_api_format_source,
-                        ref mut model_filter,
-                        ref mut all_model_suggestions,
-                        ref mut model_suggestions,
-                        ref mut preset_index,
-                    } = **cs;
-                    let field_count = 5; // All fields always navigable
-                    match key.code {
-                        KeyCode::Esc => {
-                            if *editing {
-                                *editing = false;
-                                input.clear();
-                                *filtering_models = false;
-                                *status = Some("Edit cancelled".to_string());
-                            } else {
-                                self.overlay = Overlay::None;
-                            }
-                            self.dirty = true;
-                        }
-                        KeyCode::Up if !*editing => {
-                            if *selected == 2 && !model_suggestions.is_empty() {
-                                // Navigate model list
-                                if *suggestion_index > 0 {
-                                    *suggestion_index -= 1;
-                                    if *suggestion_index < *suggestion_scroll {
-                                        *suggestion_scroll = *suggestion_index;
-                                    }
-                                } else {
-                                    // At top of list, move to previous field
-                                    *selected -= 1;
-                                }
-                            } else if *selected > 0 {
-                                *selected -= 1;
-                            }
-                            self.dirty = true;
-                        }
-                        KeyCode::Down if !*editing => {
-                            if *selected == 2 && !model_suggestions.is_empty() {
-                                // Navigate model list
-                                if *suggestion_index + 1 < model_suggestions.len() {
-                                    *suggestion_index += 1;
-                                    if *suggestion_index >= *suggestion_scroll + 5 {
-                                        *suggestion_scroll = suggestion_index.saturating_sub(4);
-                                    }
-                                } else {
-                                    // At bottom of list, move to next field
-                                    if *selected + 1 < field_count {
-                                        *selected += 1;
-                                    }
-                                }
-                            } else if *selected + 1 < field_count {
-                                *selected += 1;
-                            }
-                            self.dirty = true;
-                        }
-                        KeyCode::Left | KeyCode::Right if !*editing && *selected == 0 => {
-                            *provider =
-                                cycle_provider(provider, matches!(key.code, KeyCode::Right));
-                            if provider != "custom" && *selected > 2 {
-                                *selected = 2;
-                            }
-                            // Update preset detection on provider change
-                            *preset_index = if provider == "custom" {
-                                detect_preset(custom_base_url)
-                            } else {
-                                None
-                            };
-                            let pn = preset_index
-                                .and_then(|i| CUSTOM_PRESETS.get(i))
-                                .map(|p| p.name);
-                            let (slot, env_var) = provider_key_slot(
-                                provider.as_str(),
-                                custom_api_format.as_str(),
-                                pn,
-                            );
-                            let store = load_credential_store();
-                            *api_key = std::env::var(env_var)
-                                .ok()
-                                .or_else(|| store.get_key(slot))
-                                .unwrap_or_default();
-                            *api_key_source = if std::env::var(env_var).is_ok() {
-                                "env".to_string()
-                            } else if store.get_key(slot).is_some() {
-                                "credentials".to_string()
-                            } else {
-                                "unset".to_string()
-                            };
-                            if provider == "auto" {
-                                all_model_suggestions.clear();
-                                model_suggestions.clear();
-                                *suggestion_index = 0;
-                                *suggestion_scroll = 0;
-                                *status = Some("Switched provider to auto".to_string());
-                            } else {
-                                apply_api_key_to_env(
-                                    provider,
-                                    custom_api_format,
-                                    api_key,
-                                    preset_index
-                                        .and_then(|i| CUSTOM_PRESETS.get(i))
-                                        .map(|p| p.name),
-                                );
-                                self.model_fetch_rx = Some(spawn_model_fetch_bg(
-                                    provider,
-                                    custom_base_url.trim(),
-                                    custom_api_format.trim(),
-                                ));
-                                *suggestion_index = 0;
-                                *suggestion_scroll = 0;
-                                *status = Some(
-                                    "Switched provider to custom; loading models...".to_string(),
-                                );
-                            }
-                            self.dirty = true;
-                        }
-                        KeyCode::Left
-                            if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
-                        {
-                            if *suggestion_index > 0 {
-                                *suggestion_index -= 1;
-                            } else {
-                                *suggestion_index = model_suggestions.len().saturating_sub(1);
-                            }
-                            if *suggestion_index < *suggestion_scroll {
-                                *suggestion_scroll = *suggestion_index;
-                            }
-                            *status = Some("Moved model suggestion selection".to_string());
-                            self.dirty = true;
-                        }
-                        KeyCode::Left | KeyCode::Right if !*editing && *selected == 4 => {
-                            let formats = nocode_core::config::settings::API_FORMATS;
-                            let normalized = nocode_core::config::settings::normalize_api_format(
-                                custom_api_format,
-                            );
-                            let current_idx =
-                                formats.iter().position(|&f| f == normalized).unwrap_or(0);
-                            let next_idx = if matches!(key.code, KeyCode::Right) {
-                                (current_idx + 1) % formats.len()
-                            } else {
-                                (current_idx + formats.len() - 1) % formats.len()
-                            };
-                            *custom_api_format = formats[next_idx].to_string();
-                            // Re-detect preset after format toggle
-                            *preset_index = detect_preset(custom_base_url);
-                            apply_api_key_to_env(
-                                provider,
-                                custom_api_format,
-                                api_key,
-                                preset_index
-                                    .and_then(|i| CUSTOM_PRESETS.get(i))
-                                    .map(|p| p.name),
-                            );
-                            self.model_fetch_rx = Some(spawn_model_fetch_bg(
-                                provider,
-                                custom_base_url.trim(),
-                                custom_api_format.trim(),
-                            ));
-                            *suggestion_index = 0;
-                            *suggestion_scroll = 0;
-                            *status = Some(format!(
-                                "Switched API format to {}; loading models...",
-                                custom_api_format
-                            ));
-                            self.dirty = true;
-                        }
-                        KeyCode::Right
-                            if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
-                        {
-                            *suggestion_index = (*suggestion_index + 1) % model_suggestions.len();
-                            if *suggestion_index >= *suggestion_scroll + 5 {
-                                *suggestion_scroll = suggestion_index.saturating_sub(4);
-                            }
-                            *status = Some("Moved model suggestion selection".to_string());
-                            self.dirty = true;
-                        }
-                        KeyCode::PageUp
-                            if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
-                        {
-                            *suggestion_index = (*suggestion_index).saturating_sub(5);
-                            *suggestion_scroll = (*suggestion_scroll).saturating_sub(5);
-                            *status = Some("Scrolled model suggestions up".to_string());
-                            self.dirty = true;
-                        }
-                        KeyCode::PageDown
-                            if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
-                        {
-                            let max_index = model_suggestions.len().saturating_sub(1);
-                            *suggestion_index = (*suggestion_index + 5).min(max_index);
-                            *suggestion_scroll =
-                                (*suggestion_scroll + 5).min(max_index.saturating_sub(4));
-                            *status = Some("Scrolled model suggestions down".to_string());
-                            self.dirty = true;
-                        }
-                        KeyCode::Home
-                            if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
-                        {
-                            *suggestion_index = 0;
-                            *suggestion_scroll = 0;
-                            *status = Some("Jumped to first model suggestion".to_string());
-                            self.dirty = true;
-                        }
-                        KeyCode::End
-                            if !*editing && *selected == 2 && !model_suggestions.is_empty() =>
-                        {
-                            let max_index = model_suggestions.len().saturating_sub(1);
-                            *suggestion_index = max_index;
-                            *suggestion_scroll = max_index.saturating_sub(4);
-                            *status = Some("Jumped to last model suggestion".to_string());
-                            self.dirty = true;
-                        }
-                        KeyCode::Tab if !*editing => {
-                            *tier = (*tier + 1) % 3;
-                            self.dirty = true;
-                        }
-                        KeyCode::Enter => {
-                            if *editing {
-                                if *filtering_models {
-                                    *model_filter = input.clone();
-                                    *model_suggestions =
-                                        apply_model_filter(all_model_suggestions, model_filter);
-                                    *suggestion_index = 0;
-                                    *suggestion_scroll = 0;
-                                    *status = Some(format!(
-                                        "Filtered to {} model suggestion(s)",
-                                        model_suggestions.len()
-                                    ));
-                                    *filtering_models = false;
-                                } else {
-                                    match *selected {
-                                        1 => *api_key = input.clone(),
-                                        2 => *model = input.clone(),
-                                        3 => *custom_base_url = input.clone(),
-                                        _ => *custom_api_format = input.clone(),
-                                    }
-                                    if *selected == 3 || *selected == 4 {
-                                        // Re-detect preset after manual edit
-                                        *preset_index = detect_preset(custom_base_url);
-                                        apply_api_key_to_env(
-                                            provider,
-                                            custom_api_format,
-                                            api_key,
-                                            preset_index
-                                                .and_then(|i| CUSTOM_PRESETS.get(i))
-                                                .map(|p| p.name),
-                                        );
-                                        self.model_fetch_rx = Some(spawn_model_fetch_bg(
-                                            provider,
-                                            custom_base_url.trim(),
-                                            custom_api_format.trim(),
-                                        ));
-                                        *suggestion_index = 0;
-                                        *suggestion_scroll = 0;
-                                        *status =
-                                            Some("Field updated; loading models...".to_string());
-                                    } else {
-                                        *status = Some("Field updated locally".to_string());
-                                    }
-                                }
-                                *editing = false;
-                                input.clear();
-                            } else if *selected == 2 && !model_suggestions.is_empty() {
-                                let suggestion = &model_suggestions[*suggestion_index];
-                                if model != suggestion {
-                                    *model = suggestion.clone();
-                                    *status =
-                                        Some(format!("Applied model suggestion: {suggestion}"));
-                                } else {
-                                    *editing = true;
-                                    input.clone_from(model);
-                                    *status = Some("Editing model field".to_string());
-                                }
-                            } else if *selected == 0 {
-                                *provider = cycle_provider(provider, true);
-                                if provider == "auto" {
-                                    all_model_suggestions.clear();
-                                    model_suggestions.clear();
-                                    *suggestion_index = 0;
-                                    *suggestion_scroll = 0;
-                                    *status = Some("Switched provider to auto".to_string());
-                                } else {
-                                    apply_api_key_to_env(
-                                        provider,
-                                        custom_api_format,
-                                        api_key,
-                                        preset_index
-                                            .and_then(|i| CUSTOM_PRESETS.get(i))
-                                            .map(|p| p.name),
-                                    );
-                                    self.model_fetch_rx = Some(spawn_model_fetch_bg(
-                                        provider,
-                                        custom_base_url.trim(),
-                                        custom_api_format.trim(),
-                                    ));
-                                    *suggestion_index = 0;
-                                    *suggestion_scroll = 0;
-                                    *status = Some(format!(
-                                        "Switched provider to {}; loading models...",
-                                        provider
-                                    ));
-                                }
-                            } else {
-                                // Auto-switch to custom provider when editing endpoint fields
-                                if (*selected == 3 || *selected == 4) && provider != "custom" {
-                                    *provider = "custom".to_string();
-                                    *status = Some("Auto-switched to custom provider".to_string());
-                                }
-                                *editing = true;
-                                match *selected {
-                                    1 => input.clone_from(api_key),
-                                    2 => input.clone_from(model),
-                                    3 => input.clone_from(custom_base_url),
-                                    _ => input.clone_from(custom_api_format),
-                                }
-                                if status.as_deref() != Some("Auto-switched to custom provider") {
-                                    *status = Some("Editing field".to_string());
-                                }
-                            }
-                            self.dirty = true;
-                        }
-                        KeyCode::Char('e') | KeyCode::Char('E') if !*editing => {
-                            if *selected == 0 {
-                                *status = Some("Provider uses ←/→ or Enter to switch".to_string());
-                            } else {
-                                // Auto-switch to custom provider when editing endpoint fields
-                                if (*selected == 3 || *selected == 4) && provider != "custom" {
-                                    *provider = "custom".to_string();
-                                    *status = Some("Auto-switched to custom provider".to_string());
-                                }
-                                *editing = true;
-                                match *selected {
-                                    1 => input.clone_from(api_key),
-                                    2 => input.clone_from(model),
-                                    3 => input.clone_from(custom_base_url),
-                                    _ => input.clone_from(custom_api_format),
-                                }
-                                if status.as_deref() != Some("Auto-switched to custom provider") {
-                                    *status = Some("Editing field".to_string());
-                                }
-                            }
-                            self.dirty = true;
-                        }
-                        KeyCode::Char('/') | KeyCode::Char('f') | KeyCode::Char('F')
-                            if !*editing && *selected == 2 =>
-                        {
-                            *editing = true;
-                            *filtering_models = true;
-                            input.clone_from(model_filter);
-                            *status = Some("Filtering model suggestions".to_string());
-                            self.dirty = true;
-                        }
-                        KeyCode::Char('x') | KeyCode::Char('X') if !*editing => {
-                            let cwd = std::env::current_dir()
-                                .map(|p| p.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            let selected_tier = match *tier {
-                                0 => SettingsTier::User,
-                                1 => SettingsTier::Project,
-                                _ => SettingsTier::Local,
-                            };
-                            match *selected {
-                                0 => {
-                                    let (value, source) = restore_setting_from_source(
-                                        "model_provider",
-                                        selected_tier,
-                                        &cwd,
-                                    );
-                                    *provider = value;
-                                    *provider_source = source;
-                                    let (value, source) = restore_api_key_from_source(
-                                        provider,
-                                        custom_api_format,
-                                        preset_index
-                                            .and_then(|i| CUSTOM_PRESETS.get(i))
-                                            .map(|p| p.name),
-                                    );
-                                    *api_key = value;
-                                    *api_key_source = source;
-                                }
-                                1 => {
-                                    let (value, source) = restore_api_key_from_source(
-                                        provider,
-                                        custom_api_format,
-                                        preset_index
-                                            .and_then(|i| CUSTOM_PRESETS.get(i))
-                                            .map(|p| p.name),
-                                    );
-                                    *api_key = value;
-                                    *api_key_source = source;
-                                }
-                                2 => {
-                                    let (value, source) =
-                                        restore_setting_from_source("model", selected_tier, &cwd);
-                                    *model = value;
-                                    *model_source = source;
-                                    *model_filter = String::new();
-                                    *model_suggestions =
-                                        apply_model_filter(all_model_suggestions, model_filter);
-                                    *suggestion_index = 0;
-                                    *suggestion_scroll = 0;
-                                }
-                                3 => {
-                                    let (value, source) = restore_setting_from_source(
-                                        "custom_base_url",
-                                        selected_tier,
-                                        &cwd,
-                                    );
-                                    *custom_base_url = value;
-                                    *custom_base_url_source = source;
-                                }
-                                _ => {
-                                    let (value, source) = restore_setting_from_source(
-                                        "custom_api_format",
-                                        selected_tier,
-                                        &cwd,
-                                    );
-                                    *custom_api_format = value;
-                                    *custom_api_format_source = source;
-                                }
-                            }
-                            if *selected == 0 || *selected >= 3 {
-                                // Re-detect preset after field reset
-                                *preset_index = if provider == "custom" {
-                                    detect_preset(custom_base_url)
-                                } else {
-                                    None
-                                };
-                                if provider == "auto" {
-                                    all_model_suggestions.clear();
-                                    model_suggestions.clear();
-                                    *suggestion_index = 0;
-                                    *suggestion_scroll = 0;
-                                } else {
-                                    apply_api_key_to_env(
-                                        provider,
-                                        custom_api_format,
-                                        api_key,
-                                        preset_index
-                                            .and_then(|i| CUSTOM_PRESETS.get(i))
-                                            .map(|p| p.name),
-                                    );
-                                    self.model_fetch_rx = Some(spawn_model_fetch_bg(
-                                        provider,
-                                        custom_base_url.trim(),
-                                        custom_api_format.trim(),
-                                    ));
-                                    *suggestion_index = 0;
-                                    *suggestion_scroll = 0;
-                                }
-                            }
-                            *status =
-                                Some("Reverted current field to inherited source".to_string());
-                            self.dirty = true;
-                        }
-                        KeyCode::Char('s') | KeyCode::Char('S') if !*editing => {
-                            let cwd = std::env::current_dir()
-                                .map(|p| p.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            let tier_value = match *tier {
-                                0 => SettingsTier::User,
-                                1 => SettingsTier::Project,
-                                _ => SettingsTier::Local,
-                            };
-                            let persist_error = [
-                                Settings::persist_key_value(
-                                    "model_provider",
-                                    Some(provider.trim()),
-                                    tier_value,
-                                    &cwd,
-                                ),
-                                Settings::persist_key_value(
-                                    "model",
-                                    if model.trim().is_empty() {
-                                        None
-                                    } else {
-                                        Some(model.trim())
-                                    },
-                                    tier_value,
-                                    &cwd,
-                                ),
-                                Settings::persist_key_value(
-                                    "custom_base_url",
-                                    if custom_base_url.trim().is_empty() {
-                                        None
-                                    } else {
-                                        Some(custom_base_url.trim())
-                                    },
-                                    tier_value,
-                                    &cwd,
-                                ),
-                                Settings::persist_key_value(
-                                    "custom_api_format",
-                                    if custom_api_format.trim().is_empty() {
-                                        None
-                                    } else {
-                                        Some(custom_api_format.trim())
-                                    },
-                                    tier_value,
-                                    &cwd,
-                                ),
-                                Settings::persist_key_value(
-                                    "custom_preset",
-                                    preset_index
-                                        .and_then(|i| CUSTOM_PRESETS.get(i))
-                                        .map(|p| p.name),
-                                    tier_value,
-                                    &cwd,
-                                ),
-                            ]
-                            .into_iter()
-                            .find_map(Result::err);
-                            match persist_error {
-                                None => {
-                                    let (slot, env_var) = provider_key_slot(
-                                        provider.as_str(),
-                                        custom_api_format.as_str(),
-                                        preset_index
-                                            .and_then(|i| CUSTOM_PRESETS.get(i))
-                                            .map(|p| p.name),
-                                    );
-                                    if api_key.trim().is_empty() {
-                                        let mut store = load_credential_store();
-                                        let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
-                                        store.remove_key(slot);
-                                        let _ = store.save(&cred_path);
-                                        unsafe {
-                                            std::env::remove_var(env_var);
-                                        }
-                                    } else {
-                                        let mut store = load_credential_store();
-                                        let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
-                                        store.set_key(slot, api_key.trim());
-                                        store
-                                            .save(&cred_path)
-                                            .map_err(|e| format!("Failed to save credentials: {e}"))
-                                            .ok();
-                                        unsafe {
-                                            std::env::set_var(env_var, api_key.trim());
-                                        }
-                                    }
-                                    let user_settings =
-                                        Settings::load_tier(SettingsTier::User, &cwd);
-                                    let project_settings =
-                                        Settings::load_tier(SettingsTier::Project, &cwd);
-                                    let local_settings =
-                                        Settings::load_tier(SettingsTier::Local, &cwd);
-                                    let provider_name = provider_display_name(provider);
-                                    if provider == "custom" {
-                                        unsafe {
-                                            std::env::set_var("NOCODE_MODEL_PROVIDER", "custom");
-                                        }
-                                    } else if provider == "auto" {
-                                        unsafe {
-                                            std::env::remove_var("NOCODE_MODEL_PROVIDER");
-                                        }
-                                    } else {
-                                        unsafe {
-                                            std::env::set_var("NOCODE_MODEL_PROVIDER", &**provider);
-                                        }
-                                    }
-                                    if model.trim().is_empty() {
-                                        unsafe {
-                                            std::env::remove_var("NOCODE_MODEL");
-                                        }
-                                    } else {
-                                        unsafe {
-                                            std::env::set_var("NOCODE_MODEL", model.trim());
-                                        }
-                                        self.hud.model_name = model.trim().to_string();
-                                    }
-                                    if custom_base_url.trim().is_empty() {
-                                        unsafe {
-                                            std::env::remove_var("NOCODE_CUSTOM_BASE_URL");
-                                            std::env::remove_var("NOCODE_CUSTOM_API_FORMAT");
-                                        }
-                                    } else {
-                                        unsafe {
-                                            std::env::set_var(
-                                                "NOCODE_CUSTOM_BASE_URL",
-                                                custom_base_url.trim(),
-                                            );
-                                            std::env::set_var(
-                                                "NOCODE_CUSTOM_API_FORMAT",
-                                                custom_api_format.trim(),
-                                            );
-                                        }
-                                    }
-                                    *status = Some(format!(
-                                        "Saved configuration; current provider {provider_name}"
-                                    ));
-                                    *provider_source = setting_source_label(
-                                        "model_provider",
-                                        "NOCODE_MODEL_PROVIDER",
-                                        &user_settings,
-                                        &project_settings,
-                                        &local_settings,
-                                        (!custom_base_url.is_empty()
-                                            || !custom_api_format.is_empty())
-                                        .then_some("derived"),
-                                    );
-                                    *model_source = setting_source_label(
-                                        "model",
-                                        "NOCODE_MODEL",
-                                        &user_settings,
-                                        &project_settings,
-                                        &local_settings,
-                                        None,
-                                    );
-                                    *custom_base_url_source = setting_source_label(
-                                        "custom_base_url",
-                                        "NOCODE_CUSTOM_BASE_URL",
-                                        &user_settings,
-                                        &project_settings,
-                                        &local_settings,
-                                        None,
-                                    );
-                                    *custom_api_format_source = setting_source_label(
-                                        "custom_api_format",
-                                        "NOCODE_CUSTOM_API_FORMAT",
-                                        &user_settings,
-                                        &project_settings,
-                                        &local_settings,
-                                        Some("default"),
-                                    );
-                                    *api_key_source = if std::env::var(env_var).is_ok() {
-                                        "env".to_string()
-                                    } else if !api_key.trim().is_empty() {
-                                        "credentials".to_string()
-                                    } else {
-                                        "unset".to_string()
-                                    };
-                                    system_notice = Some(format!(
-                                        "Config applied to current session from {} settings: provider {}, model {}",
-                                        tier_value.label(),
-                                        provider_name,
-                                        if model.trim().is_empty() {
-                                            "(inherit)".to_string()
-                                        } else {
-                                            model.trim().to_string()
-                                        }
-                                    ));
-                                    // Auto-test connection after save
-                                    let mut test_settings = Settings::load_merged(&cwd);
-                                    test_settings.model_provider = Some(provider.clone());
-                                    test_settings.custom_base_url =
-                                        if custom_base_url.trim().is_empty() {
-                                            None
-                                        } else {
-                                            Some(custom_base_url.trim().to_string())
-                                        };
-                                    test_settings.custom_api_format =
-                                        if custom_api_format.trim().is_empty() {
-                                            None
-                                        } else {
-                                            Some(custom_api_format.trim().to_string())
-                                        };
-                                    let test_provider_type =
-                                        crate::resolve_provider(&test_settings);
-                                    let (test_impl, _) =
-                                        crate::build_provider(&test_provider_type, &test_settings);
-                                    let test_result = match test_impl.verify_key() {
-                                        Ok(msg) => format!("Saved + Connection OK: {msg}"),
-                                        Err(err) => format!("Saved, but connection failed: {err}"),
-                                    };
-                                    *status = Some(test_result);
-                                }
-                                Some(e) => {
-                                    *status = Some(format!("Save failed: {e}"));
-                                }
-                            }
-                            self.dirty = true;
-                        }
-                        KeyCode::Char('t') | KeyCode::Char('T') if !*editing => {
-                            let cwd = std::env::current_dir()
-                                .map(|p| p.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            let mut settings = Settings::load_merged(&cwd);
-                            settings.model_provider = Some(provider.clone());
-                            settings.custom_base_url = if custom_base_url.trim().is_empty() {
-                                None
-                            } else {
-                                Some(custom_base_url.trim().to_string())
-                            };
-                            settings.custom_api_format = if custom_api_format.trim().is_empty() {
-                                None
-                            } else {
-                                Some(custom_api_format.trim().to_string())
-                            };
-                            if !api_key.trim().is_empty() {
-                                let (_, env_var) = provider_key_slot(
-                                    provider.as_str(),
-                                    custom_api_format.as_str(),
-                                    preset_index
-                                        .and_then(|i| CUSTOM_PRESETS.get(i))
-                                        .map(|p| p.name),
-                                );
-                                unsafe {
-                                    std::env::set_var(env_var, api_key.trim());
-                                }
-                            }
-                            let provider_type = crate::resolve_provider(&settings);
-                            let (provider_impl, _) =
-                                crate::build_provider(&provider_type, &settings);
-                            *status = Some(match provider_impl.verify_key() {
-                                Ok(msg) => format!("Connection OK: {msg}"),
-                                Err(err) => format!("Connection failed: {err}"),
-                            });
-                            self.dirty = true;
-                        }
-                        KeyCode::Char('r') | KeyCode::Char('R') if !*editing => {
-                            apply_api_key_to_env(
-                                provider,
-                                custom_api_format,
-                                api_key,
-                                preset_index
-                                    .and_then(|i| CUSTOM_PRESETS.get(i))
-                                    .map(|p| p.name),
-                            );
-                            self.model_fetch_rx = Some(spawn_model_fetch_bg(
-                                provider,
-                                custom_base_url.trim(),
-                                custom_api_format.trim(),
-                            ));
-                            *suggestion_index = 0;
-                            *suggestion_scroll = 0;
-                            *status = Some("Loading models...".to_string());
-                            self.dirty = true;
-                        }
-                        KeyCode::Char('p') | KeyCode::Char('P')
-                            if !*editing && provider == "custom" =>
-                        {
-                            // Cycle through presets: None → 0 → 1 → ... → N-1 → None
-                            let next = match *preset_index {
-                                None => Some(0),
-                                Some(i) if i + 1 < CUSTOM_PRESETS.len() => Some(i + 1),
-                                Some(_) => None,
-                            };
-                            *preset_index = next;
-                            if let Some(idx) = next {
-                                let preset = &CUSTOM_PRESETS[idx];
-                                *custom_base_url = preset.base_url.to_string();
-                                *custom_api_format = preset.api_format.to_string();
-                                *custom_base_url_source = "preset".to_string();
-                                *custom_api_format_source = "preset".to_string();
-                                // Load preset-specific API key
-                                if !preset.env_key_name.is_empty() {
-                                    let store = load_credential_store();
-                                    *api_key = std::env::var(preset.env_key_name)
-                                        .ok()
-                                        .or_else(|| store.get_key(preset.credential_slot))
-                                        .unwrap_or_default();
-                                    *api_key_source = if std::env::var(preset.env_key_name).is_ok()
-                                    {
-                                        "env".to_string()
-                                    } else if load_credential_store()
-                                        .get_key(preset.credential_slot)
-                                        .is_some()
-                                    {
-                                        "credentials".to_string()
-                                    } else {
-                                        "unset".to_string()
-                                    };
-                                } else {
-                                    *api_key = String::new();
-                                    *api_key_source = "not required".to_string();
-                                }
-                                // Auto-fill default model if empty
-                                if model.is_empty() && !preset.default_model.is_empty() {
-                                    *model = preset.default_model.to_string();
-                                }
-                                *status = Some(format!(
-                                    "Applied {} preset: {} ({})",
-                                    preset.name, preset.base_url, preset.api_format
-                                ));
-                            } else {
-                                *custom_base_url = String::new();
-                                *custom_api_format = "openai".to_string();
-                                *custom_base_url_source = "unset".to_string();
-                                *custom_api_format_source = "default".to_string();
-                                *status =
-                                    Some("Switched to manual endpoint configuration".to_string());
-                            }
-                            // Refresh model suggestions for new endpoint
-                            apply_api_key_to_env(
-                                provider,
-                                custom_api_format,
-                                api_key,
-                                preset_index
-                                    .and_then(|i| CUSTOM_PRESETS.get(i))
-                                    .map(|p| p.name),
-                            );
-                            self.model_fetch_rx = Some(spawn_model_fetch_bg(
-                                provider,
-                                custom_base_url.trim(),
-                                custom_api_format.trim(),
-                            ));
-                            *suggestion_index = 0;
-                            *suggestion_scroll = 0;
-                            self.dirty = true;
-                        }
-                        KeyCode::Char(c)
-                            if !*editing
-                                && *selected == 2
-                                && ('1'..='8').contains(&c)
-                                && !model_suggestions.is_empty() =>
-                        {
-                            let idx = (c as usize) - ('1' as usize);
-                            if idx < model_suggestions.len().min(8) {
-                                let actual_idx = *suggestion_scroll + idx;
-                                if actual_idx < model_suggestions.len() {
-                                    *suggestion_index = actual_idx;
-                                    *model = model_suggestions[actual_idx].clone();
-                                }
-                                *status = Some(format!("Applied model suggestion: {}", model));
-                            }
-                            self.dirty = true;
-                        }
-                        KeyCode::Backspace if *editing => {
-                            input.pop();
-                            self.dirty = true;
-                        }
-                        KeyCode::Char(c) if *editing => {
-                            input.push(c);
-                            self.dirty = true;
-                        }
-                        _ => {}
+            if matches!(self.overlay, Overlay::Config) {
+                if let Some(ref mut config) = self.config_overlay {
+                    config.poll();
+                    config.handle_key(key);
+                    if config.saved {
+                        // Save the configuration
+                        save_config_from_flow(&config.flow);
+                        self.config_overlay = None;
+                        self.overlay = Overlay::None;
+                        self.push_system("Configuration saved. Restart nocode to apply changes.");
+                    } else if config.closed {
+                        self.config_overlay = None;
+                        self.overlay = Overlay::None;
                     }
+                } else {
+                    self.overlay = Overlay::None;
                 }
-                if let Some(notice) = system_notice {
-                    self.push_system(&notice);
-                }
+                self.dirty = true;
                 return HandleKeyResult::Continue;
             }
             // Permission overlay: y/n/a to respond
@@ -2639,11 +1540,11 @@ impl TuiApp {
     }
 
     fn handle_paste(&mut self, text: &str) {
-        if let Overlay::Config(ref mut cs) = self.overlay
-            && cs.editing
-        {
-            cs.input.push_str(text);
-            cs.status = Some("Pasted into config field".to_string());
+        if matches!(self.overlay, Overlay::Config) {
+            // Paste into config overlay input
+            if let Some(ref mut config) = self.config_overlay {
+                config.input.push_str(text);
+            }
             self.dirty = true;
             return;
         }
@@ -2755,8 +1656,14 @@ pub(crate) fn run_app_loop(
     max_tokens: u32,
     max_turns: u32,
     warnings: Vec<String>,
+    needs_onboarding: bool,
 ) -> io::Result<()> {
     let mut app = TuiApp::new(model);
+
+    // Auto-open config overlay if no API key configured
+    if needs_onboarding {
+        app.open_config_overlay();
+    }
 
     let mut messages: Vec<Message> = Vec::new();
     let tool_defs = tool_definitions_for_model(&registry);
@@ -2966,24 +1873,9 @@ pub(crate) fn run_app_loop(
             }
         }
 
-        // 2b. Poll background model fetch results
-        if let Some(result) = app.poll_model_fetch()
-            && let Overlay::Config(ref mut config) = app.overlay
-        {
-            match result {
-                Ok(models) if !models.is_empty() => {
-                    let count = models.len();
-                    config.status = Some(format!("Loaded {count} model suggestion(s)"));
-                    config.all_model_suggestions = models.clone();
-                    config.model_suggestions = models;
-                }
-                Ok(_) => {
-                    config.status = Some("No model suggestions returned".to_string());
-                }
-                Err(e) => {
-                    config.status = Some(format!("Model suggestions unavailable: {e}"));
-                }
-            }
+        // 2b. Poll new config overlay
+        if let Some(ref mut config) = app.config_overlay {
+            config.poll();
             app.dirty = true;
         }
 
@@ -3292,245 +2184,6 @@ fn next_word_boundary(s: &str, pos: usize) -> usize {
     p.min(s.len())
 }
 
-fn provider_options() -> &'static [&'static str] {
-    &["auto", "claude", "openai", "gemini", "custom"]
-}
-
-fn cycle_provider(current: &str, forward: bool) -> String {
-    let options = provider_options();
-    let current_idx = options
-        .iter()
-        .position(|p| p.eq_ignore_ascii_case(current))
-        .unwrap_or(0);
-    let next_idx = if forward {
-        (current_idx + 1) % options.len()
-    } else if current_idx == 0 {
-        options.len() - 1
-    } else {
-        current_idx - 1
-    };
-    options[next_idx].to_string()
-}
-
-fn provider_display_name(provider: &str) -> &'static str {
-    use nocode_core::provider::types::ModelProvider;
-    match ModelProvider::parse(provider) {
-        Some(ModelProvider::Claude) => "Anthropic",
-        Some(ModelProvider::OpenAi) => "OpenAI",
-        Some(ModelProvider::Gemini) => "Gemini",
-        Some(ModelProvider::Custom) => "Custom",
-        None => "Auto",
-    }
-}
-
-pub(crate) fn find_preset_by_name(name: &str) -> Option<&'static ProviderPreset> {
-    CUSTOM_PRESETS
-        .iter()
-        .find(|p| p.name.eq_ignore_ascii_case(name))
-}
-
-fn provider_key_slot(
-    provider: &str,
-    api_format: &str,
-    preset_name: Option<&str>,
-) -> (&'static str, &'static str) {
-    use nocode_core::provider::types::ModelProvider;
-    match ModelProvider::parse(provider) {
-        Some(ModelProvider::Claude) => ("anthropic", "ANTHROPIC_API_KEY"),
-        Some(ModelProvider::OpenAi) => ("openai", "OPENAI_API_KEY"),
-        Some(ModelProvider::Gemini) => ("gemini", "GEMINI_API_KEY"),
-        Some(ModelProvider::Custom) => {
-            if let Some(preset) = preset_name.and_then(find_preset_by_name) {
-                if preset.env_key_name.is_empty() {
-                    return (preset.credential_slot, "");
-                }
-                return (preset.credential_slot, preset.env_key_name);
-            }
-            let normalized = nocode_core::config::settings::normalize_api_format(api_format);
-            match normalized {
-                "anthropic" => ("anthropic", "ANTHROPIC_API_KEY"),
-                "google" => ("gemini", "GEMINI_API_KEY"),
-                _ => ("openai", "OPENAI_API_KEY"),
-            }
-        }
-        None => ("anthropic", "ANTHROPIC_API_KEY"),
-    }
-}
-
-fn load_credential_store() -> nocode_core::storage::credentials::CredentialStore {
-    let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
-    nocode_core::storage::credentials::CredentialStore::load(&cred_path).unwrap_or_default()
-}
-
-fn apply_model_filter(all_models: &[String], filter: &str) -> Vec<String> {
-    crate::model_fetch::apply_model_filter(all_models, filter)
-}
-
-fn apply_api_key_to_env(
-    provider: &str,
-    api_format: &str,
-    api_key: &str,
-    preset_name: Option<&str>,
-) {
-    if api_key.trim().is_empty() {
-        return;
-    }
-    let (_, env_var) = provider_key_slot(provider, api_format, preset_name);
-    if env_var.is_empty() {
-        return;
-    }
-    unsafe {
-        std::env::set_var(env_var, api_key.trim());
-    }
-}
-
-fn load_settings_triplet(cwd: &str) -> (Settings, Settings, Settings) {
-    (
-        Settings::load_tier(SettingsTier::User, cwd),
-        Settings::load_tier(SettingsTier::Project, cwd),
-        Settings::load_tier(SettingsTier::Local, cwd),
-    )
-}
-
-fn merged_without_tier(selected_tier: SettingsTier, cwd: &str) -> Settings {
-    let (user, project, local) = load_settings_triplet(cwd);
-    match selected_tier {
-        SettingsTier::User => Settings::default().merge(project).merge(local),
-        SettingsTier::Project => user.merge(Settings::default()).merge(local),
-        SettingsTier::Local => user.merge(project).merge(Settings::default()),
-    }
-}
-
-fn restore_setting_from_source(
-    key: &str,
-    selected_tier: SettingsTier,
-    cwd: &str,
-) -> (String, String) {
-    let (user, project, local) = load_settings_triplet(cwd);
-    let merged = merged_without_tier(selected_tier, cwd);
-    let source_without_tier = |env_var: &str, fallback: Option<&str>| -> String {
-        if std::env::var(env_var).is_ok() {
-            "env".to_string()
-        } else if selected_tier != SettingsTier::Local && local.get_key(key).is_some() {
-            "local".to_string()
-        } else if selected_tier != SettingsTier::Project && project.get_key(key).is_some() {
-            "project".to_string()
-        } else if selected_tier != SettingsTier::User && user.get_key(key).is_some() {
-            "user".to_string()
-        } else {
-            fallback.unwrap_or("default").to_string()
-        }
-    };
-    match key {
-        "model_provider" => {
-            if let Ok(value) = std::env::var("NOCODE_MODEL_PROVIDER") {
-                return (value, "env".to_string());
-            }
-            if local.get_key(key).is_some() && selected_tier != SettingsTier::Local {
-                return (
-                    merged.model_provider.unwrap_or_else(|| "auto".to_string()),
-                    "local".to_string(),
-                );
-            }
-            if project.get_key(key).is_some() && selected_tier != SettingsTier::Project {
-                return (
-                    merged.model_provider.unwrap_or_else(|| "auto".to_string()),
-                    "project".to_string(),
-                );
-            }
-            if user.get_key(key).is_some() && selected_tier != SettingsTier::User {
-                return (
-                    merged.model_provider.unwrap_or_else(|| "auto".to_string()),
-                    "user".to_string(),
-                );
-            }
-            if merged.custom_base_url.is_some() || merged.custom_api_format.is_some() {
-                return ("custom".to_string(), "derived".to_string());
-            }
-            ("auto".to_string(), "default".to_string())
-        }
-        "model" => (
-            std::env::var("NOCODE_MODEL")
-                .ok()
-                .or(merged.model)
-                .unwrap_or_default(),
-            source_without_tier("NOCODE_MODEL", None),
-        ),
-        "custom_base_url" => (
-            std::env::var("NOCODE_CUSTOM_BASE_URL")
-                .ok()
-                .or(merged.custom_base_url)
-                .unwrap_or_default(),
-            source_without_tier("NOCODE_CUSTOM_BASE_URL", None),
-        ),
-        "custom_api_format" => (
-            std::env::var("NOCODE_CUSTOM_API_FORMAT")
-                .ok()
-                .or(merged.custom_api_format)
-                .unwrap_or_else(|| "openai-responses".to_string()),
-            source_without_tier("NOCODE_CUSTOM_API_FORMAT", Some("default")),
-        ),
-        _ => (String::new(), "default".to_string()),
-    }
-}
-
-fn restore_api_key_from_source(
-    provider: &str,
-    api_format: &str,
-    preset_name: Option<&str>,
-) -> (String, String) {
-    let store = load_credential_store();
-    let (slot, env_var) = provider_key_slot(provider, api_format, preset_name);
-    if !env_var.is_empty()
-        && let Ok(value) = std::env::var(env_var)
-    {
-        return (value, "env".to_string());
-    }
-    if let Some(value) = store.get_key(slot) {
-        return (value, "credentials".to_string());
-    }
-    (String::new(), "unset".to_string())
-}
-
-fn setting_source_label(
-    key: &str,
-    env_var: &str,
-    user_settings: &Settings,
-    project_settings: &Settings,
-    local_settings: &Settings,
-    fallback: Option<&str>,
-) -> String {
-    if std::env::var(env_var).is_ok() {
-        return "env".to_string();
-    }
-    if local_settings.get_key(key).is_some() {
-        return "local".to_string();
-    }
-    if project_settings.get_key(key).is_some() {
-        return "project".to_string();
-    }
-    if user_settings.get_key(key).is_some() {
-        return "user".to_string();
-    }
-    fallback.unwrap_or("default").to_string()
-}
-
-fn fetch_model_suggestions(
-    provider: &str,
-    custom_base_url: &str,
-    custom_api_format: &str,
-) -> Result<Vec<String>, String> {
-    crate::model_fetch::fetch_model_suggestions(provider, custom_base_url, custom_api_format)
-}
-
-fn spawn_model_fetch_bg(
-    provider: &str,
-    custom_base_url: &str,
-    custom_api_format: &str,
-) -> std::sync::mpsc::Receiver<Result<Vec<String>, String>> {
-    crate::model_fetch::spawn_model_fetch_bg(provider, custom_base_url, custom_api_format)
-}
-
 fn prev_word_boundary(s: &str, pos: usize) -> usize {
     if pos == 0 {
         return 0;
@@ -3657,6 +2310,83 @@ fn encode_rgba_to_png(
     Ok(())
 }
 
+fn save_config_from_flow(flow: &crate::config_flow::ConfigFlowState) {
+    use nocode_core::config::settings::{Settings, SettingsTier};
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    // Save API key
+    if !flow.api_key.is_empty() {
+        let slot = flow.credential_slot();
+        let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
+        let mut store = nocode_core::storage::credentials::CredentialStore::load(&cred_path)
+            .unwrap_or_default();
+        store.set_key(slot, &flow.api_key);
+        let _ = store.save(&cred_path);
+        // Also set env var for current session
+        if let Some(preset) = flow.preset
+            && !preset.env_key_name.is_empty()
+        {
+            unsafe { std::env::set_var(preset.env_key_name, &flow.api_key) };
+        }
+    }
+
+    // Save settings
+    let model_val = if flow.model.is_empty() {
+        None
+    } else {
+        Some(flow.model.as_str())
+    };
+    let _ = Settings::persist_key_value("model", model_val, SettingsTier::User, &cwd);
+    let provider_type = flow.provider_type_str();
+    let _ = Settings::persist_key_value(
+        "model_provider",
+        Some(provider_type),
+        SettingsTier::User,
+        &cwd,
+    );
+    // Set env vars for current session so provider resolution picks them up
+    unsafe {
+        if let Some(m) = model_val {
+            std::env::set_var("NOCODE_MODEL", m);
+        }
+        std::env::set_var("NOCODE_MODEL_PROVIDER", provider_type);
+    }
+
+    if flow.needs_custom_settings() {
+        let _ = Settings::persist_key_value(
+            "custom_base_url",
+            Some(&flow.base_url),
+            SettingsTier::User,
+            &cwd,
+        );
+        let _ = Settings::persist_key_value(
+            "custom_api_format",
+            Some(&flow.api_format),
+            SettingsTier::User,
+            &cwd,
+        );
+        if let Some(preset) = flow.preset {
+            let _ = Settings::persist_key_value(
+                "custom_preset",
+                Some(preset.name),
+                SettingsTier::User,
+                &cwd,
+            );
+        }
+        // Set env vars for current session
+        unsafe {
+            std::env::set_var("NOCODE_CUSTOM_BASE_URL", &flow.base_url);
+            std::env::set_var("NOCODE_CUSTOM_API_FORMAT", &flow.api_format);
+        }
+    } else {
+        let _ = Settings::persist_key_value("custom_base_url", None, SettingsTier::User, &cwd);
+        let _ = Settings::persist_key_value("custom_api_format", None, SettingsTier::User, &cwd);
+        let _ = Settings::persist_key_value("custom_preset", None, SettingsTier::User, &cwd);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3667,38 +2397,46 @@ mod tests {
 
     #[test]
     fn detect_preset_exact_match() {
-        assert_eq!(detect_preset("https://openrouter.ai/api/v1"), Some(0)); // OpenRouter
-        assert_eq!(detect_preset("https://api.together.xyz/v1"), Some(1)); // Together
-        assert_eq!(detect_preset("https://api.groq.com/openai/v1"), Some(2)); // Groq
+        // Big 3
+        assert_eq!(detect_preset("https://api.anthropic.com"), Some(0)); // Anthropic
+        assert_eq!(detect_preset("https://api.openai.com"), Some(1)); // OpenAI
+        assert_eq!(
+            detect_preset("https://generativelanguage.googleapis.com"),
+            Some(2),
+        ); // Gemini
+        // Custom presets (offset +3)
+        assert_eq!(detect_preset("https://openrouter.ai/api/v1"), Some(3)); // OpenRouter
+        assert_eq!(detect_preset("https://api.together.xyz/v1"), Some(4)); // Together
+        assert_eq!(detect_preset("https://api.groq.com/openai/v1"), Some(5)); // Groq
         assert_eq!(
             detect_preset("https://api.fireworks.ai/inference/v1"),
-            Some(3)
+            Some(6)
         ); // Fireworks
-        assert_eq!(detect_preset("https://api.deepseek.com/v1"), Some(4)); // DeepSeek
-        assert_eq!(detect_preset("https://api.mistral.ai/v1"), Some(5)); // Mistral
-        assert_eq!(detect_preset("http://localhost:11434/v1"), Some(6)); // Ollama
-        assert_eq!(detect_preset("http://localhost:8000/v1"), Some(7)); // vLLM
-        assert_eq!(detect_preset("http://localhost:4000/v1"), Some(8)); // LiteLLM
-        assert_eq!(detect_preset("http://localhost:8080/v1"), Some(9)); // LocalAI
-        assert_eq!(detect_preset("http://localhost:1234/v1"), Some(10)); // LM Studio
+        assert_eq!(detect_preset("https://api.deepseek.com/v1"), Some(7)); // DeepSeek
+        assert_eq!(detect_preset("https://api.mistral.ai/v1"), Some(8)); // Mistral
+        assert_eq!(detect_preset("http://localhost:11434/v1"), Some(9)); // Ollama
+        assert_eq!(detect_preset("http://localhost:8000/v1"), Some(10)); // vLLM
+        assert_eq!(detect_preset("http://localhost:4000/v1"), Some(11)); // LiteLLM
+        assert_eq!(detect_preset("http://localhost:8080/v1"), Some(12)); // LocalAI
+        assert_eq!(detect_preset("http://localhost:1234/v1"), Some(13)); // LM Studio
     }
 
     #[test]
     fn detect_preset_trailing_slash() {
-        assert_eq!(detect_preset("https://openrouter.ai/api/v1/"), Some(0));
-        assert_eq!(detect_preset("http://localhost:11434/v1/"), Some(6));
+        assert_eq!(detect_preset("https://openrouter.ai/api/v1/"), Some(3));
+        assert_eq!(detect_preset("http://localhost:11434/v1/"), Some(9));
     }
 
     #[test]
     fn detect_preset_whitespace() {
-        assert_eq!(detect_preset("  https://openrouter.ai/api/v1  "), Some(0));
-        assert_eq!(detect_preset("\thttp://localhost:8000/v1\n"), Some(7));
+        assert_eq!(detect_preset("  https://openrouter.ai/api/v1  "), Some(3));
+        assert_eq!(detect_preset("\thttp://localhost:8000/v1\n"), Some(10));
     }
 
     #[test]
     fn detect_preset_case_insensitive() {
-        assert_eq!(detect_preset("HTTPS://OPENROUTER.AI/API/V1"), Some(0));
-        assert_eq!(detect_preset("HTTP://LOCALHOST:11434/V1"), Some(6));
+        assert_eq!(detect_preset("HTTPS://OPENROUTER.AI/API/V1"), Some(3));
+        assert_eq!(detect_preset("HTTP://LOCALHOST:11434/V1"), Some(9));
     }
 
     #[test]
@@ -3715,11 +2453,14 @@ mod tests {
 
     #[test]
     fn preset_label_valid_indices() {
-        assert_eq!(preset_label(Some(0)), "OpenRouter");
-        assert_eq!(preset_label(Some(1)), "Together");
-        assert_eq!(preset_label(Some(6)), "Ollama");
-        assert_eq!(preset_label(Some(7)), "vLLM");
-        assert_eq!(preset_label(Some(10)), "LM Studio");
+        assert_eq!(preset_label(Some(0)), "Anthropic");
+        assert_eq!(preset_label(Some(1)), "OpenAI");
+        assert_eq!(preset_label(Some(2)), "Gemini");
+        assert_eq!(preset_label(Some(3)), "OpenRouter");
+        assert_eq!(preset_label(Some(4)), "Together");
+        assert_eq!(preset_label(Some(9)), "Ollama");
+        assert_eq!(preset_label(Some(10)), "vLLM");
+        assert_eq!(preset_label(Some(13)), "LM Studio");
     }
 
     #[test]
@@ -3730,12 +2471,12 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // CUSTOM_PRESETS invariants
+    // ALL_PRESETS invariants
     // -----------------------------------------------------------------------
 
     #[test]
     fn presets_have_unique_urls() {
-        let urls: Vec<&str> = CUSTOM_PRESETS.iter().map(|p| p.base_url).collect();
+        let urls: Vec<&str> = ALL_PRESETS.iter().map(|p| p.base_url).collect();
         for (i, url) in urls.iter().enumerate() {
             for (j, other) in urls.iter().enumerate() {
                 if i != j {
@@ -3752,7 +2493,7 @@ mod tests {
     #[test]
     fn presets_have_valid_api_format() {
         let valid = nocode_core::config::settings::API_FORMATS;
-        for preset in CUSTOM_PRESETS {
+        for preset in ALL_PRESETS {
             assert!(
                 valid.contains(&preset.api_format),
                 "Invalid api_format '{}' in preset '{}'",
@@ -3764,8 +2505,8 @@ mod tests {
 
     #[test]
     fn presets_not_empty() {
-        assert!(!CUSTOM_PRESETS.is_empty(), "Preset list must not be empty");
-        for preset in CUSTOM_PRESETS {
+        assert!(!ALL_PRESETS.is_empty(), "Preset list must not be empty");
+        for preset in ALL_PRESETS {
             assert!(!preset.name.is_empty(), "Preset name must not be empty");
             assert!(
                 !preset.base_url.is_empty(),
@@ -3781,7 +2522,7 @@ mod tests {
     #[test]
     fn detect_preset_roundtrip() {
         // Every preset's own URL should be detected back to its index.
-        for (i, preset) in CUSTOM_PRESETS.iter().enumerate() {
+        for (i, preset) in ALL_PRESETS.iter().enumerate() {
             assert_eq!(
                 detect_preset(preset.base_url),
                 Some(i),

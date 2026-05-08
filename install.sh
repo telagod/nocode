@@ -129,7 +129,7 @@ main() {
         echo ""
         echo "Or add to your shell profile (~/.bashrc, ~/.zshrc, etc.)"
     else
-        echo "Run: nocode --tui"
+        echo "Run: nocode"
     fi
 }
 

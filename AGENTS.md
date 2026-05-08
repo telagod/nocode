@@ -4,7 +4,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## What is nocode
 
-A terminal-native AI coding assistant built in Rust. Connects to Codex, OpenAI, Gemini, Foundry, or any compatible endpoint. Two interfaces: line-mode REPL and 4-pane TUI with Markdown rendering, syntect syntax highlighting, RGB color support, vim mode, dark/light themes, and thinking block display.
+A terminal-native AI coding assistant built in Rust. Connects to Codex, OpenAI, Gemini, Foundry, or any compatible endpoint. The current user-facing interface is a TUI plus login/bootstrap flows.
 
 ## Build & Test Commands
 
@@ -29,7 +29,7 @@ Two-crate Cargo workspace (edition 2024, clippy all+pedantic+nursery, unsafe for
 
 ```
 crates/nocode-core/   — library (86 modules), all core logic
-crates/nocode/        — binary (18 modules), CLI/REPL/TUI shell
+crates/nocode/        — binary, CLI/TUI shell
 ```
 
 Key dependencies: serde, serde_json, reqwest (rustls-tls), rusqlite (bundled), chrono, pulldown-cmark, syntect, crossterm, ratatui, tokio.
@@ -42,7 +42,8 @@ nocode-core:
 
 nocode:
 - `full` (default) = `tui` + `nocode-core/full`
-- `minimal` = `nocode-core/minimal` (no TUI)
+- `minimal` = `nocode-core/minimal`
+- `tui` = TUI interface dependencies
 
 ## Architecture
 
@@ -113,7 +114,7 @@ Several subsystems use `OnceLock<Arc<Mutex<T>>>` singletons: `TaskCoordinator`, 
 
 ### Trust & Permission System
 
-`tool/trust.rs` defines `TrustResolver` with chainable policies (AllowAll, PromptRequired, RuleBased). `tool/permission.rs` enforces tool-level permissions. The TUI has a dedicated permission overlay (`tui_permission.rs`) for interactive approve/deny.
+`tool/trust.rs` defines `TrustResolver` with chainable policies (AllowAll, PromptRequired, RuleBased). `tool/permission.rs` enforces tool-level permissions across TUI and agent flows.
 
 ### Recovery
 
@@ -130,26 +131,20 @@ Several subsystems use `OnceLock<Arc<Mutex<T>>>` singletons: `TaskCoordinator`, 
 - `MockAnthropicService` provides 12 deterministic scenarios with `CapturedRequest` recording
 - Query engine has dedicated test suite in `query_engine/tests/` (state resume, submission, support)
 
-### TUI Features
+### Interface
 
-The TUI (`tui_app.rs`, `tui_widgets.rs`) provides a rich terminal interface:
+The CLI currently exposes:
 
-- **Vim mode**: Normal/Insert mode with `h/j/k/l/w/b/e/x/dd/C` motions, Esc toggle, `[NORMAL]` indicator
-- **Theme switching**: Dark/light themes via `Ctrl-T`, `RwLock`-based runtime switching (`tui_theme.rs`)
-- **Thinking blocks**: Collapsible `∴` blocks showing model reasoning, `Ctrl-O` expand/collapse
-- **Paste support**: Bracketed paste mode for multi-line paste with newline preservation
-- **Streaming**: Real-time incremental text rendering, tool start/done/result events
-- **Tool display**: Codex visual language (`❯/⎿/●/∴/•/✖/⚠`), collapsible tool output with `Tab`
-- **Inline permissions**: `⚠ y/n/a` prompt for tool approval
-- **Input**: Multi-line with `Shift-Enter`, input history `Ctrl-P/N`, `Ctrl-U` clear
-- **Slash commands**: `/help /clear /status /model /sessions /resume /mcp /agents /quit`
+- **TUI**: `/help /clear /status /model /sessions /resume /mcp /agents /quit`
+- **Interactive login/bootstrap**: `nocode --login` for provider setup and model selection
+- **Streaming tool output**: real-time TUI rendering of tool lifecycle and agent notifications
 - **Session resume**: `/sessions` lists saved sessions, `/resume <id>` restores transcript
 - **MCP status**: `/mcp` shows connected MCP servers and discovered tools
 - **Agent status**: `/agents` shows background agent workers and their state
 
 ### Model Stream Events
 
-`ModelStreamEvent` enum drives real-time TUI updates during model calls:
+`ModelStreamEvent` enum drives real-time TUI and agent updates during model calls:
 
 - `Start` / `Delta` / `Complete` — standard streaming text
 - `ToolUseStart` / `ToolUseDone` — tool call lifecycle (name, args summary)
@@ -171,7 +166,7 @@ Agent tool calls spawn on background threads via `WorkerRegistry` for parallel e
 
 ### MCP Integration
 
-MCP servers configured in `settings.json` under `mcp_servers` are auto-connected at TUI startup. `McpManager` handles lifecycle (11 phases), health checks, reconnection. `McpClient` communicates via JSON-RPC over stdio. Tools discovered via `tools/list` are routable through `mcp/bridge.rs`. MCP server mode (`--mcp-server`) exposes nocode itself as an MCP server.
+MCP servers configured in `settings.json` under `mcp_servers` are auto-connected during TUI startup. `McpManager` handles lifecycle (11 phases), health checks, reconnection. `McpClient` communicates via JSON-RPC over stdio. Tools discovered via `tools/list` are routable through `mcp/bridge.rs`. MCP server mode (`--mcp-server`) exposes nocode itself as an MCP server.
 
 ## Key Conventions
 
@@ -199,8 +194,7 @@ MCP servers configured in `settings.json` under `mcp_servers` are auto-connected
 ## Run Modes
 
 ```bash
-nocode --repl                        # interactive REPL
-nocode --tui                         # 4-pane terminal UI
+nocode                               # interactive TUI
 nocode --status                      # system diagnostics
 nocode --bridge-once "prompt"        # single-turn local
 nocode --bridge-remote-once "prompt" # single-turn HTTP

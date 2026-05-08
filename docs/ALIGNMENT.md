@@ -3,6 +3,7 @@
 > 更新时间：2026-04-11（v0.2.16 — MCP tool dispatch, WebSocket server, 741+ tests）
 > 基准：Claude Code 2.1.90 (sdk-tools.d.ts 21 tools) vs nocode Rust (108 .rs files, 734 tests)
 > 审计方法：逐文件源码验证，不接受 "注册即完成"
+> 说明：2026-04-21 起主界面已移除 TUI，文中 TUI 条目仅作为历史对齐记录。
 
 ## 图例
 
@@ -48,7 +49,7 @@
 | 工具 | Claude Code | nocode | 状态 |
 |------|------------|--------|------|
 | Agent | ✅ | ✅ 后台线程 + model override | ✅ 完成 |
-| **AskUserQuestion** | ✅ | ✅ TUI overlay + REPL stdin + mpsc channel bridge | ✅ 完成 |
+| **AskUserQuestion** | ✅ | ✅ TUI overlay + mpsc channel bridge | ✅ 完成 |
 | Bash | ✅ | ✅ JSON output + timeout + background + sandbox | ✅ 完成 |
 | Config | ✅ | ✅ get/set/list | ✅ 完成 |
 | EnterWorktree | ✅ | ✅ git worktree add | ✅ 完成 |
@@ -133,7 +134,7 @@
 
 | 能力 | Claude Code | nocode | 状态 |
 |------|------------|--------|------|
-| Ink/React 富文本 REPL | ✅ | ❌ 纯文本 REPL | 架构不同 |
+| Ink/React 富文本 REPL | ✅ | ❌ 非目标（TUI-only） | 设计决策 |
 | TUI 多窗格 | ❌ | ✅ 四窗格 crossterm | ✅ nocode 独有 |
 | TUI overlay 系统 | ❌ | ✅ F1/F2/F3 | ✅ nocode 独有 |
 | TUI async submission | ❌ | ✅ engine move 进 thread | ✅ nocode 独有 |
@@ -363,7 +364,7 @@
 
 | 维度 | 旧标记 | 修正后 | 原因 |
 |------|--------|--------|------|
-| AskUserQuestion | ❌ Stub | ✅ 完成 | TUI overlay + REPL stdin + mpsc channel bridge |
+| AskUserQuestion | ❌ Stub | ✅ 完成 | TUI overlay + mpsc channel bridge |
 | EnterPlanMode | ❌ Stub | ✅ 完成 | AtomicBool plan mode → ToolExecutor 只读限制 |
 | ExitPlanMode | ❌ Stub | ✅ 完成 | 清除 plan mode + allowedPrompts → PermissionRule 注册 |
 | ToolSearch | 未列出 | ✅ 完成 | GlobalToolRegistry 搜索 + select: 精确查找 |
@@ -383,7 +384,7 @@
 ### 按优先级排列的剩余缺口
 
 **P0 — 工具闭环（3 stub → 真实功能）— ✅ 全部完成：**
-1. ~~AskUserQuestion~~ — ✅ TUI overlay + REPL stdin + mpsc channel bridge
+1. ~~AskUserQuestion~~ — ✅ TUI overlay + mpsc channel bridge
 2. ~~EnterPlanMode~~ — ✅ AtomicBool plan mode → ToolExecutor 只读限制
 3. ~~ExitPlanMode~~ — ✅ 退出 plan + allowedPrompts → PermissionRule 注册
 

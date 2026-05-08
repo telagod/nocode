@@ -1,7 +1,7 @@
 //! Command registry — centralized slash command management.
 //!
 //! Each command has a name, aliases, summary, optional argument hint, and an action type.
-//! The TUI and REPL dispatch through this registry.
+//! The TUI and supporting interfaces dispatch through this registry.
 
 use std::collections::HashMap;
 
@@ -151,7 +151,7 @@ impl CommandRegistry {
             CommandEntry {
                 name: "config",
                 aliases: &["settings", "login"],
-                summary: "Show or edit configuration (alias: /login, /settings)",
+                summary: "Show effective config — use /config to change settings",
                 argument_hint: None,
                 action: CommandAction::Config,
             },

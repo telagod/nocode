@@ -7,7 +7,7 @@ use crossterm::{
 use std::io::{self, Write};
 
 use crate::model_fetch;
-use crate::tui_app::CUSTOM_PRESETS;
+use crate::provider_presets::ALL_PRESETS;
 
 struct LoginProvider {
     name: &'static str,
@@ -21,40 +21,9 @@ struct LoginProvider {
 }
 
 fn build_provider_list() -> Vec<LoginProvider> {
-    let mut list = vec![
-        LoginProvider {
-            name: "Anthropic (Claude)",
-            credential_slot: "anthropic",
-            env_key_name: "ANTHROPIC_API_KEY",
-            auth_hint: "Get key at console.anthropic.com/settings/keys",
-            base_url: "",
-            api_format: "",
-            _default_model: "claude-sonnet-4-6-20250514",
-            provider_type: "claude",
-        },
-        LoginProvider {
-            name: "OpenAI",
-            credential_slot: "openai",
-            env_key_name: "OPENAI_API_KEY",
-            auth_hint: "Get key at platform.openai.com/api-keys",
-            base_url: "",
-            api_format: "",
-            _default_model: "gpt-5.4",
-            provider_type: "openai",
-        },
-        LoginProvider {
-            name: "Google (Gemini)",
-            credential_slot: "gemini",
-            env_key_name: "GEMINI_API_KEY",
-            auth_hint: "Get key at aistudio.google.com/apikey",
-            base_url: "",
-            api_format: "",
-            _default_model: "gemini-3.1-pro",
-            provider_type: "gemini",
-        },
-    ];
-    for p in CUSTOM_PRESETS {
-        list.push(LoginProvider {
+    ALL_PRESETS
+        .iter()
+        .map(|p| LoginProvider {
             name: p.name,
             credential_slot: p.credential_slot,
             env_key_name: p.env_key_name,
@@ -62,10 +31,9 @@ fn build_provider_list() -> Vec<LoginProvider> {
             base_url: p.base_url,
             api_format: p.api_format,
             _default_model: p.default_model,
-            provider_type: "custom",
-        });
-    }
-    list
+            provider_type: p.provider_type,
+        })
+        .collect()
 }
 
 fn mask_key(key: &str) -> String {
@@ -192,7 +160,8 @@ fn step_select_model(
     let _ = writeln!(stdout, "  Fetching models from {}...\r", provider.name);
     let _ = stdout.flush();
 
-    let (prov_str, base, fmt) = if provider.base_url.is_empty() {
+    let is_native = matches!(provider.provider_type, "anthropic" | "openai" | "gemini");
+    let (prov_str, base, fmt) = if is_native {
         (provider.provider_type, "", "")
     } else {
         ("custom", provider.base_url, provider.api_format)
@@ -202,7 +171,7 @@ fn step_select_model(
         unsafe { std::env::set_var(provider.env_key_name, api_key) };
     }
 
-    let models = if !provider.base_url.is_empty() && !api_key.is_empty() {
+    let models = if !is_native && !api_key.is_empty() {
         model_fetch::fetch_model_suggestions_with_key(base, fmt, api_key)
     } else {
         model_fetch::fetch_model_suggestions(prov_str, base, fmt)

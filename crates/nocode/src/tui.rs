@@ -16,6 +16,7 @@ use ratatui::backend::CrosstermBackend;
 use std::io::{self, IsTerminal};
 
 /// Run the TUI with a pre-built provider and config.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_tui(
     provider: Box<dyn Provider>,
     registry: ToolRegistry,
@@ -24,6 +25,7 @@ pub(crate) fn run_tui(
     max_tokens: u32,
     max_turns: u32,
     warnings: Vec<String>,
+    needs_onboarding: bool,
 ) -> io::Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(io::Error::other("nocode tui requires an interactive TTY"));
@@ -53,6 +55,7 @@ pub(crate) fn run_tui(
         max_tokens,
         max_turns,
         warnings,
+        needs_onboarding,
     );
 
     // Cleanup

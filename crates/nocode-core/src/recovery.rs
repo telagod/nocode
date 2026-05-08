@@ -45,16 +45,15 @@ impl RecoveryRecipe {
         match scenario {
             FailureScenario::TransientNetwork => Self {
                 scenario,
-                actions: vec![RecoveryAction::RetryWithBackoff {
-                    base_ms: 500,
-                    max_attempts: 3,
-                }],
-                max_attempts: 3,
+                actions: vec![RecoveryAction::Retry { delay_ms: 0 }],
+                max_attempts: 1,
             },
             FailureScenario::RateLimited => Self {
                 scenario,
-                actions: vec![RecoveryAction::Retry { delay_ms: 60_000 }],
-                max_attempts: 3,
+                actions: vec![RecoveryAction::Abort {
+                    reason: "Rate limited — retry manually when capacity is available".to_string(),
+                }],
+                max_attempts: 1,
             },
             FailureScenario::AuthFailure => Self {
                 scenario,
@@ -65,21 +64,15 @@ impl RecoveryRecipe {
             },
             FailureScenario::ModelOverloaded => Self {
                 scenario,
-                actions: vec![
-                    RecoveryAction::RetryWithBackoff {
-                        base_ms: 2000,
-                        max_attempts: 2,
-                    },
-                    RecoveryAction::SwitchModel {
-                        fallback: "claude-haiku-4-5-20251001".to_string(),
-                    },
-                ],
-                max_attempts: 3,
+                actions: vec![RecoveryAction::SwitchModel {
+                    fallback: "claude-haiku-4-5-20251001".to_string(),
+                }],
+                max_attempts: 1,
             },
             FailureScenario::ContextOverflow => Self {
                 scenario,
                 actions: vec![RecoveryAction::CompactAndRetry],
-                max_attempts: 2,
+                max_attempts: 1,
             },
             FailureScenario::ToolFailure => Self {
                 scenario,
@@ -89,7 +82,7 @@ impl RecoveryRecipe {
                         reason: "Tool failed after retry".to_string(),
                     },
                 ],
-                max_attempts: 2,
+                max_attempts: 1,
             },
             FailureScenario::Fatal => Self {
                 scenario,
@@ -183,12 +176,12 @@ mod tests {
     }
 
     #[test]
-    fn recipe_transient_retries() {
+    fn recipe_transient_retries_immediately() {
         let recipe = RecoveryRecipe::for_scenario(FailureScenario::TransientNetwork);
-        assert_eq!(recipe.max_attempts, 3);
+        assert_eq!(recipe.max_attempts, 1);
         assert!(matches!(
             recipe.actions[0],
-            RecoveryAction::RetryWithBackoff { .. }
+            RecoveryAction::Retry { delay_ms: 0 }
         ));
     }
 

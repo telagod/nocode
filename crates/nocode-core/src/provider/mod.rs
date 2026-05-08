@@ -9,6 +9,7 @@ pub mod resolve;
 pub mod transport;
 pub mod types;
 
+use std::sync::{Arc, atomic::AtomicBool};
 use types::{CreateMessageRequest, CreateMessageResponse, ProviderError, StreamEvent};
 
 /// Trait for model providers (Claude, OpenAI, Gemini, etc.)
@@ -25,6 +26,21 @@ pub trait Provider: Send + Sync {
         request: &CreateMessageRequest,
         on_event: &mut dyn FnMut(StreamEvent),
     ) -> Result<CreateMessageResponse, ProviderError>;
+
+    /// Make a streaming model call with an optional cooperative cancel token.
+    ///
+    /// Providers can override this to interrupt in-flight SSE reads more
+    /// quickly. The default implementation falls back to the legacy
+    /// `create_message_stream` behavior.
+    fn create_message_stream_with_cancel(
+        &self,
+        request: &CreateMessageRequest,
+        on_event: &mut dyn FnMut(StreamEvent),
+        cancel_token: Option<Arc<AtomicBool>>,
+    ) -> Result<CreateMessageResponse, ProviderError> {
+        let _ = cancel_token;
+        self.create_message_stream(request, on_event)
+    }
 
     /// Verify the API key is valid. Returns Ok(model_info) or Err on failure.
     fn verify_key(&self) -> Result<String, ProviderError> {
@@ -64,6 +80,16 @@ impl Provider for ProviderBox {
         on_event: &mut dyn FnMut(StreamEvent),
     ) -> Result<CreateMessageResponse, ProviderError> {
         self.inner.create_message_stream(request, on_event)
+    }
+
+    fn create_message_stream_with_cancel(
+        &self,
+        request: &CreateMessageRequest,
+        on_event: &mut dyn FnMut(StreamEvent),
+        cancel_token: Option<Arc<AtomicBool>>,
+    ) -> Result<CreateMessageResponse, ProviderError> {
+        self.inner
+            .create_message_stream_with_cancel(request, on_event, cancel_token)
     }
 
     fn verify_key(&self) -> Result<String, ProviderError> {

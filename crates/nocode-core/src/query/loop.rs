@@ -8,7 +8,8 @@ use crate::query::events::ModelStreamEvent;
 use crate::recovery::{self, RecoveryAction, RecoveryRecipe};
 use crate::session::compaction::{Compactor, TailCompactor};
 use crate::tool::executor::ToolExecutor;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 
 /// Configuration for the agentic loop.
 pub struct LoopConfig {
@@ -50,6 +51,15 @@ pub trait LoopObserver: Send {
 /// No-op observer for headless usage.
 pub struct NoopObserver;
 impl LoopObserver for NoopObserver {}
+
+fn cancellation_requested(cancel_token: Option<&Arc<AtomicBool>>) -> bool {
+    cancel_token.is_some_and(|token| token.load(Ordering::Relaxed))
+}
+
+fn is_cancelled_error(error: &ProviderError, cancel_token: Option<&Arc<AtomicBool>>) -> bool {
+    cancellation_requested(cancel_token)
+        || crate::provider::transport::is_cancelled_message(&error.message)
+}
 
 fn emit_tool_result_event(
     observer: &mut dyn LoopObserver,
@@ -185,7 +195,7 @@ pub fn run_agentic_loop_with_cancel(
     initial_messages: Vec<Message>,
     observer: &mut dyn LoopObserver,
     budget: &mut TokenBudget,
-    cancel_token: Option<&std::sync::atomic::AtomicBool>,
+    cancel_token: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<LoopResult, ProviderError> {
     let mut messages = initial_messages;
     let mut total_input_tokens: u64 = 0;
@@ -201,9 +211,7 @@ pub fn run_agentic_loop_with_cancel(
 
     loop {
         // Check cancel token at top of each turn
-        if let Some(token) = cancel_token
-            && token.load(std::sync::atomic::Ordering::Relaxed)
-        {
+        if cancellation_requested(cancel_token.as_ref()) {
             observer.on_model_event(&ModelStreamEvent::StreamError {
                 message: "Cancelled by user".to_string(),
                 retryable: false,
@@ -275,40 +283,45 @@ pub fn run_agentic_loop_with_cancel(
         };
 
         // Stream the model response, forwarding events — with recovery
-        let stream_result = provider.create_message_stream(&request, &mut |event| {
-            observer.on_stream_event(&event);
-            match &event {
-                StreamEvent::ContentBlockStart {
-                    content_block: ContentBlock::ToolUse { id, name, .. },
-                    ..
-                } => {
-                    observer.on_model_event(&ModelStreamEvent::ToolUseStart {
-                        id: id.clone(),
-                        name: name.clone(),
-                    });
-                }
-                StreamEvent::ContentBlockDelta { delta, .. } => match delta {
-                    StreamDelta::TextDelta { text } => {
-                        observer
-                            .on_model_event(&ModelStreamEvent::TextDelta { text: text.clone() });
-                    }
-                    StreamDelta::ThinkingDelta { thinking } => {
-                        observer.on_model_event(&ModelStreamEvent::ThinkingDelta {
-                            thinking: thinking.clone(),
+        let stream_result = provider.create_message_stream_with_cancel(
+            &request,
+            &mut |event| {
+                observer.on_stream_event(&event);
+                match &event {
+                    StreamEvent::ContentBlockStart {
+                        content_block: ContentBlock::ToolUse { id, name, .. },
+                        ..
+                    } => {
+                        observer.on_model_event(&ModelStreamEvent::ToolUseStart {
+                            id: id.clone(),
+                            name: name.clone(),
                         });
                     }
-                    StreamDelta::InputJsonDelta { .. } => {
-                        // Forwarded via on_stream_event above — TUI handles directly
+                    StreamEvent::ContentBlockDelta { delta, .. } => match delta {
+                        StreamDelta::TextDelta { text } => {
+                            observer.on_model_event(&ModelStreamEvent::TextDelta {
+                                text: text.clone(),
+                            });
+                        }
+                        StreamDelta::ThinkingDelta { thinking } => {
+                            observer.on_model_event(&ModelStreamEvent::ThinkingDelta {
+                                thinking: thinking.clone(),
+                            });
+                        }
+                        StreamDelta::InputJsonDelta { .. } => {
+                            // Forwarded via on_stream_event above — TUI handles directly
+                        }
+                    },
+                    StreamEvent::MessageDelta { usage, .. } => {
+                        observer.on_model_event(&ModelStreamEvent::UsageUpdate {
+                            usage: usage.clone(),
+                        });
                     }
-                },
-                StreamEvent::MessageDelta { usage, .. } => {
-                    observer.on_model_event(&ModelStreamEvent::UsageUpdate {
-                        usage: usage.clone(),
-                    });
+                    _ => {}
                 }
-                _ => {}
-            }
-        });
+            },
+            cancel_token.clone(),
+        );
 
         let response = match stream_result {
             Ok(r) => {
@@ -316,6 +329,14 @@ pub fn run_agentic_loop_with_cancel(
                 r
             }
             Err(e) => {
+                if is_cancelled_error(&e, cancel_token.as_ref()) {
+                    observer.on_model_event(&ModelStreamEvent::StreamError {
+                        message: "Cancelled by user".to_string(),
+                        retryable: false,
+                    });
+                    break;
+                }
+
                 let scenario = recovery::classify_error(e.status_code, &e.message);
                 let recipe = RecoveryRecipe::for_scenario(scenario);
 
@@ -331,11 +352,18 @@ pub fn run_agentic_loop_with_cancel(
                 for action in &recipe.actions {
                     match action {
                         RecoveryAction::Retry { delay_ms } => {
+                            let message = if *delay_ms == 0 {
+                                format!("Retrying immediately: {}", e.message)
+                            } else {
+                                format!("Retrying after {delay_ms}ms: {}", e.message)
+                            };
                             observer.on_model_event(&ModelStreamEvent::StreamError {
-                                message: format!("Retrying after {delay_ms}ms: {}", e.message),
+                                message,
                                 retryable: true,
                             });
-                            std::thread::sleep(std::time::Duration::from_millis(*delay_ms));
+                            if *delay_ms > 0 {
+                                std::thread::sleep(std::time::Duration::from_millis(*delay_ms));
+                            }
                             recovered = true;
                             break;
                         }
@@ -347,14 +375,24 @@ pub fn run_agentic_loop_with_cancel(
                                 continue; // skip to next action in recipe
                             }
                             let delay = base_ms * 2u64.pow(recovery_attempts.min(4));
-                            observer.on_model_event(&ModelStreamEvent::StreamError {
-                                message: format!(
+                            let message = if delay == 0 {
+                                format!(
+                                    "Retrying immediately (attempt {recovery_attempts}): {}",
+                                    e.message
+                                )
+                            } else {
+                                format!(
                                     "Backoff {delay}ms (attempt {recovery_attempts}): {}",
                                     e.message
-                                ),
+                                )
+                            };
+                            observer.on_model_event(&ModelStreamEvent::StreamError {
+                                message,
                                 retryable: true,
                             });
-                            std::thread::sleep(std::time::Duration::from_millis(delay));
+                            if delay > 0 {
+                                std::thread::sleep(std::time::Duration::from_millis(delay));
+                            }
                             recovered = true;
                             break;
                         }
@@ -423,6 +461,14 @@ pub fn run_agentic_loop_with_cancel(
         total_cache_write_tokens += response.usage.cache_creation_input_tokens;
         budget.record(response.usage.input_tokens, response.usage.output_tokens);
         final_stop_reason = response.stop_reason;
+
+        if cancellation_requested(cancel_token.as_ref()) {
+            observer.on_model_event(&ModelStreamEvent::StreamError {
+                message: "Cancelled by user".to_string(),
+                retryable: false,
+            });
+            break;
+        }
 
         match response.stop_reason {
             StopReason::EndTurn => {
@@ -514,4 +560,128 @@ pub fn run_agentic_loop_with_cancel(
         total_cache_write_tokens,
         turns,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::Message;
+    use crate::provider::types::{CreateMessageResponse, StopReason, Usage};
+    use crate::tool::ToolRegistry;
+    use std::sync::{Arc, atomic::AtomicBool};
+
+    struct CancelledProvider;
+
+    impl Provider for CancelledProvider {
+        fn create_message(
+            &self,
+            _request: &CreateMessageRequest,
+        ) -> Result<CreateMessageResponse, ProviderError> {
+            Err(ProviderError::non_retryable("not used"))
+        }
+
+        fn create_message_stream(
+            &self,
+            _request: &CreateMessageRequest,
+            _on_event: &mut dyn FnMut(StreamEvent),
+        ) -> Result<CreateMessageResponse, ProviderError> {
+            Err(ProviderError::non_retryable("Cancelled by user"))
+        }
+
+        fn create_message_stream_with_cancel(
+            &self,
+            _request: &CreateMessageRequest,
+            _on_event: &mut dyn FnMut(StreamEvent),
+            _cancel_token: Option<Arc<AtomicBool>>,
+        ) -> Result<CreateMessageResponse, ProviderError> {
+            Err(ProviderError::non_retryable("Cancelled by user"))
+        }
+    }
+
+    struct StaticProvider;
+
+    impl Provider for StaticProvider {
+        fn create_message(
+            &self,
+            _request: &CreateMessageRequest,
+        ) -> Result<CreateMessageResponse, ProviderError> {
+            Ok(CreateMessageResponse {
+                id: "msg-1".to_string(),
+                content: vec![ContentBlock::text("done")],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                model: "mock".to_string(),
+            })
+        }
+
+        fn create_message_stream(
+            &self,
+            request: &CreateMessageRequest,
+            _on_event: &mut dyn FnMut(StreamEvent),
+        ) -> Result<CreateMessageResponse, ProviderError> {
+            self.create_message(request)
+        }
+    }
+
+    fn loop_config() -> LoopConfig {
+        LoopConfig {
+            model: "mock-model".to_string(),
+            max_tokens: 128,
+            max_turns: 2,
+            system: Vec::new(),
+            tools: Vec::new(),
+            parallel_tool_execution: true,
+            reasoning_effort: None,
+        }
+    }
+
+    #[test]
+    fn cancellation_error_exits_cleanly_without_recovery() {
+        let provider = CancelledProvider;
+        let registry = ToolRegistry::new();
+        let executor = ToolExecutor::new(&registry);
+        let config = loop_config();
+        let mut observer = NoopObserver;
+        let mut budget = TokenBudget::for_model(&config.model, Some(config.max_tokens));
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let result = run_agentic_loop_with_cancel(
+            &provider,
+            &executor,
+            &config,
+            vec![Message::user_text("hi")],
+            &mut observer,
+            &mut budget,
+            Some(cancel),
+        )
+        .expect("cancel should return a clean loop result");
+
+        assert_eq!(result.messages.len(), 1);
+        assert_eq!(result.turns, 1);
+    }
+
+    #[test]
+    fn pre_set_cancel_token_skips_model_call() {
+        let provider = StaticProvider;
+        let registry = ToolRegistry::new();
+        let executor = ToolExecutor::new(&registry);
+        let config = loop_config();
+        let mut observer = NoopObserver;
+        let mut budget = TokenBudget::for_model(&config.model, Some(config.max_tokens));
+        let cancel = Arc::new(AtomicBool::new(true));
+
+        let result = run_agentic_loop_with_cancel(
+            &provider,
+            &executor,
+            &config,
+            vec![Message::user_text("hi")],
+            &mut observer,
+            &mut budget,
+            Some(cancel),
+        )
+        .expect("pre-cancel should return cleanly");
+
+        assert_eq!(result.messages.len(), 1);
+        assert_eq!(result.turns, 0);
+    }
 }

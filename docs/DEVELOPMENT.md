@@ -20,10 +20,10 @@ Two-crate Cargo workspace (edition 2024, clippy all+pedantic+nursery, unsafe for
 
 ```
 crates/nocode-core/   — library (~30K LOC, 51 modules), all core logic
-crates/nocode/        — binary (~8K LOC), CLI/REPL/TUI shell
+crates/nocode/        — binary, CLI/TUI shell
 ```
 
-Dependencies: serde, serde_json, reqwest, jsonschema, rusqlite (bundled), chrono, pulldown-cmark, syntect, crossterm.
+Dependencies: serde, serde_json, reqwest, jsonschema, rusqlite (bundled), chrono, pulldown-cmark, syntect, crossterm, ratatui.
 
 ## Architecture
 
@@ -49,10 +49,12 @@ Dependencies: serde, serde_json, reqwest, jsonschema, rusqlite (bundled), chrono
 - `memory_store.rs` — MemoryEntry with YAML frontmatter, file-system CRUD
 - `session_persistence.rs` — JSONL session/transcript/history persistence
 
-### TUI
-- `tui.rs` — 4-pane fullscreen with RGB rendering, overlay system
+### Interface
+- `tui.rs` — TUI entry point
+- `tui_app.rs` — main TUI loop and rendering
 - `markdown_render.rs` — pulldown-cmark + syntect integration
-- `status_hud.rs` — token/cost/elapsed/model/session HUD
+- `login.rs` — interactive provider/bootstrap flow
+- `provider_presets.rs` — shared custom provider catalog for login/runtime
 
 ## Key Conventions
 

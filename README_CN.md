@@ -33,8 +33,7 @@ export GEMINI_API_KEY="..."             # Gemini
 ## 使用
 
 ```bash
-nocode --repl                        # 交互式 REPL
-nocode --tui                         # 四窗格终端 UI
+nocode                               # 默认进入四窗格终端 UI
 nocode --status                      # 系统诊断
 nocode --bridge-once "提示词"         # 单轮本地执行
 nocode --bridge-remote-once "提示词"  # 单轮远程执行
@@ -64,11 +63,11 @@ export NOCODE_MODEL=gpt-5.4
 ```bash
 export NOCODE_MODEL_PROVIDER=custom
 export NOCODE_CUSTOM_BASE_URL=http://localhost:11434/v1
-export NOCODE_CUSTOM_API_FORMAT=openai   # anthropic (Messages API) | openai (Chat/Responses) | google (generateContent)
+export NOCODE_CUSTOM_API_FORMAT=openai-responses   # anthropic | openai-chat | openai-responses | google
 export NOCODE_MODEL=llama3
 ```
 
-## REPL 命令
+## 命令
 
 ### 会话
 | 命令 | 说明 |
@@ -121,7 +120,6 @@ export NOCODE_MODEL=llama3
 ### 导航
 | 命令 | 说明 |
 |------|------|
-| `/focus <transcript\|tasks\|detail>` | 聚焦 TUI 窗格 |
 | `/tasks-next` `/j` | 选择下一个任务 |
 | `/tasks-prev` `/k` | 选择上一个任务 |
 | `/enter` | 打开选中任务 |
@@ -130,26 +128,24 @@ export NOCODE_MODEL=llama3
 ### 账户
 | 命令 | 说明 |
 |------|------|
-| `/login <api-key>` | 存储 API 密钥到 `~/.nocode/credentials` |
+| `/config` | 打开设置中心（`/settings`，兼容旧 `/login`） |
 | `/logout` | 移除已存储的凭证 |
 | `/doctor` | 系统诊断（提供商、工具、连通性） |
 | `/plugin list` | 列出已发现的插件 |
 
 ## TUI
 
-四窗格全屏界面，支持 Markdown 渲染（pulldown-cmark + syntect 语法高亮）、RGB 色彩、浮层系统。
+`nocode` 以 TUI 为主界面。需要交互式修改 provider 配置时，请使用 `nocode --login`。
 
 | 按键 | 功能 |
 |------|------|
-| `Alt-1..4` | 聚焦窗格（对话 / 任务列表 / 任务详情 / 事件） |
-| `Tab` / `Shift-Tab` | 循环切换窗格 |
 | `Up` / `Down` | 滚动或导航 |
 | `PgUp` / `PgDn` | 快速滚动 |
 | `Ctrl-P` / `Ctrl-N` | 输入历史 |
 | `Ctrl-U` | 清空输入 |
 | `F1` / `?` | 帮助浮层 |
 | `F2` | 检查器浮层 |
-| `F3` | 权限浮层（`a` 批准 / `d` 拒绝） |
+| `F3` | 权限浮层 |
 | `Esc` | 关闭浮层或退出 |
 
 ## 环境变量
@@ -159,7 +155,7 @@ export NOCODE_MODEL=llama3
 | `NOCODE_MODEL_PROVIDER` | 强制提供商：`anthropic`、`openai`、`google`、`custom`、`mock` |
 | `NOCODE_MODEL` | 覆盖模型名 |
 | `NOCODE_CUSTOM_BASE_URL` | Custom 提供商端点 |
-| `NOCODE_CUSTOM_API_FORMAT` | API 协议格式：`anthropic`（Messages API）、`openai`（Chat Completions / Responses）、`google`（generateContent） |
+| `NOCODE_CUSTOM_API_FORMAT` | API 协议格式：`anthropic`、`openai-chat`、`openai-responses`、`google` |
 | `NOCODE_SYSTEM_PROMPT` | 覆盖系统提示词 |
 | `NOCODE_MODEL_REASONING_EFFORT` | `low`、`medium`、`high` |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | 提供商 API 密钥 |

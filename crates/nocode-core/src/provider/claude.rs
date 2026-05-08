@@ -5,6 +5,7 @@ use crate::provider::types::{
     CreateMessageRequest, CreateMessageResponse, ProviderError, StopReason, StreamDelta,
     StreamEvent, Usage,
 };
+use std::sync::{Arc, atomic::AtomicBool};
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2024-06-01";
@@ -54,7 +55,7 @@ impl Provider for ClaudeProvider {
         Self::inject_cache_control(&mut req);
         let body = self.serialize_request(&req)?;
 
-        let response_text = with_retry(3, || self.transport.post_json("/v1/messages", &body))?;
+        let response_text = with_retry(1, || self.transport.post_json("/v1/messages", &body))?;
 
         serde_json::from_str::<CreateMessageResponse>(&response_text)
             .map_err(|e| ProviderError::non_retryable(format!("Failed to parse response: {e}")))
@@ -70,9 +71,28 @@ impl Provider for ClaudeProvider {
         Self::inject_cache_control(&mut req);
         let body = self.serialize_request(&req)?;
 
-        let reader = with_retry(3, || self.transport.post_json_stream("/v1/messages", &body))?;
+        let reader = with_retry(1, || self.transport.post_json_stream("/v1/messages", &body))?;
 
         parse_sse_stream(reader, on_event)
+    }
+
+    fn create_message_stream_with_cancel(
+        &self,
+        request: &CreateMessageRequest,
+        on_event: &mut dyn FnMut(StreamEvent),
+        cancel_token: Option<Arc<AtomicBool>>,
+    ) -> Result<CreateMessageResponse, ProviderError> {
+        let mut req = request.clone();
+        req.stream = true;
+        Self::inject_cache_control(&mut req);
+        let body = self.serialize_request(&req)?;
+
+        let reader = with_retry(1, || {
+            self.transport
+                .post_json_stream_cancellable("/v1/messages", &body, cancel_token.clone())
+        })?;
+
+        parse_sse_stream_with_cancel(reader, on_event, cancel_token)
     }
 
     fn verify_key(&self) -> Result<String, ProviderError> {
@@ -110,6 +130,14 @@ pub(crate) fn parse_sse_stream(
     reader: impl std::io::Read,
     on_event: &mut dyn FnMut(StreamEvent),
 ) -> Result<CreateMessageResponse, ProviderError> {
+    parse_sse_stream_with_cancel(reader, on_event, None)
+}
+
+pub(crate) fn parse_sse_stream_with_cancel(
+    reader: impl std::io::Read,
+    on_event: &mut dyn FnMut(StreamEvent),
+    cancel_token: Option<Arc<AtomicBool>>,
+) -> Result<CreateMessageResponse, ProviderError> {
     let mut sse = SseReader::new(reader);
 
     let mut response_id = String::new();
@@ -123,6 +151,12 @@ pub(crate) fn parse_sse_stream(
         std::collections::HashMap::new();
 
     while let Some(frame) = sse.next_frame()? {
+        if cancel_token
+            .as_ref()
+            .is_some_and(|token| token.load(std::sync::atomic::Ordering::Relaxed))
+        {
+            return Err(ProviderError::non_retryable("Cancelled by user"));
+        }
         let json: serde_json::Value = match serde_json::from_str(&frame.data) {
             Ok(v) => v,
             Err(_) => continue,
