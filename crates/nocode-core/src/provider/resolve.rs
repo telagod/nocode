@@ -65,6 +65,9 @@ fn resolve_custom_api_key(settings: &Settings) -> String {
 /// Known preset env key names. This is the single source of truth for
 /// preset → env var mapping, shared by all call sites.
 const PRESET_ENV_KEYS: &[(&str, &str)] = &[
+    ("Anthropic", "ANTHROPIC_API_KEY"),
+    ("OpenAI", "OPENAI_API_KEY"),
+    ("Gemini", "GEMINI_API_KEY"),
     ("OpenRouter", "OPENROUTER_API_KEY"),
     ("Together", "TOGETHER_API_KEY"),
     ("Groq", "GROQ_API_KEY"),

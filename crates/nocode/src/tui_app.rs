@@ -31,6 +31,7 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
 use unicode_width::UnicodeWidthChar;
+use unicode_width::UnicodeWidthStr;
 
 const LOG_LIMIT: usize = 256;
 
@@ -375,7 +376,11 @@ impl TuiApp {
         // Use pre-computed lines count instead of re-rendering
         let mut total: u16 = 0;
         for line in &msg.lines {
-            let line_width: usize = line.segments.iter().map(|s| s.text.len()).sum();
+            let line_width: usize = line
+                .segments
+                .iter()
+                .map(|s| UnicodeWidthStr::width(s.text.as_str()))
+                .sum();
             let wrapped = if width > 0 {
                 (line_width as u16).div_ceil(width)
             } else {
@@ -612,10 +617,25 @@ impl TuiApp {
                 } else {
                     line
                 };
+
+                // Calculate how many rows this line occupies after wrapping
+                let line_display_width: usize = line.spans.iter().map(|s| s.width()).sum();
+                let line_rows = if inner.width > 0 && line_display_width > inner.width as usize {
+                    (line_display_width as u16).div_ceil(inner.width)
+                } else {
+                    1
+                };
+
                 if first_visible_skip > 0 {
-                    first_visible_skip -= 1;
-                    continue;
+                    if first_visible_skip >= line_rows {
+                        first_visible_skip -= line_rows;
+                        continue;
+                    }
+                    first_visible_skip = 0;
                 }
+
+                let rows_available = visible.saturating_sub(y_offset);
+                let render_rows = line_rows.min(rows_available);
 
                 // Render background fill for this line
                 if bg != ratatui::style::Color::Reset {
@@ -623,23 +643,24 @@ impl TuiApp {
                         x: inner.x,
                         y: inner.y + y_offset,
                         width: inner.width,
-                        height: 1,
+                        height: render_rows,
                     };
                     let bg_block = Block::default().style(ratatui::style::Style::default().bg(bg));
                     frame.render_widget(bg_block, line_rect);
                 }
 
-                // Render the text line
+                // Render the text line with wrapping
                 let line_rect = Rect {
                     x: inner.x,
                     y: inner.y + y_offset,
                     width: inner.width,
-                    height: 1,
+                    height: render_rows,
                 };
-                let para = ratatui::widgets::Paragraph::new(vec![line]);
+                let para = ratatui::widgets::Paragraph::new(vec![line])
+                    .wrap(ratatui::widgets::Wrap { trim: false });
                 frame.render_widget(para, line_rect);
 
-                y_offset += 1;
+                y_offset += render_rows;
                 if y_offset >= visible {
                     break;
                 }
