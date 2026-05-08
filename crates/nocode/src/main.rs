@@ -110,7 +110,7 @@ fn main() {
         rx
     };
 
-    // Load stored credentials into env (if no API keys set)
+    // Load stored credentials into env (overrides shell env with login-configured keys)
     let cred_path = nocode_core::storage::credentials::CredentialStore::default_path();
     if let Ok(creds) = nocode_core::storage::credentials::CredentialStore::load(&cred_path) {
         creds.load_into_env();

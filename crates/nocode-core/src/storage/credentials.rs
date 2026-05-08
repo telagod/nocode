@@ -89,10 +89,7 @@ impl CredentialStore {
             ("litellm", "LITELLM_API_KEY"),
         ];
         for (provider, env_var) in &mappings {
-            if std::env::var(env_var).is_err()
-                && let Some(key) = self.get_key(provider)
-            {
-                // SAFETY: called during single-threaded startup before spawning threads
+            if let Some(key) = self.get_key(provider) {
                 unsafe {
                     std::env::set_var(env_var, key);
                 }
