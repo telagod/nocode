@@ -1,6 +1,6 @@
 use crossterm::{
     cursor,
-    event::{self, Event, KeyCode},
+    event::{self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode},
     execute,
     terminal::{self, ClearType},
 };
@@ -63,10 +63,28 @@ fn draw_header(stdout: &mut io::Stdout, step: &str) {
     let _ = writeln!(stdout, "\r");
 }
 
+enum InputEvent {
+    Key(crossterm::event::KeyEvent),
+    Paste(String),
+}
+
+fn read_event() -> Option<InputEvent> {
+    loop {
+        match event::read() {
+            Ok(Event::Key(key)) => return Some(InputEvent::Key(key)),
+            Ok(Event::Paste(text)) => return Some(InputEvent::Paste(text)),
+            Ok(_) => continue,
+            Err(_) => return None,
+        }
+    }
+}
+
 fn read_key() -> Option<crossterm::event::KeyEvent> {
     loop {
-        if let Ok(Event::Key(key)) = event::read() {
-            return Some(key);
+        match event::read() {
+            Ok(Event::Key(key)) => return Some(key),
+            Ok(_) => continue,
+            Err(_) => return None,
         }
     }
 }
@@ -138,20 +156,24 @@ fn step_api_key(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<Str
         let _ = writeln!(stdout, "\r\n  Type/paste key, Enter confirm, Esc back\r");
         let _ = stdout.flush();
 
-        let key = read_key()?;
-        match key.code {
-            KeyCode::Enter => {
-                if key_buf.trim().is_empty() {
-                    continue;
+        match read_event()? {
+            InputEvent::Paste(text) => {
+                key_buf.push_str(text.trim());
+            }
+            InputEvent::Key(key) => match key.code {
+                KeyCode::Enter => {
+                    if key_buf.trim().is_empty() {
+                        continue;
+                    }
+                    return Some(key_buf.trim().to_string());
                 }
-                return Some(key_buf.trim().to_string());
-            }
-            KeyCode::Esc => return None,
-            KeyCode::Backspace => {
-                key_buf.pop();
-            }
-            KeyCode::Char(c) => key_buf.push(c),
-            _ => {}
+                KeyCode::Esc => return None,
+                KeyCode::Backspace => {
+                    key_buf.pop();
+                }
+                KeyCode::Char(c) => key_buf.push(c),
+                _ => {}
+            },
         }
     }
 }
@@ -195,68 +217,75 @@ fn step_endpoint(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<En
         }
         let _ = stdout.flush();
 
-        let key = read_key()?;
-
-        if editing_url {
-            match key.code {
-                KeyCode::Enter => {
-                    let trimmed = url_buf.trim().trim_end_matches('/').to_string();
-                    if !trimmed.is_empty() {
-                        base_url = trimmed;
+        match read_event()? {
+            InputEvent::Paste(text) => {
+                if editing_url {
+                    url_buf.push_str(text.trim());
+                }
+            }
+            InputEvent::Key(key) => {
+                if editing_url {
+                    match key.code {
+                        KeyCode::Enter => {
+                            let trimmed = url_buf.trim().trim_end_matches('/').to_string();
+                            if !trimmed.is_empty() {
+                                base_url = trimmed;
+                            }
+                            url_buf.clear();
+                            editing_url = false;
+                        }
+                        KeyCode::Esc => {
+                            url_buf.clear();
+                            editing_url = false;
+                        }
+                        KeyCode::Backspace => {
+                            url_buf.pop();
+                        }
+                        KeyCode::Char(c) => url_buf.push(c),
+                        _ => {}
                     }
-                    url_buf.clear();
-                    editing_url = false;
+                } else if editing_fmt {
+                    match key.code {
+                        KeyCode::Left => {
+                            fmt_idx = if fmt_idx == 0 {
+                                formats.len() - 1
+                            } else {
+                                fmt_idx - 1
+                            };
+                        }
+                        KeyCode::Right => {
+                            fmt_idx = (fmt_idx + 1) % formats.len();
+                        }
+                        KeyCode::Enter => {
+                            api_format = formats[fmt_idx].to_string();
+                            editing_fmt = false;
+                        }
+                        KeyCode::Esc => {
+                            fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
+                            editing_fmt = false;
+                        }
+                        _ => {}
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Char('u') | KeyCode::Char('U') => {
+                            editing_url = true;
+                            url_buf.clear();
+                        }
+                        KeyCode::Char('f') | KeyCode::Char('F') => {
+                            editing_fmt = true;
+                            fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
+                        }
+                        KeyCode::Enter => {
+                            return Some(EndpointOverride {
+                                base_url,
+                                api_format,
+                            });
+                        }
+                        KeyCode::Esc => return None,
+                        _ => {}
+                    }
                 }
-                KeyCode::Esc => {
-                    url_buf.clear();
-                    editing_url = false;
-                }
-                KeyCode::Backspace => {
-                    url_buf.pop();
-                }
-                KeyCode::Char(c) => url_buf.push(c),
-                _ => {}
-            }
-        } else if editing_fmt {
-            match key.code {
-                KeyCode::Left => {
-                    fmt_idx = if fmt_idx == 0 {
-                        formats.len() - 1
-                    } else {
-                        fmt_idx - 1
-                    };
-                }
-                KeyCode::Right => {
-                    fmt_idx = (fmt_idx + 1) % formats.len();
-                }
-                KeyCode::Enter => {
-                    api_format = formats[fmt_idx].to_string();
-                    editing_fmt = false;
-                }
-                KeyCode::Esc => {
-                    fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
-                    editing_fmt = false;
-                }
-                _ => {}
-            }
-        } else {
-            match key.code {
-                KeyCode::Char('u') | KeyCode::Char('U') => {
-                    editing_url = true;
-                    url_buf.clear();
-                }
-                KeyCode::Char('f') | KeyCode::Char('F') => {
-                    editing_fmt = true;
-                    fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
-                }
-                KeyCode::Enter => {
-                    return Some(EndpointOverride {
-                        base_url,
-                        api_format,
-                    });
-                }
-                KeyCode::Esc => return None,
-                _ => {}
             }
         }
     }
@@ -374,15 +403,17 @@ fn prompt_text_input(stdout: &mut io::Stdout, prompt: &str) -> Option<String> {
         let _ = writeln!(stdout, "\r\n  Enter confirm  Esc cancel\r");
         let _ = stdout.flush();
 
-        let key = read_key()?;
-        match key.code {
-            KeyCode::Enter if !buf.trim().is_empty() => return Some(buf.trim().to_string()),
-            KeyCode::Esc => return None,
-            KeyCode::Backspace => {
-                buf.pop();
-            }
-            KeyCode::Char(c) => buf.push(c),
-            _ => {}
+        match read_event()? {
+            InputEvent::Paste(text) => buf.push_str(text.trim()),
+            InputEvent::Key(key) => match key.code {
+                KeyCode::Enter if !buf.trim().is_empty() => return Some(buf.trim().to_string()),
+                KeyCode::Esc => return None,
+                KeyCode::Backspace => {
+                    buf.pop();
+                }
+                KeyCode::Char(c) => buf.push(c),
+                _ => {}
+            },
         }
     }
 }
@@ -507,7 +538,9 @@ pub fn run_login(cwd: &str) {
     let mut stdout = io::stdout();
 
     terminal::enable_raw_mode().expect("Failed to enable raw mode");
+    let _ = execute!(stdout, EnableBracketedPaste);
     let result = run_login_inner(&mut stdout, &providers, cwd);
+    let _ = execute!(stdout, DisableBracketedPaste);
     terminal::disable_raw_mode().expect("Failed to disable raw mode");
     let _ = execute!(stdout, cursor::Show);
 
