@@ -61,6 +61,32 @@ use std::env;
 use std::io::IsTerminal;
 use std::sync::Arc;
 
+fn resolve_custom_system_prompt(settings: &Settings) -> Option<String> {
+    env::var("NOCODE_SYSTEM_PROMPT")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| settings.system_prompt.clone())
+}
+
+/// Run self-update: prefer NOCODE_SOURCE_DIR (dev override),
+/// otherwise clone/pull `https://github.com/telagod/nocode.git` to `~/.nocode/update-workspace`.
+fn run_self_update() -> Result<String, String> {
+    use nocode_core::update_checker::UpdateChecker;
+
+    if let Ok(local) = env::var("NOCODE_SOURCE_DIR")
+        && !local.is_empty()
+        && std::path::Path::new(&local).join("Cargo.toml").exists()
+    {
+        eprintln!("Using local source: {local}");
+        return UpdateChecker::self_update_local(&local);
+    }
+
+    let home = env::var("HOME").map_err(|_| "HOME env var not set".to_string())?;
+    let workspace = format!("{home}/.nocode/update-workspace");
+    let repo_url = "https://github.com/telagod/nocode.git";
+    UpdateChecker::self_update_remote(repo_url, &workspace)
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -71,6 +97,21 @@ fn main() {
 
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print_help();
+        return;
+    }
+
+    // --update: pull from remote, build, replace current binary
+    if args.iter().any(|a| a == "--update") {
+        match run_self_update() {
+            Ok(version) => {
+                eprintln!();
+                eprintln!("Updated to {version} — restart nocode to use the new version.");
+            }
+            Err(e) => {
+                eprintln!("Update failed: {e}");
+                std::process::exit(1);
+            }
+        }
         return;
     }
 
@@ -151,7 +192,13 @@ fn main() {
     let caps = nocode_core::provider::model_caps::lookup(&model);
     let max_tokens = settings.max_tokens.unwrap_or(caps.max_output_tokens);
 
-    let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
+    let custom_sp = resolve_custom_system_prompt(&settings);
+    let system_blocks = assembly::assemble_system_prompt(
+        &cwd,
+        &[],
+        &TruncationBudget::default(),
+        custom_sp.as_deref(),
+    );
 
     let registry = ToolRegistry::with_defaults(&cwd);
     initialize_runtime_global_registry(&cwd, &settings);
@@ -238,6 +285,20 @@ fn main() {
             provider_warnings,
         ) {
             eprintln!("TUI error: {e}");
+        }
+
+        // /update was triggered from inside the TUI — run build now that TUI has cleaned up
+        if tui_commands::UPDATE_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+            match run_self_update() {
+                Ok(version) => {
+                    eprintln!();
+                    eprintln!("Updated to {version} — restart nocode to use the new version.");
+                }
+                Err(e) => {
+                    eprintln!("Update failed: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
         return;
     }
@@ -404,9 +465,9 @@ fn run_status(cwd: &str, provider: &ModelProvider, model: &str, settings: &Setti
     println!();
     let home = env::var("HOME").unwrap_or_default();
     let paths = [
-        (format!("{home}/.nocode/settings.json"), "User"),
-        (format!("{cwd}/.nocode/settings.json"), "Project"),
-        (format!("{cwd}/.nocode/settings.local.json"), "Local"),
+        (format!("{home}/.nocode/config.toml"), "User"),
+        (format!("{cwd}/.nocode/config.toml"), "Project"),
+        (format!("{cwd}/.nocode/config.local.toml"), "Local"),
     ];
     println!("Settings files:");
     for (path, tier) in &paths {
@@ -639,7 +700,13 @@ fn run_ide_server() {
     let provider_type = resolve_provider(&settings);
     let model = resolve_model(&settings, &provider_type);
     let registry = ToolRegistry::with_defaults(&cwd);
-    let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
+    let custom_sp = resolve_custom_system_prompt(&settings);
+    let system_blocks = assembly::assemble_system_prompt(
+        &cwd,
+        &[],
+        &TruncationBudget::default(),
+        custom_sp.as_deref(),
+    );
     let (provider_box, ide_warnings) = build_provider(&provider_type, &settings);
     for w in &ide_warnings {
         eprintln!("Warning: {w}");
@@ -716,7 +783,13 @@ fn run_mcp_server() {
     let provider_type = resolve_provider(&settings);
     let model = resolve_model(&settings, &provider_type);
     let registry = ToolRegistry::with_defaults(&cwd);
-    let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
+    let custom_sp = resolve_custom_system_prompt(&settings);
+    let system_blocks = assembly::assemble_system_prompt(
+        &cwd,
+        &[],
+        &TruncationBudget::default(),
+        custom_sp.as_deref(),
+    );
     let (provider_box, mcp_warnings) = build_provider(&provider_type, &settings);
     for w in &mcp_warnings {
         eprintln!("Warning: {w}");
@@ -898,7 +971,13 @@ fn run_agent_host() {
     let provider_type = resolve_provider(&settings);
     let model = resolve_model(&settings, &provider_type);
     let registry = ToolRegistry::with_defaults(&cwd);
-    let system_blocks = assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
+    let custom_sp = resolve_custom_system_prompt(&settings);
+    let system_blocks = assembly::assemble_system_prompt(
+        &cwd,
+        &[],
+        &TruncationBudget::default(),
+        custom_sp.as_deref(),
+    );
     let (provider_box, host_warnings) = build_provider(&provider_type, &settings);
     for w in &host_warnings {
         eprintln!("Warning: {w}");
@@ -984,6 +1063,8 @@ fn print_help() {
          \n\
          Options:\n\
          \x20 --version, -v             Show version\n\
+         \x20 --update                  Pull latest source from GitHub and rebuild binary\n\
+         \x20 --login                   Interactive provider setup\n\
          \x20 --help, -h                Show this help\n\
          \n\
          Environment:\n\

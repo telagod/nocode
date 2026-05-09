@@ -117,8 +117,8 @@ impl Settings {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {e}"))?;
         }
-        let toml_str =
-            toml::to_string_pretty(self).map_err(|e| format!("Failed to serialize settings: {e}"))?;
+        let toml_str = toml::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize settings: {e}"))?;
         fs::write(path, toml_str).map_err(|e| format!("Failed to write settings: {e}"))?;
         Ok(())
     }

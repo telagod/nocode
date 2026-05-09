@@ -3,7 +3,7 @@
 use crate::markdown_render::{LineSegment, RenderedLine};
 use crate::tui_theme::default_theme;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
@@ -603,6 +603,7 @@ impl Widget for OverlayBlock<'_> {
 /// System info passed to the welcome banner for display.
 pub(crate) struct WelcomeBannerInfo {
     pub model: String,
+    pub provider: String,
     pub mode: String,
     pub cwd: String,
     pub version: String,
@@ -619,6 +620,7 @@ impl Default for WelcomeBannerInfo {
             .unwrap_or_default();
         Self {
             model: String::from("pending"),
+            provider: String::new(),
             mode: String::from("default"),
             cwd,
             version: String::from(env!("CARGO_PKG_VERSION")),
@@ -637,93 +639,129 @@ impl<'a> WelcomeBanner<'a> {
     }
 }
 
-const LOGO: [&str; 5] = [
-    r"  ╔╗╔╔═╗╔═╗╔═╗╔╦╗╔═╗ ",
-    r"  ║║║║ ║║  ║ ║ ║║║╣   ",
-    r"  ╝╚╝╚═╝╚═╝╚═╝═╩╝╚═╝ ",
-    r"                       ",
-    r"  terminal ai assistant",
+const LOGO: &[&str] = &[
+    r"  _ __   ___   ___ ___  __| | ___  ",
+    r" | '_ \ / _ \ / __/ _ \/ _` |/ _ \ ",
+    r" | | | | (_) | (_| (_) | (_| |  __/",
+    r" |_| |_|\___/ \___\___/ \__,_|\___|",
+];
+
+/// Prompt suggestions shown on startup — rotates each minute.
+const SUGGESTIONS: &[&str] = &[
+    "fix typecheck errors",
+    "explain this codebase",
+    "write tests for the last change",
+    "refactor this function",
+    "review my recent changes",
 ];
 
 impl Widget for WelcomeBanner<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = default_theme();
 
-        // Clear the entire area to prevent render overlap with previous screen content
-        let bg_style = Style::default().bg(theme.background);
-        for y in area.y..area.y + area.height {
-            for x in area.x..area.x + area.width {
-                buf[(x, y)].set_style(bg_style).set_symbol(" ");
-            }
-        }
-
-        let box_w = area.width.clamp(30, 60);
-        let box_h: u16 = 12;
-        let x = area.x + (area.width.saturating_sub(box_w)) / 2;
-        let y = area.y + (area.height.saturating_sub(box_h)) / 3;
-        let banner_area = Rect::new(x, y, box_w, box_h.min(area.height));
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(Style::default().fg(theme.border));
-        let inner = block.inner(banner_area);
-        block.render(banner_area, buf);
-
-        if inner.height == 0 || inner.width == 0 {
+        if area.height < 8 || area.width < 24 {
             return;
         }
 
-        let mut lines: Vec<Line<'_>> = Vec::with_capacity(12);
+        let mut lines: Vec<Line<'_>> = Vec::with_capacity(8);
 
-        for logo_line in &LOGO {
+        // ── Layer 1: ASCII Art Logo ──
+        for logo_line in LOGO {
             lines.push(Line::from(Span::styled(
                 *logo_line,
-                Style::default().fg(theme.claude),
+                Style::default()
+                    .fg(theme.claude)
+                    .add_modifier(Modifier::BOLD),
             )));
         }
 
-        let greeting = if self.info.username.is_empty() {
-            String::from("  Welcome back!")
-        } else {
-            format!("  Welcome back, {}!", self.info.username)
-        };
-        lines.push(Line::from(Span::styled(
-            greeting,
-            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
-        )));
-
+        // Single breathing line between logo and info
         lines.push(Line::from(""));
 
-        let model_line = format!("  {} \u{00B7} {}", self.info.model, self.info.mode);
-        lines.push(Line::from(Span::styled(
-            model_line,
-            Style::default().fg(theme.text_dim),
-        )));
+        // ── Layer 2: Single info line — version · model · provider · mode ──
+        let mut info_parts: Vec<Span<'_>> = Vec::new();
+        info_parts.push(Span::styled(
+            format!("nocode v{}", self.info.version),
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+        ));
+        info_parts.push(Span::styled(
+            "  \u{2022}  ",
+            Style::default().fg(theme.border),
+        ));
+        info_parts.push(Span::styled(
+            self.info.model.as_str(),
+            Style::default().fg(theme.assistant),
+        ));
+        if !self.info.provider.is_empty() {
+            info_parts.push(Span::styled(
+                "  \u{2022}  ",
+                Style::default().fg(theme.border),
+            ));
+            info_parts.push(Span::styled(
+                self.info.provider.as_str(),
+                Style::default().fg(theme.text_dim),
+            ));
+        }
+        if self.info.mode != "default" && !self.info.mode.is_empty() {
+            info_parts.push(Span::styled(
+                "  \u{2022}  ",
+                Style::default().fg(theme.border),
+            ));
+            info_parts.push(Span::styled(
+                self.info.mode.as_str(),
+                Style::default().fg(theme.text_dim),
+            ));
+        }
+        lines.push(Line::from(info_parts));
 
-        let max_path = (inner.width as usize).saturating_sub(4);
-        let cwd_display = if self.info.cwd.len() > max_path && max_path > 10 {
-            let half = (max_path - 3) / 2;
-            format!(
-                "  {}...{}",
-                &self.info.cwd[..half],
-                &self.info.cwd[self.info.cwd.len() - half..]
-            )
+        // ── Layer 3: cwd ──
+        let home = std::env::var("HOME").unwrap_or_default();
+        let cwd_display = if !home.is_empty() && self.info.cwd.starts_with(&home) {
+            format!("~{}", &self.info.cwd[home.len()..])
         } else {
-            format!("  {}", self.info.cwd)
+            self.info.cwd.clone()
         };
         lines.push(Line::from(Span::styled(
             cwd_display,
-            Style::default().fg(theme.text_dim),
-        )));
-
-        lines.push(Line::from(Span::styled(
-            format!("  v{}", self.info.version),
             Style::default().fg(theme.text_inactive),
         )));
 
-        let paragraph = Paragraph::new(lines);
-        paragraph.render(inner, buf);
+        // ── Layer 4: Call to action — prompt suggestion ──
+        let suggestion_idx = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as usize
+            / 60)
+            % SUGGESTIONS.len();
+        let suggestion = SUGGESTIONS[suggestion_idx];
+        lines.push(Line::from(vec![
+            Span::styled("\u{276F} ", Style::default().fg(theme.user)),
+            Span::styled(
+                format!("Try \u{2018}{suggestion}\u{2019}"),
+                Style::default()
+                    .fg(theme.text_dim)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+        ]));
+
+        // Render: vertically center the banner in the available area, biased toward bottom
+        let total_lines = lines.len() as u16;
+        let available = area.height;
+        let y_start = if available > total_lines + 4 {
+            // Place at ~60% down the viewport for visual weight
+            area.y + (available * 3 / 5).saturating_sub(total_lines / 2)
+        } else {
+            area.y + available.saturating_sub(total_lines + 1)
+        };
+        let render_area = Rect::new(
+            area.x,
+            y_start.min(area.y + available.saturating_sub(total_lines)),
+            area.width,
+            total_lines.min(available),
+        );
+
+        let paragraph = Paragraph::new(lines).alignment(Alignment::Center);
+        paragraph.render(render_area, buf);
     }
 }
 

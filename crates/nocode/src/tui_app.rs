@@ -11,7 +11,7 @@ use crate::status_hud::StatusHud;
 use crate::tui_commands::{SlashResult, handle_slash_command};
 use crate::tui_events::{ChannelObserver, TuiEvent};
 use crate::tui_widgets::{
-    ChatMessage, ChatMessageKind, HintsBar, InputBox, StatusBar, WelcomeBanner, WelcomeBannerInfo,
+    ChatMessage, ChatMessageKind, InputBox, StatusBar, WelcomeBanner, WelcomeBannerInfo,
 };
 
 use base64::Engine as _;
@@ -172,6 +172,8 @@ pub(crate) struct TuiApp {
     pub(crate) input_scroll_y: u16,
     /// New config overlay (state machine + TUI).
     pub(crate) config_overlay: Option<crate::tui_config::TuiConfigOverlay>,
+    /// Last rendered input rect (for completion popup positioning).
+    pub(crate) last_input_rect: Option<Rect>,
 }
 
 /// An image pasted from clipboard, waiting to be sent with the next message.
@@ -183,6 +185,10 @@ pub(crate) struct PendingImage {
 
 impl TuiApp {
     pub fn new(model: &str) -> Self {
+        let banner = WelcomeBannerInfo {
+            model: model.to_string(),
+            ..WelcomeBannerInfo::default()
+        };
         Self {
             chat_messages: Vec::new(),
             input: String::new(),
@@ -196,7 +202,7 @@ impl TuiApp {
             sticky_scroll: true,
             unseen_count: 0,
             show_banner: true,
-            banner_info: WelcomeBannerInfo::default(),
+            banner_info: banner,
             streaming_text: String::new(),
             streaming_thinking: String::new(),
             input_history: Vec::new(),
@@ -219,6 +225,7 @@ impl TuiApp {
             input_view_offset: 0,
             input_scroll_y: 0,
             config_overlay: None,
+            last_input_rect: None,
         }
     }
 
@@ -411,7 +418,6 @@ impl TuiApp {
 
     pub fn draw(&mut self, frame: &mut Frame) {
         let total_height = frame.area().height;
-        // Minimum terminal size protection
         if total_height < 4 || frame.area().width < 20 {
             let msg = ratatui::widgets::Paragraph::new("Terminal too small");
             frame.render_widget(msg, frame.area());
@@ -420,29 +426,85 @@ impl TuiApp {
         }
 
         let is_busy = self.thinking_spinner.is_some();
-        let hints_height: u16 = if is_busy || total_height < 8 { 0 } else { 1 };
-        let input_lines = (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).min(10);
 
-        // Layout: Chat → Status (separator) → Input → Hints
+        // Unified layout: content area fills everything, status bar floats at bottom
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(4),
-                Constraint::Length(1),
-                Constraint::Length(input_lines),
-                Constraint::Length(hints_height),
-            ])
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
             .split(frame.area());
 
-        // 1. Banner or chat
-        if self.show_banner && self.chat_messages.is_empty() {
-            let banner = WelcomeBanner::new(&self.banner_info);
-            frame.render_widget(banner, chunks[0]);
+        let content_area = chunks[0];
+        let status_area = chunks[1];
+
+        // 1. Banner or unified content (chat + input in one scrollable flow)
+        if self.show_banner {
+            // Input at bottom, banner fills the space above
+            let input_lines =
+                (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).min(10);
+            let input_h = input_lines.min(content_area.height.saturating_sub(2));
+
+            // If there are system messages (warnings, update notices), show them between banner and input
+            let system_lines: Vec<ratatui::text::Line<'_>> = self
+                .chat_messages
+                .iter()
+                .flat_map(|m| m.to_ratatui_lines())
+                .collect();
+            let system_h = (system_lines.len() as u16).min(content_area.height / 3);
+
+            let banner_h = content_area
+                .height
+                .saturating_sub(input_h)
+                .saturating_sub(system_h);
+
+            if banner_h > 0 {
+                let banner_area = Rect {
+                    x: content_area.x,
+                    y: content_area.y,
+                    width: content_area.width,
+                    height: banner_h,
+                };
+                let banner = WelcomeBanner::new(&self.banner_info);
+                frame.render_widget(banner, banner_area);
+            }
+
+            // Render system messages (warnings etc.) between banner and input
+            if system_h > 0 && !system_lines.is_empty() {
+                let sys_area = Rect {
+                    x: content_area.x,
+                    y: content_area.y + banner_h,
+                    width: content_area.width,
+                    height: system_h,
+                };
+                let para = ratatui::widgets::Paragraph::new(system_lines)
+                    .wrap(ratatui::widgets::Wrap { trim: false });
+                frame.render_widget(para, sys_area);
+            }
+
+            if input_h > 0 {
+                let input_rect = Rect {
+                    x: content_area.x,
+                    y: content_area.y + banner_h + system_h,
+                    width: content_area.width,
+                    height: input_h,
+                };
+                let mode_label = if self.input_mode == InputMode::Normal {
+                    self.input_mode.label()
+                } else {
+                    ""
+                };
+                let input_widget = InputBox::new(&self.input, self.cursor_pos)
+                    .with_mode(mode_label)
+                    .with_view_offset(self.input_view_offset)
+                    .with_scroll_y(self.input_scroll_y);
+                frame.render_widget(input_widget, input_rect);
+                self.last_input_rect = Some(input_rect);
+                self.set_cursor_in_rect(frame, input_rect, mode_label);
+            }
         } else {
-            self.draw_chat_area(frame, chunks[0]);
+            self.draw_unified_content(frame, content_area);
         }
 
-        // 2. Status line (separator between chat and input)
+        // 2. Status bar (always visible, floating at bottom)
         let pending_img_hint = if self.pending_images.is_empty() {
             None
         } else {
@@ -466,7 +528,6 @@ impl TuiApp {
             .or_else(|| self.search_status())
             .or_else(|| self.slash_command_hint())
             .unwrap_or_else(|| self.hud.render_line());
-        // Append undo/redo stack depth
         {
             let history = nocode_core::storage::file_history::global_file_history();
             if let Ok(h) = history.lock() {
@@ -477,76 +538,29 @@ impl TuiApp {
                 }
             }
         }
-        // Append unseen message indicator when scrolled up
         if self.unseen_count > 0 && self.chat_scroll > 0 {
             status_base.push_str(&format!(" | {} new", self.unseen_count));
         }
-        let status = StatusBar::new(&status_base);
-        frame.render_widget(status, chunks[1]);
-
-        // 3. Input
-        let mode_label = if self.input_mode == InputMode::Normal {
-            self.input_mode.label()
-        } else {
-            ""
-        };
-        let input_widget = InputBox::new(&self.input, self.cursor_pos)
-            .with_mode(mode_label)
-            .with_view_offset(self.input_view_offset)
-            .with_scroll_y(self.input_scroll_y);
-        frame.render_widget(input_widget, chunks[2]);
-
-        // 4. Hints
+        // Hints inline with status when not busy
         if !is_busy {
-            let hints = HintsBar {
-                vim_normal: self.input_mode == InputMode::Normal,
-                has_completion: self.completion_selected.is_some(),
-                has_images: !self.pending_images.is_empty(),
-            };
-            frame.render_widget(hints, chunks[3]);
-        }
-
-        // Cursor position (relative to input chunk)
-        let text_before_cursor = &self.input[..self.cursor_pos];
-        let cursor_line = text_before_cursor.chars().filter(|&c| c == '\n').count() as u16;
-        let last_newline = text_before_cursor.rfind('\n').map_or(0, |p| p + 1);
-        let line_text = &self.input[last_newline..self.cursor_pos];
-        let mode_prefix_width: u16 = if cursor_line == 0 && !mode_label.is_empty() {
-            (mode_label.len() + 3) as u16
-        } else {
-            0
-        };
-        let char_col = line_text.chars().count();
-        // Update horizontal scroll so cursor stays visible
-        let usable_width = chunks[2].width.saturating_sub(2 + mode_prefix_width) as usize;
-        if usable_width > 0 {
-            if char_col < self.input_view_offset {
-                self.input_view_offset = char_col;
-            } else if char_col >= self.input_view_offset + usable_width {
-                self.input_view_offset = char_col.saturating_sub(usable_width) + 1;
+            let hints_text = self.hints_text();
+            if !hints_text.is_empty() {
+                status_base.push_str(" | ");
+                status_base.push_str(&hints_text);
             }
         }
-        let visible_col = char_col.saturating_sub(self.input_view_offset) as u16;
-        let cursor_col = visible_col + 2 + mode_prefix_width;
-        let cursor_x = chunks[2].x + cursor_col;
-        // Update vertical scroll so cursor line stays visible
-        if input_lines > 0 {
-            if cursor_line < self.input_scroll_y {
-                self.input_scroll_y = cursor_line;
-            } else if cursor_line >= self.input_scroll_y + input_lines {
-                self.input_scroll_y = cursor_line.saturating_sub(input_lines) + 1;
-            }
-        }
-        let visible_cursor_line = cursor_line.saturating_sub(self.input_scroll_y);
-        let cursor_y = chunks[2].y + visible_cursor_line;
-        frame.set_cursor_position((cursor_x, cursor_y));
+        let status = StatusBar::new(&status_base);
+        frame.render_widget(status, status_area);
 
-        // 5. Command completion popup (above input box)
-        if self.completion_selected.is_some() && !self.overlay.is_open() {
-            self.draw_completion_popup(frame, chunks[2]);
+        // 3. Command completion popup
+        if self.completion_selected.is_some()
+            && !self.overlay.is_open()
+            && let Some(input_rect) = self.last_input_rect
+        {
+            self.draw_completion_popup(frame, input_rect);
         }
 
-        // 6. Overlay
+        // 4. Overlay
         if self.overlay.is_open() {
             if matches!(self.overlay, Overlay::Config) {
                 if let Some(ref config) = self.config_overlay {
@@ -560,7 +574,56 @@ impl TuiApp {
         self.dirty = false;
     }
 
-    fn draw_chat_area(&mut self, frame: &mut Frame, area: Rect) {
+    fn hints_text(&self) -> String {
+        if self.input_mode == InputMode::Normal {
+            "i:insert  /:cmd  ?:help  q:quit".to_string()
+        } else if self.completion_selected.is_some() {
+            "Tab/↓:next  Enter:accept  Esc:dismiss".to_string()
+        } else if !self.pending_images.is_empty() {
+            "Enter:send  Esc:clear images".to_string()
+        } else {
+            "Enter:send  Shift+Enter:newline  Esc:vim  /:cmd".to_string()
+        }
+    }
+
+    fn set_cursor_in_rect(&mut self, frame: &mut Frame, input_rect: Rect, mode_label: &str) {
+        let text_before_cursor = &self.input[..self.cursor_pos];
+        let cursor_line = text_before_cursor.chars().filter(|&c| c == '\n').count() as u16;
+        let last_newline = text_before_cursor.rfind('\n').map_or(0, |p| p + 1);
+        let line_text = &self.input[last_newline..self.cursor_pos];
+        let mode_prefix_width: u16 = if cursor_line == 0 && !mode_label.is_empty() {
+            (mode_label.len() + 3) as u16
+        } else {
+            0
+        };
+        let char_col = line_text.chars().count();
+        let usable_width = input_rect.width.saturating_sub(2 + mode_prefix_width) as usize;
+        if usable_width > 0 {
+            if char_col < self.input_view_offset {
+                self.input_view_offset = char_col;
+            } else if char_col >= self.input_view_offset + usable_width {
+                self.input_view_offset = char_col.saturating_sub(usable_width) + 1;
+            }
+        }
+        let visible_col = char_col.saturating_sub(self.input_view_offset) as u16;
+        let cursor_col = visible_col + 2 + mode_prefix_width;
+        let cursor_x = input_rect.x + cursor_col;
+        let input_lines = input_rect.height;
+        if input_lines > 0 {
+            if cursor_line < self.input_scroll_y {
+                self.input_scroll_y = cursor_line;
+            } else if cursor_line >= self.input_scroll_y + input_lines {
+                self.input_scroll_y = cursor_line.saturating_sub(input_lines) + 1;
+            }
+        }
+        let visible_cursor_line = cursor_line.saturating_sub(self.input_scroll_y);
+        let cursor_y = input_rect.y + visible_cursor_line;
+        if cursor_y < input_rect.y + input_rect.height {
+            frame.set_cursor_position((cursor_x, cursor_y));
+        }
+    }
+
+    fn draw_unified_content(&mut self, frame: &mut Frame, area: Rect) {
         let block = Block::default().borders(Borders::NONE);
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -571,17 +634,26 @@ impl TuiApp {
 
         self.ensure_height_cache(inner.width);
 
-        let total_h = self.total_content_height();
+        let input_lines =
+            (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).clamp(1, 10);
+
+        let chat_h = self.total_content_height();
+        let separator_h: u16 = if chat_h > 0 { 1 } else { 0 };
+        let total_h = chat_h + separator_h + input_lines;
+
         let visible = inner.height;
         let max_scroll = total_h.saturating_sub(visible);
         let scroll = self.chat_scroll.min(max_scroll);
         let scroll_from_top = max_scroll.saturating_sub(scroll);
 
+        // Bottom-align: when content is shorter than viewport, push it down
+        let top_padding = visible.saturating_sub(total_h);
+
         let theme = crate::tui_theme::default_theme();
 
         let mut accumulated: u16 = 0;
         let mut first_visible_skip: u16 = 0;
-        let mut y_offset: u16 = 0;
+        let mut y_offset: u16 = top_padding;
 
         for (i, msg) in self.chat_messages.iter().enumerate() {
             let h = self.height_cache.get(i).copied().unwrap_or(1);
@@ -596,7 +668,6 @@ impl TuiApp {
                 first_visible_skip = scroll_from_top.saturating_sub(accumulated);
             }
 
-            // Pick background color by message kind
             let bg = match msg.kind {
                 ChatMessageKind::User => theme.user_msg_bg,
                 ChatMessageKind::Assistant => theme.assistant_msg_bg,
@@ -618,7 +689,6 @@ impl TuiApp {
                     line
                 };
 
-                // Calculate how many rows this line occupies after wrapping
                 let line_display_width: usize = line.spans.iter().map(|s| s.width()).sum();
                 let line_rows = if inner.width > 0 && line_display_width > inner.width as usize {
                     (line_display_width as u16).div_ceil(inner.width)
@@ -637,7 +707,6 @@ impl TuiApp {
                 let rows_available = visible.saturating_sub(y_offset);
                 let render_rows = line_rows.min(rows_available);
 
-                // Render background fill for this line
                 if bg != ratatui::style::Color::Reset {
                     let line_rect = Rect {
                         x: inner.x,
@@ -649,7 +718,6 @@ impl TuiApp {
                     frame.render_widget(bg_block, line_rect);
                 }
 
-                // Render the text line with wrapping
                 let line_rect = Rect {
                     x: inner.x,
                     y: inner.y + y_offset,
@@ -670,6 +738,46 @@ impl TuiApp {
             if y_offset >= visible {
                 break;
             }
+        }
+
+        // Render separator between chat and input (if there are messages)
+        if y_offset < visible && chat_h > 0 {
+            // Account for separator in scroll math
+            let sep_start = chat_h;
+            if sep_start >= scroll_from_top && sep_start < scroll_from_top + visible {
+                // Skip separator if partially scrolled past
+                if first_visible_skip == 0 {
+                    y_offset += 1;
+                }
+            } else if sep_start < scroll_from_top {
+                // separator scrolled past
+            } else {
+                y_offset += 1;
+            }
+        }
+
+        // Render input box as part of the content flow
+        if y_offset < visible {
+            let input_rect = Rect {
+                x: inner.x,
+                y: inner.y + y_offset,
+                width: inner.width,
+                height: input_lines.min(visible.saturating_sub(y_offset)),
+            };
+            let mode_label = if self.input_mode == InputMode::Normal {
+                self.input_mode.label()
+            } else {
+                ""
+            };
+            let input_widget = InputBox::new(&self.input, self.cursor_pos)
+                .with_mode(mode_label)
+                .with_view_offset(self.input_view_offset)
+                .with_scroll_y(self.input_scroll_y);
+            frame.render_widget(input_widget, input_rect);
+            self.last_input_rect = Some(input_rect);
+            self.set_cursor_in_rect(frame, input_rect, mode_label);
+        } else {
+            self.last_input_rect = None;
         }
     }
 
@@ -1668,6 +1776,23 @@ pub(crate) fn run_app_loop(
 ) -> io::Result<()> {
     let mut app = TuiApp::new(model);
 
+    // Set provider info on banner from settings
+    {
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| ".".to_string());
+        let settings = Settings::load_merged(&cwd);
+        if let Some(ref provider_str) = settings.model_provider {
+            app.banner_info.provider = provider_str.clone();
+        } else if settings.custom_base_url.is_some() {
+            app.banner_info.provider = "Custom".to_string();
+        }
+        if let Some(ref mode) = settings.permission_mode {
+            app.banner_info.mode = mode.clone();
+            app.hud.set_permission_mode(mode);
+        }
+    }
+
     let mut messages: Vec<Message> = Vec::new();
     let tool_defs = tool_definitions_for_model(&registry);
 
@@ -1701,11 +1826,11 @@ pub(crate) fn run_app_loop(
             if let nocode_core::update_checker::UpdateStatus::UpdateAvailable {
                 current,
                 latest,
-                download_url,
+                ..
             } = checker.check_cached_only()
             {
                 app.push_system(&format!(
-                    "Update available: {current} → {latest}\n  {download_url}"
+                    "Update {current} \u{2192} {latest} \u{2014} run /update"
                 ));
             }
         }

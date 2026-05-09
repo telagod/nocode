@@ -244,8 +244,19 @@ pub(crate) fn handle_slash_command(
             cmd_rewind(app, args.as_deref(), messages);
             SlashResult::Handled
         }
+        CommandAction::Update => {
+            UPDATE_REQUESTED.store(true, std::sync::atomic::Ordering::SeqCst);
+            app.push_system(
+                "Pulling latest source and rebuilding — TUI exits, build runs in terminal",
+            );
+            SlashResult::Quit
+        }
     }
 }
+
+/// Set by `/update` to signal main() should run self-update after TUI exits.
+pub(crate) static UPDATE_REQUESTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 pub(crate) enum SlashResult {
     Quit,
@@ -443,9 +454,9 @@ fn cmd_doctor(app: &mut TuiApp, model: &str) {
     // Settings files
     let home = std::env::var("HOME").unwrap_or_default();
     let paths = [
-        (format!("{home}/.nocode/settings.json"), "User"),
-        (format!("{cwd}/.nocode/settings.json"), "Project"),
-        (format!("{cwd}/.nocode/settings.local.json"), "Local"),
+        (format!("{home}/.nocode/config.toml"), "User"),
+        (format!("{cwd}/.nocode/config.toml"), "Project"),
+        (format!("{cwd}/.nocode/config.local.toml"), "Local"),
     ];
     lines.push("Settings:".to_string());
     for (path, tier) in &paths {

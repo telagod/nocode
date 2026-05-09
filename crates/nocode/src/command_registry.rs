@@ -56,6 +56,7 @@ pub enum CommandAction {
     Redo,
     Rewind,
     AgentStop,
+    Update,
 }
 
 /// A registered slash command.
@@ -151,7 +152,7 @@ impl CommandRegistry {
             CommandEntry {
                 name: "config",
                 aliases: &["settings", "login"],
-                summary: "Show current configuration (read-only) — use nocode --login to change",
+                summary: "View and edit configuration (model, provider, base URL)",
                 argument_hint: None,
                 action: CommandAction::Config,
             },
@@ -413,6 +414,13 @@ impl CommandRegistry {
                 summary: "Rewind conversation to a previous state",
                 argument_hint: Some("[message_index]"),
                 action: CommandAction::Rewind,
+            },
+            CommandEntry {
+                name: "update",
+                aliases: &["upgrade"],
+                summary: "Rebuild from source and update binary",
+                argument_hint: None,
+                action: CommandAction::Update,
             },
         ];
 

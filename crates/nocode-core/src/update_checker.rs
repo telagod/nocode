@@ -136,6 +136,134 @@ impl UpdateChecker {
         Ok((release.tag_name, release.html_url))
     }
 
+    /// Perform local self-update: `cargo build --release` from source, then replace all known binaries.
+    /// `source_dir` is the project root (where Cargo.toml lives).
+    pub fn self_update_local(source_dir: &str) -> Result<String, String> {
+        eprintln!("Building release binary from {source_dir}...");
+
+        let output = std::process::Command::new("cargo")
+            .args(["build", "--release"])
+            .current_dir(source_dir)
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .output()
+            .map_err(|e| format!("Failed to run cargo build: {e}"))?;
+
+        if !output.status.success() {
+            return Err("cargo build --release failed".to_string());
+        }
+
+        let built_binary = std::path::Path::new(source_dir).join("target/release/nocode");
+        if !built_binary.exists() {
+            return Err(format!(
+                "Built binary not found at {}",
+                built_binary.display()
+            ));
+        }
+
+        let version_output = std::process::Command::new(&built_binary)
+            .arg("--version")
+            .output()
+            .map_err(|e| format!("Failed to read version: {e}"))?;
+        let new_version = String::from_utf8_lossy(&version_output.stdout)
+            .trim()
+            .to_string();
+
+        // Collect all install locations to update
+        let home = std::env::var("HOME").unwrap_or_default();
+        let current_exe = std::env::current_exe().ok();
+        let mut targets: Vec<std::path::PathBuf> = Vec::new();
+
+        // 1. Current executable (if not inside target/)
+        if let Some(ref exe) = current_exe {
+            let exe_str = exe.to_string_lossy();
+            if !exe_str.contains("/target/debug/") && !exe_str.contains("/target/release/") {
+                targets.push(exe.clone());
+            }
+        }
+
+        // 2. ~/.cargo/bin/nocode
+        let cargo_bin = std::path::PathBuf::from(&home).join(".cargo/bin/nocode");
+        if cargo_bin.exists() {
+            targets.push(cargo_bin);
+        }
+
+        // 3. ~/.nocode/bin/nocode
+        let nocode_bin = std::path::PathBuf::from(&home).join(".nocode/bin/nocode");
+        if nocode_bin.exists() {
+            targets.push(nocode_bin);
+        }
+
+        // 4. fnm/npm installed binary — scan common fnm paths
+        let fnm_base = std::path::PathBuf::from(&home).join(".local/share/fnm/node-versions");
+        if fnm_base.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&fnm_base)
+        {
+            for entry in entries.flatten() {
+                let candidate = entry.path().join("installation/bin/nocode");
+                if candidate.exists() {
+                    targets.push(candidate);
+                }
+            }
+        }
+
+        // 5. Global npm prefix
+        if let Ok(output) = std::process::Command::new("npm")
+            .args(["prefix", "-g"])
+            .output()
+            && output.status.success()
+        {
+            let prefix = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let npm_bin = std::path::PathBuf::from(&prefix).join("bin/nocode");
+            if npm_bin.exists() {
+                targets.push(npm_bin);
+            }
+        }
+
+        // Deduplicate by canonical path
+        let mut seen = std::collections::HashSet::new();
+        targets.retain(|p| {
+            let canonical = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+            seen.insert(canonical)
+        });
+
+        if targets.is_empty() {
+            return Err("No install locations found. Copy manually:\n  \
+                 cp target/release/nocode ~/.cargo/bin/nocode"
+                .to_string());
+        }
+
+        let mut updated = 0;
+        for target in &targets {
+            let tmp_path = target.with_extension("update_tmp");
+            if let Err(e) = std::fs::copy(&built_binary, &tmp_path) {
+                eprintln!("  Skip {}: {e}", target.display());
+                continue;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o755));
+            }
+            match std::fs::rename(&tmp_path, target) {
+                Ok(()) => {
+                    eprintln!("  Updated {}", target.display());
+                    updated += 1;
+                }
+                Err(e) => {
+                    let _ = std::fs::remove_file(&tmp_path);
+                    eprintln!("  Skip {}: {e}", target.display());
+                }
+            }
+        }
+
+        if updated == 0 {
+            return Err("Failed to update any install location".to_string());
+        }
+
+        Ok(new_version)
+    }
+
     fn load_cache(&self) -> Option<UpdateCheckCache> {
         let raw = fs::read_to_string(&self.cache_path).ok()?;
         serde_json::from_str(&raw).ok()
@@ -154,6 +282,73 @@ impl UpdateChecker {
             &self.cache_path,
             serde_json::to_string_pretty(&cache).unwrap_or_default(),
         );
+    }
+
+    /// Clone or fast-forward the upstream repo into a workspace directory,
+    /// then build and replace binaries via `self_update_local`.
+    /// `repo_url` example: `https://github.com/telagod/nocode.git`
+    /// `workspace_dir` example: `~/.nocode/update-workspace`
+    pub fn self_update_remote(repo_url: &str, workspace_dir: &str) -> Result<String, String> {
+        let workspace = std::path::Path::new(workspace_dir);
+
+        // Ensure parent exists
+        if let Some(parent) = workspace.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create workspace parent: {e}"))?;
+        }
+
+        // Clone if missing, otherwise fetch + reset to origin/HEAD
+        let git_dir = workspace.join(".git");
+        if git_dir.is_dir() {
+            eprintln!("Updating source in {}...", workspace.display());
+
+            let fetch = std::process::Command::new("git")
+                .args(["fetch", "--depth=1", "origin"])
+                .current_dir(workspace)
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .map_err(|e| format!("Failed to run git fetch: {e}"))?;
+            if !fetch.success() {
+                return Err("git fetch failed".to_string());
+            }
+
+            // Reset hard to origin/HEAD — local changes in workspace are discarded
+            // (this workspace is owned by the updater, not for editing)
+            let reset = std::process::Command::new("git")
+                .args(["reset", "--hard", "FETCH_HEAD"])
+                .current_dir(workspace)
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .map_err(|e| format!("Failed to run git reset: {e}"))?;
+            if !reset.success() {
+                return Err("git reset failed".to_string());
+            }
+        } else {
+            // Path exists but isn't a git repo — refuse to overwrite
+            if workspace.exists()
+                && std::fs::read_dir(workspace).is_ok_and(|mut d| d.next().is_some())
+            {
+                return Err(format!(
+                    "Workspace {} exists and is not a git repo — remove it manually",
+                    workspace.display()
+                ));
+            }
+
+            eprintln!("Cloning {repo_url} to {}...", workspace.display());
+            let clone = std::process::Command::new("git")
+                .args(["clone", "--depth=1", repo_url, workspace_dir])
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .map_err(|e| format!("Failed to run git clone: {e}"))?;
+            if !clone.success() {
+                return Err("git clone failed".to_string());
+            }
+        }
+
+        Self::self_update_local(workspace_dir)
     }
 }
 
