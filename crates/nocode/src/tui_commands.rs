@@ -531,13 +531,35 @@ fn cmd_init(app: &mut TuiApp) {
 }
 
 fn cmd_plan(app: &mut TuiApp, description: Option<&str>) {
-    let desc = description.unwrap_or("(no description)");
+    let desc = description.unwrap_or("").trim();
+    if desc.is_empty() {
+        // Show existing spec if any
+        let spec_path = std::path::Path::new(".nocode/SPEC.md");
+        if spec_path.exists() {
+            match std::fs::read_to_string(spec_path) {
+                Ok(content) => {
+                    let preview: String = content.lines().take(20).collect::<Vec<_>>().join("\n");
+                    app.push_system(&format!(
+                        "Active spec: .nocode/SPEC.md\n\n{preview}\n\n\
+                         Use /plan <description> to create a new spec, or ask to execute the current one."
+                    ));
+                }
+                Err(_) => app.push_system("No active spec. Use /plan <description> to create one."),
+            }
+        } else {
+            app.push_system(
+                "No active spec. Use /plan <description> to start planning.\n\n\
+                 The model will write .nocode/SPEC.md and break it into tasks.",
+            );
+        }
+        return;
+    }
+    // Inject the planning request as a user message hint
     app.push_system(&format!(
-        "Plan mode activated: {desc}\n\n\
-         Outline your approach, then use /send to submit.\n\
-         The model will help structure your plan before execution."
+        "Planning: {desc}\n\n\
+         Write a spec to .nocode/SPEC.md with: goal, constraints, approach, and steps.\n\
+         Then create Task items for each step."
     ));
-    app.input_mode = InputMode::Insert;
 }
 
 fn cmd_review(app: &mut TuiApp, args: Option<&str>) {

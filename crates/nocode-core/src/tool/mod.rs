@@ -155,8 +155,7 @@ impl ToolRegistry {
         registry.register(Box::new(write::WriteTool));
         registry.register(Box::new(glob::GlobTool));
         registry.register(Box::new(grep::GrepTool));
-        // Extended tools — high-value beyond Pi's 7
-        registry.register(Box::new(mcp_tools::McpTool));
+        // Extended tools
         registry.register(Box::new(task_tools::TaskTool));
         registry.register(Box::new(web::WebFetchTool));
         registry.register(Box::new(web::WebSearchTool));
