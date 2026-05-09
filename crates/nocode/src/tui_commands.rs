@@ -533,79 +533,50 @@ fn cmd_init(app: &mut TuiApp) {
 fn cmd_plan(app: &mut TuiApp, description: Option<&str>) {
     let desc = description.unwrap_or("").trim();
 
-    // If already in plan mode, /plan without args shows status
     if app.plan_state.is_active() {
-        if desc.is_empty() {
-            let label = app.plan_state.label();
-            let spec_path = std::path::Path::new(".nocode/SPEC.md");
-            if spec_path.exists() {
-                if let Ok(content) = std::fs::read_to_string(spec_path) {
-                    let preview: String = content.lines().take(30).collect::<Vec<_>>().join("\n");
-                    app.push_system(&format!(
-                        "Plan [{label}]\n\n{preview}\n\n\
-                         Say \"confirm\" to execute, \"cancel\" to exit plan mode."
-                    ));
-                } else {
-                    app.push_system(&format!("Plan [{label}] — spec not yet generated."));
-                }
-            } else {
-                app.push_system(&format!("Plan [{label}] — investigating..."));
-            }
-            return;
-        }
-        // /plan cancel
+        // /plan cancel — escape hatch
         if desc == "cancel" || desc == "exit" || desc == "off" {
+            // Resolve any active choice
+            if let Some(idx) = app.active_plan_choice.take()
+                && let Some(msg) = app.chat_messages.get_mut(idx)
+                && let Some(choice) = &mut msg.plan_choice
+            {
+                choice.resolved = true;
+                choice.chosen = Some(choice.options.len().saturating_sub(1));
+            }
             app.plan_state = PlanState::Off;
             nocode_core::tool::session_tools::exit_plan_mode();
             app.push_system("Plan mode deactivated.");
             return;
         }
-        // /plan confirm — transition to executing
-        if desc == "confirm" || desc == "go" || desc == "execute" {
-            if let PlanState::Review {
-                ref goal,
-                ref spec_path,
-            } = app.plan_state
-            {
-                app.plan_state = PlanState::Executing {
-                    goal: goal.clone(),
-                    spec_path: spec_path.clone(),
-                };
-                nocode_core::tool::session_tools::exit_plan_mode();
-                app.push_system(
-                    "Plan confirmed — executing. Agents will work through the spec tasks.",
-                );
+        // /plan (no args) — show status
+        let label = app.plan_state.label();
+        let spec_path = std::path::Path::new(".nocode/SPEC.md");
+        if spec_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(spec_path) {
+                let preview: String = content.lines().take(20).collect::<Vec<_>>().join("\n");
+                app.push_system(&format!("Plan [{label}]\n\n{preview}"));
             } else {
-                app.push_system("Spec not ready for execution yet. Continue the conversation.");
+                app.push_system(&format!("Plan [{label}] — spec not yet generated."));
             }
-            return;
+        } else {
+            app.push_system(&format!("Plan [{label}] — investigating..."));
         }
-    }
-
-    // Start new plan
-    if desc.is_empty() {
-        app.push_system(
-            "Usage: /plan <goal>\n\n\
-             Enters plan mode:\n\
-             → Model investigates using WebSearch and agents\n\
-             → Asks you questions to clarify\n\
-             → Generates .nocode/SPEC.md\n\
-             → You review and confirm\n\
-             → Agents execute in parallel",
-        );
         return;
     }
 
-    // Enter plan mode
-    app.plan_state = PlanState::Investigating {
-        goal: desc.to_string(),
+    // Not active — enter plan mode (model will drive the flow)
+    let goal = if desc.is_empty() {
+        String::new()
+    } else {
+        desc.to_string()
     };
+    app.plan_state = PlanState::Investigating { goal };
     nocode_core::tool::session_tools::enter_plan_mode();
-    app.push_system(&format!(
-        "Plan mode: {desc}\n\n\
-         Investigating... I'll search for relevant information and ask questions.\n\
-         Use /plan to check progress, /plan cancel to exit."
-    ));
+    app.push_system(
+        "Plan mode active. Describe what you want to build — \
+         the model will investigate, draft a spec, and present choices inline.",
+    );
 }
 
 fn cmd_review(app: &mut TuiApp, args: Option<&str>) {

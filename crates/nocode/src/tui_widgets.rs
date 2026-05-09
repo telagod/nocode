@@ -39,6 +39,8 @@ pub(crate) enum ChatMessageKind {
     Permission,
     /// Thinking/reasoning block — collapsible with Ctrl-O.
     Thinking,
+    /// Inline plan choice card — user picks an option.
+    PlanChoice,
 }
 
 impl ChatMessageKind {
@@ -54,6 +56,7 @@ impl ChatMessageKind {
             Self::Spinner => ("  ", theme.spinner),           // just indent
             Self::Permission => ("\u{26A0} ", theme.warning), // ⚠
             Self::Thinking => ("  ", theme.text_dim),         // just indent
+            Self::PlanChoice => ("  ", theme.claude),          // just indent
         }
     }
 }
@@ -64,6 +67,8 @@ pub(crate) struct ChatMessage {
     pub lines: Vec<RenderedLine>,
     /// For Tool messages: structured tool call info.
     pub tool_info: Option<ToolCallInfo>,
+    /// For PlanChoice messages: inline choice card.
+    pub plan_choice: Option<PlanChoiceInfo>,
     /// For Thinking messages: whether content is collapsed.
     pub thinking_collapsed: bool,
 }
@@ -75,6 +80,24 @@ pub(crate) struct ToolCallInfo {
     pub arguments_summary: String,
     pub result_preview: Option<String>,
     pub collapsed: bool,
+}
+
+/// Inline plan choice card rendered in the chat message flow.
+#[derive(Debug, Clone)]
+pub(crate) struct PlanChoiceInfo {
+    pub header: String,
+    pub body_lines: Vec<RenderedLine>,
+    pub options: Vec<PlanChoiceOption>,
+    pub selected: usize,
+    pub resolved: bool,
+    pub chosen: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PlanChoiceOption {
+    pub label: String,
+    pub description: String,
+    pub key_hint: String,
 }
 
 impl ToolCallInfo {
@@ -100,6 +123,7 @@ impl ChatMessage {
             kind,
             lines,
             tool_info: None,
+            plan_choice: None,
             thinking_collapsed: true,
         }
     }
@@ -117,6 +141,7 @@ impl ChatMessage {
             kind,
             lines,
             tool_info: None,
+            plan_choice: None,
             thinking_collapsed: true,
         }
     }
@@ -127,6 +152,18 @@ impl ChatMessage {
             kind: ChatMessageKind::Tool,
             lines: result_lines,
             tool_info: Some(tool_info),
+            plan_choice: None,
+            thinking_collapsed: true,
+        }
+    }
+
+    /// Create an inline plan choice card.
+    pub fn plan_choice(info: PlanChoiceInfo) -> Self {
+        Self {
+            kind: ChatMessageKind::PlanChoice,
+            lines: Vec::new(),
+            tool_info: None,
+            plan_choice: Some(info),
             thinking_collapsed: true,
         }
     }
@@ -136,6 +173,134 @@ impl ChatMessage {
         let theme = default_theme();
         let (prefix, prefix_color) = self.kind.prefix();
         let mut result = Vec::with_capacity(self.lines.len() + 3);
+
+        // Plan choice card: ╭── header ──╮ / │ body / │ options / ╰──╯
+        if let Some(choice) = &self.plan_choice {
+            let border_color = if choice.resolved {
+                theme.success
+            } else {
+                theme.claude
+            };
+
+            // Header: ╭── title ──
+            result.push(Line::from(vec![
+                Span::styled(
+                    "  \u{256D}\u{2500}\u{2500} ",
+                    Style::default().fg(border_color),
+                ),
+                Span::styled(
+                    choice.header.as_str(),
+                    Style::default()
+                        .fg(theme.text)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" \u{2500}\u{2500}", Style::default().fg(border_color)),
+            ]));
+
+            if choice.resolved {
+                let chosen_label = choice
+                    .chosen
+                    .and_then(|i| choice.options.get(i))
+                    .map(|o| o.label.as_str())
+                    .unwrap_or("?");
+                result.push(Line::from(vec![
+                    Span::styled(
+                        "  \u{2570}\u{2500} ",
+                        Style::default().fg(border_color),
+                    ),
+                    Span::styled(
+                        "\u{2713} ",
+                        Style::default().fg(theme.success),
+                    ),
+                    Span::styled(
+                        format!("Chose: {chosen_label}"),
+                        Style::default().fg(theme.text_dim),
+                    ),
+                    Span::styled(
+                        " \u{2500}\u{256F}",
+                        Style::default().fg(border_color),
+                    ),
+                ]));
+            } else {
+                // Body lines (spec preview)
+                for line in &choice.body_lines {
+                    let mut spans: Vec<Span<'_>> = vec![Span::styled(
+                        "  \u{2502} ",
+                        Style::default().fg(border_color),
+                    )];
+                    spans.extend(line.segments.iter().map(|seg| {
+                        Span::styled(seg.text.as_str(), Style::default().fg(seg.color))
+                    }));
+                    result.push(Line::from(spans));
+                }
+
+                // Separator before options
+                if !choice.body_lines.is_empty() {
+                    result.push(Line::from(vec![
+                        Span::styled(
+                            "  \u{2502} ",
+                            Style::default().fg(border_color),
+                        ),
+                        Span::styled(
+                            "\u{2504}".repeat(40),
+                            Style::default().fg(theme.border),
+                        ),
+                    ]));
+                }
+
+                // Option rows
+                for (i, opt) in choice.options.iter().enumerate() {
+                    let marker = if i == choice.selected {
+                        "\u{25B8}"
+                    } else {
+                        " "
+                    };
+                    let key_style = if i == choice.selected {
+                        Style::default()
+                            .fg(theme.claude)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.text_dim)
+                    };
+                    let label_style = if i == choice.selected {
+                        Style::default()
+                            .fg(theme.text)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.text)
+                    };
+                    result.push(Line::from(vec![
+                        Span::styled(
+                            "  \u{2502} ",
+                            Style::default().fg(border_color),
+                        ),
+                        Span::styled(
+                            format!("{marker} "),
+                            key_style,
+                        ),
+                        Span::styled(
+                            format!("[{}] ", opt.key_hint),
+                            key_style,
+                        ),
+                        Span::styled(
+                            opt.label.as_str(),
+                            label_style,
+                        ),
+                        Span::styled(
+                            format!("  {}", opt.description),
+                            Style::default().fg(theme.text_dim),
+                        ),
+                    ]));
+                }
+
+                // Footer: ╰───╯
+                result.push(Line::from(vec![Span::styled(
+                    "  \u{2570}\u{2500}\u{2500}\u{2500}\u{256F}",
+                    Style::default().fg(border_color),
+                )]));
+            }
+            return result;
+        }
 
         // Tool call: rounded card style — ╭─ name ─╮ / │ output / ╰─ status ─╯
         if let Some(info) = &self.tool_info {
@@ -323,6 +488,17 @@ impl ChatMessage {
 
     /// Estimate height in terminal rows at given width.
     pub fn height(&self, _width: u16) -> u16 {
+        if let Some(info) = &self.plan_choice {
+            if info.resolved {
+                return 2; // header + resolved footer
+            }
+            // header + body_lines + separator(if body) + options + footer
+            let sep = u16::from(!info.body_lines.is_empty());
+            return (info.body_lines.len() as u16)
+                .saturating_add(info.options.len() as u16)
+                .saturating_add(2) // header + footer
+                .saturating_add(sep);
+        }
         if self.tool_info.is_some() {
             // Card: header + body lines + footer = lines + 2
             (self.lines.len() as u16).saturating_add(2).max(2)

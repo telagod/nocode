@@ -11,7 +11,8 @@ use crate::status_hud::StatusHud;
 use crate::tui_commands::{SlashResult, handle_slash_command};
 use crate::tui_events::{ChannelObserver, TuiEvent};
 use crate::tui_widgets::{
-    ChatMessage, ChatMessageKind, InputBox, StatusBar, WelcomeBanner, WelcomeBannerInfo,
+    ChatMessage, ChatMessageKind, InputBox, PlanChoiceInfo, PlanChoiceOption, StatusBar,
+    WelcomeBanner, WelcomeBannerInfo,
 };
 
 use base64::Engine as _;
@@ -164,6 +165,8 @@ pub(crate) struct TuiApp {
     pub(crate) saved_input: String,
     pub(crate) input_mode: InputMode,
     pub(crate) plan_state: PlanState,
+    /// Index of the active (unresolved) plan choice message, if any.
+    pub(crate) active_plan_choice: Option<usize>,
     pub(crate) vim_pending: Option<char>,
     pub(crate) hud: StatusHud,
     pub(crate) error_log: Vec<String>,
@@ -229,6 +232,7 @@ impl TuiApp {
             saved_input: String::new(),
             input_mode: InputMode::Insert,
             plan_state: PlanState::Off,
+            active_plan_choice: None,
             vim_pending: None,
             hud: StatusHud::new(model, ""),
             error_log: Vec::new(),
@@ -265,7 +269,138 @@ impl TuiApp {
         if self.chat_messages.len() > LOG_LIMIT {
             let drain = self.chat_messages.len() - LOG_LIMIT;
             self.chat_messages.drain(..drain);
+            // Adjust active_plan_choice index if still valid
+            if let Some(idx) = self.active_plan_choice {
+                if idx < drain {
+                    self.active_plan_choice = None;
+                } else {
+                    self.active_plan_choice = Some(idx - drain);
+                }
+            }
             self.invalidate_height_cache();
+        }
+    }
+
+    /// Check if .nocode/SPEC.md appeared during investigation phase.
+    pub fn check_spec_ready(&mut self) {
+        if !matches!(self.plan_state, PlanState::Investigating { .. }) {
+            return;
+        }
+        let spec_path = std::path::Path::new(".nocode/SPEC.md");
+        if !spec_path.exists() {
+            return;
+        }
+        let Ok(content) = std::fs::read_to_string(spec_path) else {
+            return;
+        };
+        // Require at least a heading to avoid catching incomplete writes
+        if !content.starts_with('#') {
+            return;
+        }
+
+        let goal = match &self.plan_state {
+            PlanState::Investigating { goal } => goal.clone(),
+            _ => return,
+        };
+
+        let spec_path_str = ".nocode/SPEC.md".to_string();
+        self.plan_state = PlanState::Review {
+            goal: goal.clone(),
+            spec_path: spec_path_str,
+        };
+
+        let body_lines = render_markdown_to_lines(&content);
+        let truncated: Vec<_> = body_lines.into_iter().take(40).collect();
+
+        let choice = PlanChoiceInfo {
+            header: format!("Spec Ready: {goal}"),
+            body_lines: truncated,
+            options: vec![
+                PlanChoiceOption {
+                    label: "Continue Discussing".to_string(),
+                    description: "Ask questions or refine".to_string(),
+                    key_hint: "1".to_string(),
+                },
+                PlanChoiceOption {
+                    label: "Confirm & Execute".to_string(),
+                    description: "Start building".to_string(),
+                    key_hint: "2".to_string(),
+                },
+                PlanChoiceOption {
+                    label: "Cancel Plan".to_string(),
+                    description: "Exit plan mode".to_string(),
+                    key_hint: "3".to_string(),
+                },
+            ],
+            selected: 0,
+            resolved: false,
+            chosen: None,
+        };
+
+        self.chat_messages.push(ChatMessage::plan_choice(choice));
+        self.active_plan_choice = Some(self.chat_messages.len() - 1);
+        self.on_message_added();
+    }
+
+    /// Handle user's plan choice selection. Returns Submit for execution.
+    pub fn handle_plan_choice(&mut self, selected: usize) -> HandleKeyResult {
+        match selected {
+            0 => {
+                // "Continue Discussing" — back to Investigating
+                if let PlanState::Review { ref goal, .. } = self.plan_state {
+                    let goal = goal.clone();
+                    self.plan_state = PlanState::Investigating { goal };
+                }
+                self.push_system("Continuing investigation. Ask questions or provide feedback.");
+                HandleKeyResult::Continue
+            }
+            1 => {
+                // "Confirm & Execute"
+                if let PlanState::Review {
+                    ref goal,
+                    ref spec_path,
+                } = self.plan_state
+                {
+                    self.plan_state = PlanState::Executing {
+                        goal: goal.clone(),
+                        spec_path: spec_path.clone(),
+                    };
+                    nocode_core::tool::session_tools::exit_plan_mode();
+                    self.push_system("Plan confirmed. Executing...");
+                    return HandleKeyResult::Submit(
+                        "Execute the plan in .nocode/SPEC.md. Work through each task, using Agent for parallelism where possible.".to_string(),
+                    );
+                }
+                HandleKeyResult::Continue
+            }
+            2 => {
+                // "Cancel Plan"
+                self.plan_state = PlanState::Off;
+                nocode_core::tool::session_tools::exit_plan_mode();
+                self.push_system("Plan mode deactivated.");
+                HandleKeyResult::Continue
+            }
+            _ => HandleKeyResult::Continue,
+        }
+    }
+
+    /// Resolve active plan choice when user sends a message (soft dismiss).
+    pub fn resolve_plan_choice_as_continue(&mut self) {
+        if let Some(idx) = self.active_plan_choice.take() {
+            if let Some(msg) = self.chat_messages.get_mut(idx)
+                && let Some(choice) = &mut msg.plan_choice
+                && !choice.resolved
+            {
+                choice.resolved = true;
+                choice.chosen = Some(0); // "Continue Discussing"
+            }
+            // Go back to Investigating
+            if let PlanState::Review { ref goal, .. } = self.plan_state {
+                let goal = goal.clone();
+                self.plan_state = PlanState::Investigating { goal };
+            }
+            self.invalidate_height_cache();
+            self.dirty = true;
         }
     }
 
@@ -612,11 +747,25 @@ impl TuiApp {
     }
 
     fn hints_text(&self) -> String {
-        if self.plan_state.is_active() {
+        // Active inline choice — show choice shortcuts
+        if self.active_plan_choice.is_some() {
             return format!(
-                "/plan:status  /plan confirm  /plan cancel  {}",
+                "1-3:select  \u{2191}\u{2193}:navigate  Enter:confirm  Esc:cancel  {}",
                 self.plan_state.label()
             );
+        }
+        if self.plan_state.is_active() {
+            return match &self.plan_state {
+                PlanState::Investigating { .. } => {
+                    "PLAN:investigating | /plan cancel".to_string()
+                }
+                PlanState::Drafting { .. } => "PLAN:drafting | /plan cancel".to_string(),
+                PlanState::Review { .. } => {
+                    "PLAN:review | choose below | /plan cancel".to_string()
+                }
+                PlanState::Executing { .. } => "PLAN:executing | agents working...".to_string(),
+                PlanState::Off => unreachable!(),
+            };
         }
         if self.input_mode == InputMode::Normal {
             "i:insert  /:cmd  ?:help  q:quit".to_string()
@@ -1034,6 +1183,59 @@ impl TuiApp {
                 _ => {}
             }
             return HandleKeyResult::Continue;
+        }
+
+        // Plan choice — soft-hint mode: only intercept when input is empty
+        if let Some(choice_idx) = self.active_plan_choice
+            && self.input.is_empty()
+            && let Some(msg) = self.chat_messages.get_mut(choice_idx)
+            && let Some(choice) = &mut msg.plan_choice
+            && !choice.resolved
+        {
+            match key.code {
+                KeyCode::Char(c) if ('1'..='9').contains(&c) => {
+                    let idx = (c as usize) - ('1' as usize);
+                    if idx < choice.options.len() {
+                        choice.selected = idx;
+                    }
+                    self.invalidate_height_cache();
+                    self.dirty = true;
+                    return HandleKeyResult::Continue;
+                }
+                KeyCode::Up => {
+                    if choice.selected > 0 {
+                        choice.selected -= 1;
+                    }
+                    self.dirty = true;
+                    return HandleKeyResult::Continue;
+                }
+                KeyCode::Down => {
+                    if choice.selected + 1 < choice.options.len() {
+                        choice.selected += 1;
+                    }
+                    self.dirty = true;
+                    return HandleKeyResult::Continue;
+                }
+                KeyCode::Enter => {
+                    let selected = choice.selected;
+                    choice.resolved = true;
+                    choice.chosen = Some(selected);
+                    self.invalidate_height_cache();
+                    self.dirty = true;
+                    self.active_plan_choice = None;
+                    return self.handle_plan_choice(selected);
+                }
+                KeyCode::Esc => {
+                    let cancel_idx = choice.options.len().saturating_sub(1);
+                    choice.resolved = true;
+                    choice.chosen = Some(cancel_idx);
+                    self.invalidate_height_cache();
+                    self.dirty = true;
+                    self.active_plan_choice = None;
+                    return self.handle_plan_choice(cancel_idx);
+                }
+                _ => {} // fall through to normal handling
+            }
         }
 
         // Search mode — intercept keys for search input
@@ -1916,6 +2118,8 @@ pub(crate) fn run_app_loop(
                         is_error,
                     }) => {
                         app.push_tool_done(&name, &content, is_error);
+                        // Check if spec appeared during plan investigation
+                        app.check_spec_ready();
                         // Model will be called again — show spinner
                         app.thinking_spinner = Some(Spinner::new("Thinking..."));
                     }
@@ -1982,6 +2186,8 @@ pub(crate) fn run_app_loop(
                                 app.hud.end_turn();
                             }
                         }
+                        // Final spec check after turn completes
+                        app.check_spec_ready();
                         break;
                     }
                     Err(mpsc::TryRecvError::Empty) => break,
@@ -2102,6 +2308,7 @@ pub(crate) fn run_app_loop(
                                 }
 
                                 // Submit to agentic loop
+                                app.resolve_plan_choice_as_continue();
                                 app.push_user_message(&text);
                                 app.show_banner = false;
 
