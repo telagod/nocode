@@ -9,6 +9,26 @@ use std::io::{self, Write};
 use crate::model_fetch;
 use crate::provider_presets::ALL_PRESETS;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ANSI helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RESET: &str = "\x1b[0m";
+const BOLD: &str = "\x1b[1m";
+const DIM: &str = "\x1b[2m";
+const ITALIC: &str = "\x1b[3m";
+const FG_CYAN: &str = "\x1b[36m";
+const FG_GREEN: &str = "\x1b[32m";
+const FG_YELLOW: &str = "\x1b[33m";
+const FG_RED: &str = "\x1b[31m";
+const FG_BLUE: &str = "\x1b[34m";
+const FG_DIM: &str = "\x1b[90m";
+const FG_WHITE: &str = "\x1b[97m";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Data types
+// ─────────────────────────────────────────────────────────────────────────────
+
 struct LoginProvider {
     name: &'static str,
     credential_slot: &'static str,
@@ -16,40 +36,25 @@ struct LoginProvider {
     auth_hint: &'static str,
     base_url: &'static str,
     api_format: &'static str,
-    _default_model: &'static str,
+    default_model: &'static str,
     provider_type: &'static str,
 }
 
-/// Mutable overrides for base_url and api_format during login flow.
 struct EndpointOverride {
     base_url: String,
     api_format: String,
 }
 
-fn build_provider_list() -> Vec<LoginProvider> {
-    ALL_PRESETS
-        .iter()
-        .map(|p| LoginProvider {
-            name: p.name,
-            credential_slot: p.credential_slot,
-            env_key_name: p.env_key_name,
-            auth_hint: p.auth_hint,
-            base_url: p.base_url,
-            api_format: p.api_format,
-            _default_model: p.default_model,
-            provider_type: p.provider_type,
-        })
-        .collect()
+enum InputEvent {
+    Key(crossterm::event::KeyEvent),
+    Paste(String),
 }
 
-fn mask_key(key: &str) -> String {
-    if key.len() <= 8 {
-        return "*".repeat(key.len());
-    }
-    format!("{}...{}", &key[..4], &key[key.len() - 4..])
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Drawing primitives
+// ─────────────────────────────────────────────────────────────────────────────
 
-fn clear_screen(stdout: &mut io::Stdout) {
+fn clear(stdout: &mut io::Stdout) {
     let _ = execute!(
         stdout,
         terminal::Clear(ClearType::All),
@@ -57,33 +62,86 @@ fn clear_screen(stdout: &mut io::Stdout) {
     );
 }
 
-fn draw_header(stdout: &mut io::Stdout, step: usize) {
-    let tabs = ["Provider", "API Key", "Endpoint", "Model", "Confirm"];
+fn draw_logo(stdout: &mut io::Stdout) {
     let _ = writeln!(stdout, "\r");
-    let _ = write!(stdout, "  ");
-    for (i, label) in tabs.iter().enumerate() {
-        if i == step {
-            // Current step: bold + inverted
-            let _ = write!(stdout, "\x1b[1;7m {label} \x1b[0m");
-        } else if i < step {
-            // Completed: green dim
-            let _ = write!(stdout, "\x1b[32m {label} \x1b[0m");
-        } else {
-            // Future: dim
-            let _ = write!(stdout, "\x1b[2m {label} \x1b[0m");
-        }
-        if i + 1 < tabs.len() {
-            let _ = write!(stdout, "\x1b[2m\u{203A}\x1b[0m");
-        }
-    }
-    let _ = writeln!(stdout, "\r");
+    let _ = writeln!(
+        stdout,
+        "  {FG_CYAN}{BOLD}\u{256D}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256E}{RESET}\r"
+    );
+    let _ = writeln!(
+        stdout,
+        "  {FG_CYAN}{BOLD}\u{2502}{RESET}   {FG_WHITE}{BOLD}n o c o d e{RESET}   {DIM}setup{RESET}            {FG_CYAN}{BOLD}\u{2502}{RESET}\r"
+    );
+    let _ = writeln!(
+        stdout,
+        "  {FG_CYAN}{BOLD}\u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256F}{RESET}\r"
+    );
     let _ = writeln!(stdout, "\r");
 }
 
-enum InputEvent {
-    Key(crossterm::event::KeyEvent),
-    Paste(String),
+fn draw_progress(stdout: &mut io::Stdout, current: usize) {
+    let steps = [
+        ("\u{2460}", "Provider"),
+        ("\u{2461}", "Key"),
+        ("\u{2462}", "Model"),
+        ("\u{2463}", "Done"),
+    ];
+    let _ = write!(stdout, "  ");
+    for (i, (num, label)) in steps.iter().enumerate() {
+        if i == current {
+            let _ = write!(stdout, "{FG_CYAN}{BOLD}{num} {label}{RESET}");
+        } else if i < current {
+            let _ = write!(stdout, "{FG_GREEN}{num} {label}{RESET}");
+        } else {
+            let _ = write!(stdout, "{FG_DIM}{num} {label}{RESET}");
+        }
+        if i + 1 < steps.len() {
+            let _ = write!(stdout, " {FG_DIM}\u{2500}\u{2500}{RESET} ");
+        }
+    }
+    let _ = writeln!(stdout, "\r");
+    // Progress bar
+    let filled = current * 9;
+    let total = 36;
+    let empty = total - filled;
+    let _ = write!(stdout, "  {FG_CYAN}");
+    for _ in 0..filled {
+        let _ = write!(stdout, "\u{2501}");
+    }
+    let _ = write!(stdout, "{FG_DIM}");
+    for _ in 0..empty {
+        let _ = write!(stdout, "\u{2500}");
+    }
+    let _ = writeln!(stdout, "{RESET}\r");
+    let _ = writeln!(stdout, "\r");
 }
+
+fn draw_section_title(stdout: &mut io::Stdout, title: &str) {
+    let _ = writeln!(stdout, "  {FG_DIM}\u{2500}\u{2500}\u{2500}{RESET} {BOLD}{title}{RESET} {FG_DIM}\u{2500}\u{2500}\u{2500}{RESET}\r");
+    let _ = writeln!(stdout, "\r");
+}
+
+fn draw_hint(stdout: &mut io::Stdout, hint: &str) {
+    let _ = writeln!(stdout, "\r");
+    let _ = writeln!(stdout, "  {FG_DIM}{hint}{RESET}\r");
+}
+
+fn draw_field(stdout: &mut io::Stdout, label: &str, value: &str) {
+    let _ = writeln!(stdout, "  {FG_DIM}{label}{RESET}  {value}\r");
+}
+
+fn mask_key(key: &str) -> String {
+    if key.len() <= 8 {
+        return "\u{2022}".repeat(key.len());
+    }
+    let prefix: String = key.chars().take(4).collect();
+    let suffix: String = key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    format!("{prefix}{}\u{2026}{suffix}", "\u{2022}".repeat(4))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Input helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 fn read_event() -> Option<InputEvent> {
     loop {
@@ -106,71 +164,280 @@ fn read_key() -> Option<crossterm::event::KeyEvent> {
     }
 }
 
-fn step_select_provider(stdout: &mut io::Stdout, providers: &[LoginProvider]) -> Option<usize> {
+fn build_provider_list() -> Vec<LoginProvider> {
+    ALL_PRESETS
+        .iter()
+        .map(|p| LoginProvider {
+            name: p.name,
+            credential_slot: p.credential_slot,
+            env_key_name: p.env_key_name,
+            auth_hint: p.auth_hint,
+            base_url: p.base_url,
+            api_format: p.api_format,
+            default_model: p.default_model,
+            provider_type: p.provider_type,
+        })
+        .collect()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 1: Provider selection
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn step_provider(stdout: &mut io::Stdout, providers: &[LoginProvider]) -> Option<usize> {
     let mut selected = 0usize;
-    let max_visible = 14;
-    let mut scroll = 0usize;
+    let mut filter = String::new();
+
+    // Group indices: native (anthropic/openai/gemini), cloud proxies, local
+    let native: Vec<usize> = providers
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| matches!(p.provider_type, "anthropic" | "openai" | "gemini"))
+        .map(|(i, _)| i)
+        .collect();
+    let cloud: Vec<usize> = providers
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| {
+            p.provider_type == "custom"
+                && !p.base_url.contains("localhost")
+                && !p.base_url.contains("127.0.0.1")
+                && p.name != "Ollama"
+                && p.name != "vLLM"
+                && p.name != "LiteLLM"
+                && p.name != "LocalAI"
+                && p.name != "LM Studio"
+        })
+        .map(|(i, _)| i)
+        .collect();
+    let local: Vec<usize> = providers
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| {
+            p.provider_type == "custom"
+                && (p.base_url.contains("localhost")
+                    || p.base_url.contains("127.0.0.1")
+                    || matches!(p.name, "Ollama" | "vLLM" | "LiteLLM" | "LocalAI" | "LM Studio"))
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    // Flat ordered list for navigation
+    fn build_flat(
+        native: &[usize],
+        cloud: &[usize],
+        local: &[usize],
+        providers: &[LoginProvider],
+        filter: &str,
+    ) -> Vec<usize> {
+        let filter_lower = filter.to_lowercase();
+        let matches = |i: &usize| -> bool {
+            filter.is_empty() || providers[*i].name.to_lowercase().contains(&filter_lower)
+        };
+        let mut flat = Vec::new();
+        flat.extend(native.iter().copied().filter(|i| matches(i)));
+        flat.extend(cloud.iter().copied().filter(|i| matches(i)));
+        flat.extend(local.iter().copied().filter(|i| matches(i)));
+        flat
+    }
+
+    let mut flat = build_flat(&native, &cloud, &local, providers, &filter);
+
     loop {
-        clear_screen(stdout);
-        draw_header(stdout, 0);
-        let visible_end = (scroll + max_visible).min(providers.len());
-        for (i, prov) in providers
-            .iter()
-            .enumerate()
-            .skip(scroll)
-            .take(visible_end - scroll)
-        {
-            let marker = if i == selected { " ▸ " } else { "   " };
-            let _ = writeln!(stdout, "{marker}{}\r", prov.name);
+        clear(stdout);
+        draw_logo(stdout);
+        draw_progress(stdout, 0);
+        draw_section_title(stdout, "Select Provider");
+
+        if !filter.is_empty() {
+            let _ = writeln!(
+                stdout,
+                "  {FG_YELLOW}filter:{RESET} {filter}  {FG_DIM}(Esc clear){RESET}\r"
+            );
+            let _ = writeln!(stdout, "\r");
         }
-        if providers.len() > max_visible {
-            let _ = writeln!(stdout, "\r\n  ({}/{})\r", selected + 1, providers.len());
+
+        // Render grouped list
+        let mut flat_pos = 0usize;
+        let groups: [(&str, &[usize]); 3] = [
+            ("Direct API", &native),
+            ("Cloud Proxy", &cloud),
+            ("Local / Self-hosted", &local),
+        ];
+        let filter_lower = filter.to_lowercase();
+
+        for (group_name, indices) in &groups {
+            let visible: Vec<usize> = indices
+                .iter()
+                .copied()
+                .filter(|i| filter.is_empty() || providers[*i].name.to_lowercase().contains(&filter_lower))
+                .collect();
+            if visible.is_empty() {
+                continue;
+            }
+            let _ = writeln!(stdout, "  {FG_DIM}{group_name}{RESET}\r");
+            for &idx in &visible {
+                let is_sel = flat_pos == selected;
+                let p = &providers[idx];
+                let marker = if is_sel {
+                    format!("{FG_CYAN}{BOLD} \u{25B8} {RESET}")
+                } else {
+                    "   ".to_string()
+                };
+                let model_hint = format!("{FG_DIM}{}{RESET}", p.default_model);
+                let padded_name = format!("{:<18}", p.name);
+                let name_display = if is_sel {
+                    format!("{FG_WHITE}{BOLD}{padded_name}{RESET}")
+                } else {
+                    padded_name
+                };
+                let _ = writeln!(stdout, "{marker}{name_display} {model_hint}\r");
+                flat_pos += 1;
+            }
+            let _ = writeln!(stdout, "\r");
         }
-        let _ = writeln!(stdout, "\r\n  ↑/↓ navigate  Enter select  Esc quit\r");
+
+        draw_hint(
+            stdout,
+            "\u{2191}\u{2193} navigate  Enter select  / filter  Esc quit",
+        );
         let _ = stdout.flush();
 
         let key = read_key()?;
         match key.code {
-            KeyCode::Up if selected > 0 => {
-                selected -= 1;
-                if selected < scroll {
-                    scroll = selected;
+            KeyCode::Up if selected > 0 => selected -= 1,
+            KeyCode::Down if selected + 1 < flat.len() => selected += 1,
+            KeyCode::Enter if !flat.is_empty() => return Some(flat[selected]),
+            KeyCode::Char('/') => {
+                filter.clear();
+                // Enter filter mode inline
+                loop {
+                    flat = build_flat(&native, &cloud, &local, providers, &filter);
+                    selected = selected.min(flat.len().saturating_sub(1));
+
+                    clear(stdout);
+                    draw_logo(stdout);
+                    draw_progress(stdout, 0);
+                    draw_section_title(stdout, "Select Provider");
+                    let _ = writeln!(
+                        stdout,
+                        "  {FG_YELLOW}\u{1F50D} {filter}\u{2588}{RESET}\r"
+                    );
+                    let _ = writeln!(stdout, "\r");
+                    for (i, &idx) in flat.iter().enumerate() {
+                        let is_sel = i == selected;
+                        let p = &providers[idx];
+                        let marker = if is_sel {
+                            format!("{FG_CYAN}{BOLD} \u{25B8} {RESET}")
+                        } else {
+                            "   ".to_string()
+                        };
+                        let padded = format!("{:<18}", p.name);
+                        let name_d = if is_sel {
+                            format!("{FG_WHITE}{BOLD}{padded}{RESET}")
+                        } else {
+                            padded
+                        };
+                        let _ = writeln!(
+                            stdout,
+                            "{marker}{name_d} {FG_DIM}{}{RESET}\r",
+                            p.default_model
+                        );
+                    }
+                    draw_hint(stdout, "type to filter  Enter select  Esc clear");
+                    let _ = stdout.flush();
+
+                    let key = read_key()?;
+                    match key.code {
+                        KeyCode::Char(c) => filter.push(c),
+                        KeyCode::Backspace => {
+                            filter.pop();
+                        }
+                        KeyCode::Enter if !flat.is_empty() => return Some(flat[selected]),
+                        KeyCode::Up if selected > 0 => selected -= 1,
+                        KeyCode::Down if selected + 1 < flat.len() => selected += 1,
+                        KeyCode::Esc => {
+                            filter.clear();
+                            flat = build_flat(&native, &cloud, &local, providers, &filter);
+                            selected = selected.min(flat.len().saturating_sub(1));
+                            break;
+                        }
+                        _ => {}
+                    }
                 }
             }
-            KeyCode::Down if selected + 1 < providers.len() => {
-                selected += 1;
-                if selected >= scroll + max_visible {
-                    scroll = selected - max_visible + 1;
-                }
-            }
-            KeyCode::Enter => return Some(selected),
             KeyCode::Esc | KeyCode::Char('q') => return None,
             _ => {}
         }
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 2: API Key
+// ─────────────────────────────────────────────────────────────────────────────
+
 fn step_api_key(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<String> {
     if provider.env_key_name.is_empty() {
         return Some(String::new());
     }
+
+    // Check if key already exists in env
+    let existing = std::env::var(provider.env_key_name).ok();
+    if let Some(ref key) = existing
+        && !key.is_empty()
+    {
+        clear(stdout);
+        draw_logo(stdout);
+        draw_progress(stdout, 1);
+        draw_section_title(stdout, "API Key");
+        let _ = writeln!(
+            stdout,
+            "  {FG_GREEN}\u{2713}{RESET} Found {BOLD}{}{RESET} in environment\r",
+            provider.env_key_name
+        );
+        let _ = writeln!(stdout, "    {FG_DIM}{}{RESET}\r", mask_key(key));
+        let _ = writeln!(stdout, "\r");
+        let _ = writeln!(
+            stdout,
+            "  {FG_DIM}Enter{RESET} use this key  {FG_DIM}n{RESET} enter new key  {FG_DIM}Esc{RESET} back\r"
+        );
+        let _ = stdout.flush();
+
+        loop {
+            let k = read_key()?;
+            match k.code {
+                KeyCode::Enter => return Some(key.clone()),
+                KeyCode::Char('n') | KeyCode::Char('N') => break, // fall through to input
+                KeyCode::Esc => return None,
+                _ => {}
+            }
+        }
+    }
+
     let mut key_buf = String::new();
     loop {
-        clear_screen(stdout);
-        draw_header(stdout, 1);
-        let _ = writeln!(stdout, "  Provider: {}\r", provider.name);
-        let _ = writeln!(stdout, "  Hint: {}\r", provider.auth_hint);
-        if !provider.env_key_name.is_empty() {
-            let _ = writeln!(stdout, "  Env var: {}\r", provider.env_key_name);
-        }
+        clear(stdout);
+        draw_logo(stdout);
+        draw_progress(stdout, 1);
+        draw_section_title(stdout, "API Key");
+
+        draw_field(stdout, "Provider", &format!("{BOLD}{}{RESET}", provider.name));
         let _ = writeln!(stdout, "\r");
+        let _ = writeln!(
+            stdout,
+            "  {FG_BLUE}{ITALIC}{}{RESET}\r",
+            provider.auth_hint
+        );
+        let _ = writeln!(stdout, "\r");
+
         let display = if key_buf.is_empty() {
-            String::new()
+            format!("{FG_DIM}\u{2588}{RESET}")
         } else {
-            mask_key(&key_buf)
+            format!("{}{FG_DIM}\u{2588}{RESET}", mask_key(&key_buf))
         };
-        let _ = writeln!(stdout, "  Key: {display}\r");
-        let _ = writeln!(stdout, "\r\n  Type/paste key, Enter confirm, Esc back\r");
+        let _ = writeln!(stdout, "  {FG_DIM}\u{1F511}{RESET} {display}\r");
+
+        draw_hint(stdout, "paste or type key  Enter confirm  Esc back");
         let _ = stdout.flush();
 
         match read_event()? {
@@ -178,10 +445,7 @@ fn step_api_key(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<Str
                 key_buf.push_str(text.trim());
             }
             InputEvent::Key(key) => match key.code {
-                KeyCode::Enter => {
-                    if key_buf.trim().is_empty() {
-                        continue;
-                    }
+                KeyCode::Enter if !key_buf.trim().is_empty() => {
                     return Some(key_buf.trim().to_string());
                 }
                 KeyCode::Esc => return None,
@@ -195,128 +459,26 @@ fn step_api_key(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<Str
     }
 }
 
-fn step_endpoint(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<EndpointOverride> {
-    let formats = ["openai-responses", "openai-chat", "anthropic", "google"];
-    let mut base_url = provider.base_url.to_string();
-    let mut api_format = provider.api_format.to_string();
-    let mut editing_url = false;
-    let mut editing_fmt = false;
-    let mut url_buf = String::new();
-    let mut fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 3: Model selection
+// ─────────────────────────────────────────────────────────────────────────────
 
-    loop {
-        clear_screen(stdout);
-        draw_header(stdout, 2);
-        let _ = writeln!(stdout, "  Provider: {}\r", provider.name);
-        let _ = writeln!(stdout, "\r");
-
-        if editing_url {
-            let display = if url_buf.is_empty() {
-                base_url.clone()
-            } else {
-                url_buf.clone()
-            };
-            let _ = writeln!(stdout, "  Base URL: {display}█\r");
-            let _ = writeln!(stdout, "  Format:   {api_format}\r");
-            let _ = writeln!(stdout, "\r\n  Type URL, Enter confirm, Esc cancel\r");
-        } else if editing_fmt {
-            let _ = writeln!(stdout, "  Base URL: {base_url}\r");
-            let _ = writeln!(stdout, "  Format:   ◂ {} ▸\r", formats[fmt_idx]);
-            let _ = writeln!(stdout, "\r\n  ←/→ cycle  Enter confirm  Esc cancel\r");
-        } else {
-            let _ = writeln!(stdout, "  Base URL: {base_url}\r");
-            let _ = writeln!(stdout, "  Format:   {api_format}\r");
-            let _ = writeln!(stdout, "\r");
-            let _ = writeln!(
-                stdout,
-                "  [u] edit URL  [f] edit format  Enter next  Esc back\r"
-            );
-        }
-        let _ = stdout.flush();
-
-        match read_event()? {
-            InputEvent::Paste(text) => {
-                if editing_url {
-                    url_buf.push_str(text.trim());
-                }
-            }
-            InputEvent::Key(key) => {
-                if editing_url {
-                    match key.code {
-                        KeyCode::Enter => {
-                            let trimmed = url_buf.trim().trim_end_matches('/').to_string();
-                            if !trimmed.is_empty() {
-                                base_url = trimmed;
-                            }
-                            url_buf.clear();
-                            editing_url = false;
-                        }
-                        KeyCode::Esc => {
-                            url_buf.clear();
-                            editing_url = false;
-                        }
-                        KeyCode::Backspace => {
-                            url_buf.pop();
-                        }
-                        KeyCode::Char(c) => url_buf.push(c),
-                        _ => {}
-                    }
-                } else if editing_fmt {
-                    match key.code {
-                        KeyCode::Left => {
-                            fmt_idx = if fmt_idx == 0 {
-                                formats.len() - 1
-                            } else {
-                                fmt_idx - 1
-                            };
-                        }
-                        KeyCode::Right => {
-                            fmt_idx = (fmt_idx + 1) % formats.len();
-                        }
-                        KeyCode::Enter => {
-                            api_format = formats[fmt_idx].to_string();
-                            editing_fmt = false;
-                        }
-                        KeyCode::Esc => {
-                            fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
-                            editing_fmt = false;
-                        }
-                        _ => {}
-                    }
-                } else {
-                    match key.code {
-                        KeyCode::Char('u') | KeyCode::Char('U') => {
-                            editing_url = true;
-                            url_buf.clear();
-                        }
-                        KeyCode::Char('f') | KeyCode::Char('F') => {
-                            editing_fmt = true;
-                            fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
-                        }
-                        KeyCode::Enter => {
-                            return Some(EndpointOverride {
-                                base_url,
-                                api_format,
-                            });
-                        }
-                        KeyCode::Esc => return None,
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn step_select_model(
+fn step_model(
     stdout: &mut io::Stdout,
     provider: &LoginProvider,
     api_key: &str,
     endpoint: &EndpointOverride,
 ) -> Option<String> {
-    clear_screen(stdout);
-    draw_header(stdout, 3);
-    let _ = writeln!(stdout, "  Fetching models from {}...\r", provider.name);
+    // Show loading state
+    clear(stdout);
+    draw_logo(stdout);
+    draw_progress(stdout, 2);
+    draw_section_title(stdout, "Select Model");
+    let _ = writeln!(
+        stdout,
+        "  {FG_DIM}\u{25CC} Fetching models from {}...{RESET}\r",
+        provider.name
+    );
     let _ = stdout.flush();
 
     let is_native = matches!(provider.provider_type, "anthropic" | "openai" | "gemini")
@@ -343,11 +505,15 @@ fn step_select_model(
 
     let models = match models {
         Ok(m) if !m.is_empty() => m,
-        Ok(_) => return prompt_text_input(stdout, "  No models found. Model name: "),
+        Ok(_) => return prompt_model_input(stdout, provider),
         Err(e) => {
-            let _ = writeln!(stdout, "  Fetch failed: {e}\r");
-            let _ = stdout.flush();
-            return prompt_text_input(stdout, "  Model name: ");
+            clear(stdout);
+            draw_logo(stdout);
+            draw_progress(stdout, 2);
+            draw_section_title(stdout, "Select Model");
+            let _ = writeln!(stdout, "  {FG_RED}\u{2716} Fetch failed:{RESET} {e}\r");
+            let _ = writeln!(stdout, "\r");
+            return prompt_model_input(stdout, provider);
         }
     };
 
@@ -355,30 +521,72 @@ fn step_select_model(
     let mut scroll = 0usize;
     let mut filter = String::new();
     let mut filtered = models.clone();
-    let max_visible = 12;
+    let max_visible = 14;
+
+    // Pre-select the default model if it exists in the list
+    if let Some(pos) = filtered
+        .iter()
+        .position(|m| m == provider.default_model)
+    {
+        selected = pos;
+        if selected >= max_visible {
+            scroll = selected.saturating_sub(max_visible / 2);
+        }
+    }
 
     loop {
-        clear_screen(stdout);
-        draw_header(stdout, 3);
-        let _ = writeln!(
-            stdout,
-            "  {} models{}\r",
-            filtered.len(),
-            if filter.is_empty() {
-                String::new()
-            } else {
-                format!(" (filter: {filter})")
-            }
-        );
-        let _ = writeln!(stdout, "\r");
-        let end = (scroll + max_visible).min(filtered.len());
-        for (i, model_name) in filtered.iter().enumerate().skip(scroll).take(end - scroll) {
-            let m = if i == selected { " ▸ " } else { "   " };
-            let _ = writeln!(stdout, "{m}{model_name}\r");
+        clear(stdout);
+        draw_logo(stdout);
+        draw_progress(stdout, 2);
+        draw_section_title(stdout, "Select Model");
+
+        if !filter.is_empty() {
+            let _ = writeln!(
+                stdout,
+                "  {FG_YELLOW}\u{1F50D} {filter}{RESET}  {FG_DIM}({} matches){RESET}\r",
+                filtered.len()
+            );
+            let _ = writeln!(stdout, "\r");
+        } else {
+            let _ = writeln!(
+                stdout,
+                "  {FG_DIM}{} models available{RESET}\r",
+                filtered.len()
+            );
+            let _ = writeln!(stdout, "\r");
         }
-        let _ = writeln!(
+
+        let end = (scroll + max_visible).min(filtered.len());
+        if scroll > 0 {
+            let _ = writeln!(stdout, "  {FG_DIM}\u{25B4} more above{RESET}\r");
+        }
+        for (i, model_name) in filtered.iter().enumerate().skip(scroll).take(end - scroll) {
+            let is_sel = i == selected;
+            let is_default = model_name == provider.default_model;
+            let marker = if is_sel {
+                format!("{FG_CYAN} \u{25B8} {RESET}")
+            } else {
+                "   ".to_string()
+            };
+            let name_style = if is_sel {
+                format!("{FG_WHITE}{BOLD}{model_name}{RESET}")
+            } else {
+                model_name.to_string()
+            };
+            let badge = if is_default {
+                format!(" {FG_GREEN}{DIM}(default){RESET}")
+            } else {
+                String::new()
+            };
+            let _ = writeln!(stdout, "{marker}{name_style}{badge}\r");
+        }
+        if end < filtered.len() {
+            let _ = writeln!(stdout, "  {FG_DIM}\u{25BE} more below{RESET}\r");
+        }
+
+        draw_hint(
             stdout,
-            "\r\n  ↑/↓ navigate  Enter select  / filter  Esc back\r"
+            "\u{2191}\u{2193} navigate  Enter select  / filter  t type manually  Esc back",
         );
         let _ = stdout.flush();
 
@@ -398,12 +606,61 @@ fn step_select_model(
             }
             KeyCode::Enter if !filtered.is_empty() => return Some(filtered[selected].clone()),
             KeyCode::Char('/') => {
-                if let Some(f) = prompt_text_input(stdout, "  Filter: ") {
-                    filter = f;
-                    filtered = model_fetch::apply_model_filter(&models, &filter);
-                    selected = 0;
-                    scroll = 0;
+                filter.clear();
+                loop {
+                    clear(stdout);
+                    draw_logo(stdout);
+                    draw_progress(stdout, 2);
+                    draw_section_title(stdout, "Select Model");
+                    let _ = writeln!(
+                        stdout,
+                        "  {FG_YELLOW}\u{1F50D} {filter}\u{2588}{RESET}\r"
+                    );
+                    let _ = writeln!(stdout, "\r");
+                    let shown: Vec<_> = filtered.iter().take(max_visible).collect();
+                    for (i, m) in shown.iter().enumerate() {
+                        let is_sel = i == selected;
+                        let marker = if is_sel { format!("{FG_CYAN} \u{25B8} {RESET}") } else { "   ".to_string() };
+                        let s = if is_sel { format!("{FG_WHITE}{BOLD}{m}{RESET}") } else { m.to_string() };
+                        let _ = writeln!(stdout, "{marker}{s}\r");
+                    }
+                    draw_hint(stdout, "type to filter  Enter select  Esc clear");
+                    let _ = stdout.flush();
+
+                    let key = read_key()?;
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            filter.push(c);
+                            filtered = model_fetch::apply_model_filter(&models, &filter);
+                            selected = 0;
+                            scroll = 0;
+                        }
+                        KeyCode::Backspace => {
+                            filter.pop();
+                            filtered = if filter.is_empty() {
+                                models.clone()
+                            } else {
+                                model_fetch::apply_model_filter(&models, &filter)
+                            };
+                            selected = selected.min(filtered.len().saturating_sub(1));
+                        }
+                        KeyCode::Up if selected > 0 => selected -= 1,
+                        KeyCode::Down if selected + 1 < filtered.len() => selected += 1,
+                        KeyCode::Enter if !filtered.is_empty() => {
+                            return Some(filtered[selected].clone());
+                        }
+                        KeyCode::Esc => {
+                            if filter.is_empty() {
+                                filtered = models.clone();
+                            }
+                            break;
+                        }
+                        _ => {}
+                    }
                 }
+            }
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                return prompt_model_input(stdout, provider);
             }
             KeyCode::Esc => return None,
             _ => {}
@@ -411,13 +668,18 @@ fn step_select_model(
     }
 }
 
-fn prompt_text_input(stdout: &mut io::Stdout, prompt: &str) -> Option<String> {
-    let mut buf = String::new();
+fn prompt_model_input(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<String> {
+    let mut buf = provider.default_model.to_string();
     loop {
-        clear_screen(stdout);
-        draw_header(stdout, 3);
-        let _ = writeln!(stdout, "{prompt}{buf}\r");
-        let _ = writeln!(stdout, "\r\n  Enter confirm  Esc cancel\r");
+        clear(stdout);
+        draw_logo(stdout);
+        draw_progress(stdout, 2);
+        draw_section_title(stdout, "Enter Model Name");
+
+        let _ = writeln!(stdout, "  {FG_DIM}default:{RESET} {}\r", provider.default_model);
+        let _ = writeln!(stdout, "\r");
+        let _ = writeln!(stdout, "  > {buf}{FG_DIM}\u{2588}{RESET}\r");
+        draw_hint(stdout, "Enter confirm  Esc back");
         let _ = stdout.flush();
 
         match read_event()? {
@@ -435,7 +697,11 @@ fn prompt_text_input(stdout: &mut io::Stdout, prompt: &str) -> Option<String> {
     }
 }
 
-fn step_confirm_save(
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 4: Confirm & save
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn step_confirm(
     stdout: &mut io::Stdout,
     provider: &LoginProvider,
     api_key: &str,
@@ -446,21 +712,33 @@ fn step_confirm_save(
     let url_changed = endpoint.base_url != provider.base_url;
     let fmt_changed = endpoint.api_format != provider.api_format;
 
-    clear_screen(stdout);
-    draw_header(stdout, 4);
-    let _ = writeln!(stdout, "  Provider:  {}\r", provider.name);
-    let _ = writeln!(stdout, "  Model:     {model}\r");
+    clear(stdout);
+    draw_logo(stdout);
+    draw_progress(stdout, 3);
+    draw_section_title(stdout, "Confirm Setup");
+
+    let _ = writeln!(stdout, "\r");
+    draw_field(stdout, "Provider", &format!("{BOLD}{}{RESET}", provider.name));
+    draw_field(stdout, "Model   ", &format!("{FG_CYAN}{model}{RESET}"));
     if !api_key.is_empty() {
-        let _ = writeln!(stdout, "  Key:       {}\r", mask_key(api_key));
+        draw_field(stdout, "Key     ", &mask_key(api_key));
     }
     if url_changed {
-        let _ = writeln!(stdout, "  Base URL:  {}\r", endpoint.base_url);
+        draw_field(stdout, "Base URL", &endpoint.base_url);
     }
     if fmt_changed {
-        let _ = writeln!(stdout, "  Format:    {}\r", endpoint.api_format);
+        draw_field(stdout, "Format  ", &endpoint.api_format);
     }
     let _ = writeln!(stdout, "\r");
-    let _ = writeln!(stdout, "  Enter save  Esc cancel\r");
+    let _ = writeln!(
+        stdout,
+        "  {FG_DIM}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}{RESET}\r"
+    );
+    let _ = writeln!(stdout, "\r");
+    let _ = writeln!(
+        stdout,
+        "  {FG_GREEN}{BOLD}Enter{RESET} save & start  {FG_DIM}Esc{RESET} go back\r"
+    );
     let _ = stdout.flush();
 
     loop {
@@ -526,20 +804,35 @@ fn step_confirm_save(
                         SettingsTier::User,
                         cwd,
                     );
-                    let _ =
-                        Settings::persist_key_value("custom_preset", None, SettingsTier::User, cwd);
+                    let _ = Settings::persist_key_value(
+                        "custom_preset",
+                        None,
+                        SettingsTier::User,
+                        cwd,
+                    );
                 }
 
-                clear_screen(stdout);
-                draw_header(stdout, 4);
-                let _ = writeln!(stdout, "  Provider:  {}\r", provider.name);
-                let _ = writeln!(stdout, "  Model:     {model}\r");
-                if url_changed {
-                    let _ = writeln!(stdout, "  Base URL:  {}\r", endpoint.base_url);
-                }
-                let _ = writeln!(stdout, "  Saved to ~/.nocode/config.toml\r");
+                // Success screen
+                clear(stdout);
+                draw_logo(stdout);
+                draw_progress(stdout, 3);
                 let _ = writeln!(stdout, "\r");
-                let _ = writeln!(stdout, "  Run `nocode` to start.\r");
+                let _ = writeln!(
+                    stdout,
+                    "  {FG_GREEN}{BOLD}\u{2713} Setup complete!{RESET}\r"
+                );
+                let _ = writeln!(stdout, "\r");
+                draw_field(stdout, "Provider", provider.name);
+                draw_field(stdout, "Model   ", model);
+                let _ = writeln!(stdout, "\r");
+                let _ = writeln!(
+                    stdout,
+                    "  {FG_DIM}Saved to ~/.nocode/settings.json{RESET}\r"
+                );
+                let _ = writeln!(
+                    stdout,
+                    "  {FG_DIM}Run {RESET}{BOLD}nocode{RESET}{FG_DIM} to start.{RESET}\r"
+                );
                 let _ = writeln!(stdout, "\r");
                 let _ = stdout.flush();
                 return true;
@@ -550,13 +843,17 @@ fn step_confirm_save(
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Public entry point
+// ─────────────────────────────────────────────────────────────────────────────
+
 pub fn run_login(cwd: &str) {
     let providers = build_provider_list();
     let mut stdout = io::stdout();
 
     terminal::enable_raw_mode().expect("Failed to enable raw mode");
     let _ = execute!(stdout, EnableBracketedPaste);
-    let result = run_login_inner(&mut stdout, &providers, cwd);
+    let result = run_login_flow(&mut stdout, &providers, cwd);
     let _ = execute!(stdout, DisableBracketedPaste);
     terminal::disable_raw_mode().expect("Failed to disable raw mode");
     let _ = execute!(stdout, cursor::Show);
@@ -566,32 +863,29 @@ pub fn run_login(cwd: &str) {
     }
 }
 
-fn run_login_inner(stdout: &mut io::Stdout, providers: &[LoginProvider], cwd: &str) -> bool {
+fn run_login_flow(stdout: &mut io::Stdout, providers: &[LoginProvider], cwd: &str) -> bool {
     // Step 1: Select provider
-    let idx = match step_select_provider(stdout, providers) {
-        Some(i) => i,
-        None => return false,
+    let Some(idx) = step_provider(stdout, providers) else {
+        return false;
     };
     let provider = &providers[idx];
 
     // Step 2: API key
-    let api_key = match step_api_key(stdout, provider) {
-        Some(k) => k,
-        None => return false,
+    let Some(api_key) = step_api_key(stdout, provider) else {
+        return false;
     };
 
-    // Step 2b: Endpoint (base URL + format)
-    let endpoint = match step_endpoint(stdout, provider) {
-        Some(e) => e,
-        None => return false,
+    // Build endpoint (use provider defaults — skip endpoint step for simplicity)
+    let endpoint = EndpointOverride {
+        base_url: provider.base_url.to_string(),
+        api_format: provider.api_format.to_string(),
     };
 
     // Step 3: Select model
-    let model = match step_select_model(stdout, provider, &api_key, &endpoint) {
-        Some(m) => m,
-        None => return false,
+    let Some(model) = step_model(stdout, provider, &api_key, &endpoint) else {
+        return false;
     };
 
     // Step 4: Confirm & save
-    step_confirm_save(stdout, provider, &api_key, &model, &endpoint, cwd)
+    step_confirm(stdout, provider, &api_key, &model, &endpoint, cwd)
 }
