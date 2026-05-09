@@ -57,7 +57,7 @@ pub(crate) fn handle_slash_command(
             SlashResult::Handled
         }
         CommandAction::Config => {
-            app.push_system("Use /model <name> to switch models, or nocode --login to reconfigure provider");
+            cmd_config(app);
             SlashResult::Handled
         }
         CommandAction::Memory => {
@@ -1500,4 +1500,43 @@ fn cmd_rewind(app: &mut TuiApp, args: Option<&str>, messages: &mut Vec<Message>)
         "Rewound {removed} messages (now {} total)",
         messages.len()
     ));
+}
+
+fn cmd_config(app: &mut TuiApp) {
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    use nocode_core::config::settings::Settings;
+    let settings = Settings::load_merged(&cwd);
+
+    let home = std::env::var("HOME").unwrap_or_default();
+    let cwd_short = if !home.is_empty() && cwd.starts_with(&home) {
+        format!("~{}", &cwd[home.len()..])
+    } else {
+        cwd.clone()
+    };
+
+    let model = settings
+        .model
+        .as_deref()
+        .unwrap_or(app.hud.model_name());
+    let provider = settings.model_provider.as_deref().unwrap_or("(auto)");
+    let base_url = settings.custom_base_url.as_deref().unwrap_or("-");
+    let format = settings.custom_api_format.as_deref().unwrap_or("-");
+    let max_turns = settings.max_turns.unwrap_or(10);
+    let max_tokens = settings.max_tokens.unwrap_or(16384);
+
+    let msg = format!(
+        "\
+Model       {model}
+Provider    {provider}
+Base URL    {base_url}
+Format      {format}
+Max turns   {max_turns}
+Max tokens  {max_tokens}
+Directory   {cwd_short}
+
+/model <name> to switch  \u{2022}  nocode --login to reconfigure"
+    );
+    app.push_system(&msg);
 }
