@@ -488,7 +488,7 @@ mod tests {
             dir.path().to_str().unwrap(),
         );
         assert!(!result.is_error);
-        let settings = Settings::load_from(&dir.path().join(".nocode/settings.json"));
+        let settings = Settings::load_from(&dir.path().join(".nocode/config.toml"));
         assert_eq!(settings.model.as_deref(), Some("gpt-5"));
     }
 
@@ -524,7 +524,7 @@ mod tests {
             ..Default::default()
         };
         settings
-            .save_to(&dir.path().join(".nocode/settings.json"))
+            .save_to(&dir.path().join(".nocode/config.toml"))
             .unwrap();
 
         let tool = ConfigTool;

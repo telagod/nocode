@@ -1,6 +1,6 @@
 //! Hook runner — executes shell commands before/after tool calls.
 //!
-//! Hooks are configured in settings.json under `hooks.pre_tool_use` / `hooks.post_tool_use`.
+//! Hooks are configured in config.toml under `hooks.pre_tool_use` / `hooks.post_tool_use`.
 //! PreToolUse hooks can deny execution by returning non-zero exit code.
 
 use crate::config::runtime::HookEntry;

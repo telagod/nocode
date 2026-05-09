@@ -1,5 +1,5 @@
-//! Prompt assembly — discovers CLAUDE.md variants, deduplicates by FNV hash,
-//! applies truncation budgets, assembles final system prompt.
+//! Prompt assembly — discovers CLAUDE.md and AGENTS.md variants, deduplicates
+//! by FNV hash, applies truncation budgets, assembles final system prompt.
 
 use crate::message::SystemBlock;
 use std::collections::HashSet;
@@ -18,7 +18,7 @@ fn fnv1a_hash(data: &[u8]) -> u64 {
     hash
 }
 
-/// A discovered CLAUDE.md file with its content and source path.
+/// A discovered instruction file (CLAUDE.md or AGENTS.md) with content and path.
 #[derive(Debug, Clone)]
 pub struct ClaudeMdEntry {
     pub path: PathBuf,
@@ -26,16 +26,20 @@ pub struct ClaudeMdEntry {
     pub hash: u64,
 }
 
-/// Discover all CLAUDE.md files in the hierarchy.
+/// Walk the directory hierarchy and collect instruction files by name.
 ///
-/// Search order (later entries override earlier for dedup):
-/// 1. `~/.claude/CLAUDE.md` (user global)
-/// 2. Walk from cwd up to filesystem root: `{dir}/CLAUDE.md`
-/// 3. Walk from cwd up to filesystem root: `{dir}/.claude/CLAUDE.md`
-/// 4. `{cwd}/.claude/CLAUDE.md` (project local — highest priority)
+/// Search order:
+/// 1. `~/{global_dir}/{filename}` (user global)
+/// 2. Walk from cwd up to filesystem root: `{dir}/{filename}`
+/// 3. Walk from cwd up to filesystem root: `{dir}/{subdir}/{filename}`
 ///
 /// Deduplication: if two files have the same FNV hash, only the first is kept.
-pub fn discover_claude_md(cwd: &str) -> Vec<ClaudeMdEntry> {
+fn discover_instruction_files(
+    cwd: &str,
+    filename: &str,
+    global_dir: &str,
+    subdir: &str,
+) -> Vec<ClaudeMdEntry> {
     let mut entries = Vec::new();
     let mut seen_hashes = HashSet::new();
 
@@ -58,10 +62,10 @@ pub fn discover_claude_md(cwd: &str) -> Vec<ClaudeMdEntry> {
 
     // 1. User global
     if let Ok(home) = std::env::var("HOME") {
-        try_add(PathBuf::from(&home).join(".claude/CLAUDE.md"));
+        try_add(PathBuf::from(&home).join(global_dir).join(filename));
     }
 
-    // 2. Walk from cwd upward — {dir}/CLAUDE.md
+    // 2. Walk from cwd upward — {dir}/{filename}
     let cwd_path = Path::new(cwd).to_path_buf();
     let mut ancestors: Vec<PathBuf> = Vec::new();
     {
@@ -77,15 +81,30 @@ pub fn discover_claude_md(cwd: &str) -> Vec<ClaudeMdEntry> {
     // Process from root → cwd so project-level wins dedup
     ancestors.reverse();
     for dir in &ancestors {
-        try_add(dir.join("CLAUDE.md"));
+        try_add(dir.join(filename));
     }
 
-    // 3. Walk from root → cwd — {dir}/.claude/CLAUDE.md
+    // 3. Walk from root → cwd — {dir}/{subdir}/{filename}
     for dir in &ancestors {
-        try_add(dir.join(".claude/CLAUDE.md"));
+        try_add(dir.join(subdir).join(filename));
     }
 
     entries
+}
+
+/// Discover all CLAUDE.md files in the hierarchy.
+pub fn discover_claude_md(cwd: &str) -> Vec<ClaudeMdEntry> {
+    discover_instruction_files(cwd, "CLAUDE.md", ".claude", ".claude")
+}
+
+/// Discover all AGENTS.md files in the hierarchy.
+///
+/// Search order:
+/// 1. `~/.nocode/AGENTS.md` (user global)
+/// 2. Walk from cwd up to filesystem root: `{dir}/AGENTS.md`
+/// 3. Walk from cwd up to filesystem root: `{dir}/.nocode/AGENTS.md`
+pub fn discover_agents_md(cwd: &str) -> Vec<ClaudeMdEntry> {
+    discover_instruction_files(cwd, "AGENTS.md", ".nocode", ".nocode")
 }
 
 /// Truncation budget configuration.
@@ -125,17 +144,23 @@ fn truncate_with_marker(text: &str, max_chars: usize) -> String {
 
 /// Assemble the full system prompt with deduplication and truncation.
 ///
+/// If `custom_system_prompt` is provided, it replaces the built-in base prompt.
 /// Returns a `Vec<SystemBlock>` ready for the API request.
 pub fn assemble_system_prompt(
     cwd: &str,
     extra_blocks: &[&str],
     budget: &TruncationBudget,
+    custom_system_prompt: Option<&str>,
 ) -> Vec<SystemBlock> {
     let mut blocks = Vec::new();
 
-    // 1. Base system prompt
-    let base = crate::prompt::system::base_system_prompt(cwd);
-    let base_text = truncate_with_marker(&base.text, budget.max_base_prompt_chars);
+    // 1. Base system prompt (or user-supplied override)
+    let base_text = if let Some(custom) = custom_system_prompt {
+        truncate_with_marker(custom, budget.max_base_prompt_chars)
+    } else {
+        let base = crate::prompt::system::base_system_prompt(cwd);
+        truncate_with_marker(&base.text, budget.max_base_prompt_chars)
+    };
     blocks.push(SystemBlock::text(base_text));
 
     // 2. CLAUDE.md entries — deduplicated, budget-truncated
@@ -156,7 +181,25 @@ pub fn assemble_system_prompt(
         blocks.push(SystemBlock::text(truncated));
     }
 
-    // 3. Extra blocks (tool defs, context, etc.)
+    // 3. AGENTS.md entries — same discovery + dedup logic
+    let agents_entries = discover_agents_md(cwd);
+    if !agents_entries.is_empty() {
+        let mut combined = String::new();
+        for (i, entry) in agents_entries.iter().enumerate() {
+            if i > 0 {
+                combined.push_str("\n\n---\n\n");
+            }
+            combined.push_str(&format!(
+                "# Agent instructions from {}\n\n{}",
+                entry.path.display(),
+                entry.content
+            ));
+        }
+        let truncated = truncate_with_marker(&combined, budget.max_claude_md_chars);
+        blocks.push(SystemBlock::text(truncated));
+    }
+
+    // 4. Extra blocks (tool defs, context, etc.)
     for extra in extra_blocks {
         if !extra.is_empty() {
             blocks.push(SystemBlock::text(*extra));
@@ -209,7 +252,7 @@ mod tests {
 
     #[test]
     fn assemble_includes_base_prompt() {
-        let blocks = assemble_system_prompt("/tmp", &[], &TruncationBudget::default());
+        let blocks = assemble_system_prompt("/tmp", &[], &TruncationBudget::default(), None);
         assert!(!blocks.is_empty());
         assert!(blocks[0].text.contains("nocode"));
     }
@@ -220,6 +263,7 @@ mod tests {
             "/tmp",
             &["extra context here"],
             &TruncationBudget::default(),
+            None,
         );
         assert!(blocks.len() >= 2);
         assert!(blocks.last().unwrap().text.contains("extra context"));
@@ -231,6 +275,7 @@ mod tests {
             "/tmp/nonexistent_path_xyz",
             &["", "real content", ""],
             &TruncationBudget::default(),
+            None,
         );
         // Should contain base + possibly CLAUDE.md from ~ + "real content"
         // Empty strings must be skipped
@@ -246,7 +291,19 @@ mod tests {
             max_tool_defs_chars: 40_000,
         };
         // Even with no real CLAUDE.md files, the assembly should work
-        let blocks = assemble_system_prompt("/tmp/nonexistent", &[], &budget);
+        let blocks = assemble_system_prompt("/tmp/nonexistent", &[], &budget, None);
         assert!(!blocks.is_empty());
+    }
+
+    #[test]
+    fn custom_system_prompt_replaces_base() {
+        let blocks = assemble_system_prompt(
+            "/tmp",
+            &[],
+            &TruncationBudget::default(),
+            Some("You are a pirate assistant."),
+        );
+        assert!(blocks[0].text.contains("pirate"));
+        assert!(!blocks[0].text.contains("nocode"));
     }
 }

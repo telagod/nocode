@@ -143,8 +143,10 @@ pub fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&
 
         let tool_registry = ToolRegistry::with_defaults(&cwd);
         initialize_runtime_global_registry(&cwd, &settings);
+        let custom_sp_env = std::env::var("NOCODE_SYSTEM_PROMPT").ok();
+        let custom_sp = custom_sp_env.as_deref().or(settings.system_prompt.as_deref());
         let system_blocks =
-            assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default());
+            assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default(), custom_sp);
         let executor = ToolExecutor::new(&tool_registry);
 
         let messages = vec![Message::user_text(prompt)];
