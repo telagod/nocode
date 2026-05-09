@@ -57,9 +57,26 @@ fn clear_screen(stdout: &mut io::Stdout) {
     );
 }
 
-fn draw_header(stdout: &mut io::Stdout, step: &str) {
-    let _ = writeln!(stdout, "  nocode login\r");
-    let _ = writeln!(stdout, "  {step}\r");
+fn draw_header(stdout: &mut io::Stdout, step: usize) {
+    let tabs = ["Provider", "API Key", "Endpoint", "Model", "Confirm"];
+    let _ = writeln!(stdout, "\r");
+    let _ = write!(stdout, "  ");
+    for (i, label) in tabs.iter().enumerate() {
+        if i == step {
+            // Current step: bold + inverted
+            let _ = write!(stdout, "\x1b[1;7m {label} \x1b[0m");
+        } else if i < step {
+            // Completed: green dim
+            let _ = write!(stdout, "\x1b[32m {label} \x1b[0m");
+        } else {
+            // Future: dim
+            let _ = write!(stdout, "\x1b[2m {label} \x1b[0m");
+        }
+        if i + 1 < tabs.len() {
+            let _ = write!(stdout, "\x1b[2m\u{203A}\x1b[0m");
+        }
+    }
+    let _ = writeln!(stdout, "\r");
     let _ = writeln!(stdout, "\r");
 }
 
@@ -95,7 +112,7 @@ fn step_select_provider(stdout: &mut io::Stdout, providers: &[LoginProvider]) ->
     let mut scroll = 0usize;
     loop {
         clear_screen(stdout);
-        draw_header(stdout, "Step 1: Select Provider");
+        draw_header(stdout, 0);
         let visible_end = (scroll + max_visible).min(providers.len());
         for (i, prov) in providers
             .iter()
@@ -140,7 +157,7 @@ fn step_api_key(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<Str
     let mut key_buf = String::new();
     loop {
         clear_screen(stdout);
-        draw_header(stdout, "Step 2: API Key");
+        draw_header(stdout, 1);
         let _ = writeln!(stdout, "  Provider: {}\r", provider.name);
         let _ = writeln!(stdout, "  Hint: {}\r", provider.auth_hint);
         if !provider.env_key_name.is_empty() {
@@ -189,7 +206,7 @@ fn step_endpoint(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<En
 
     loop {
         clear_screen(stdout);
-        draw_header(stdout, "Step 2b: Endpoint (Enter to keep defaults)");
+        draw_header(stdout, 2);
         let _ = writeln!(stdout, "  Provider: {}\r", provider.name);
         let _ = writeln!(stdout, "\r");
 
@@ -298,7 +315,7 @@ fn step_select_model(
     endpoint: &EndpointOverride,
 ) -> Option<String> {
     clear_screen(stdout);
-    draw_header(stdout, "Step 3: Select Model");
+    draw_header(stdout, 3);
     let _ = writeln!(stdout, "  Fetching models from {}...\r", provider.name);
     let _ = stdout.flush();
 
@@ -342,7 +359,7 @@ fn step_select_model(
 
     loop {
         clear_screen(stdout);
-        draw_header(stdout, "Step 3: Select Model");
+        draw_header(stdout, 3);
         let _ = writeln!(
             stdout,
             "  {} models{}\r",
@@ -398,7 +415,7 @@ fn prompt_text_input(stdout: &mut io::Stdout, prompt: &str) -> Option<String> {
     let mut buf = String::new();
     loop {
         clear_screen(stdout);
-        draw_header(stdout, "");
+        draw_header(stdout, 3);
         let _ = writeln!(stdout, "{prompt}{buf}\r");
         let _ = writeln!(stdout, "\r\n  Enter confirm  Esc cancel\r");
         let _ = stdout.flush();
@@ -430,7 +447,7 @@ fn step_confirm_save(
     let fmt_changed = endpoint.api_format != provider.api_format;
 
     clear_screen(stdout);
-    draw_header(stdout, "Step 4: Confirm & Save");
+    draw_header(stdout, 4);
     let _ = writeln!(stdout, "  Provider:  {}\r", provider.name);
     let _ = writeln!(stdout, "  Model:     {model}\r");
     if !api_key.is_empty() {
@@ -514,7 +531,7 @@ fn step_confirm_save(
                 }
 
                 clear_screen(stdout);
-                draw_header(stdout, "Done!");
+                draw_header(stdout, 4);
                 let _ = writeln!(stdout, "  Provider:  {}\r", provider.name);
                 let _ = writeln!(stdout, "  Model:     {model}\r");
                 if url_changed {

@@ -129,6 +129,8 @@ fn main() {
         .to_string_lossy()
         .into_owned();
 
+    let settings = Settings::load_merged(&cwd);
+
     // Start async model capabilities cache fetch
     nocode_core::provider::model_caps::init_cache_async();
 
@@ -155,13 +157,34 @@ fn main() {
         creds.load_into_env();
     }
 
-    // --login: kept for backward compat, just launches TUI with config overlay
+    // --login: run interactive login flow (select provider → key → model → save)
     if args.iter().any(|a| a == "--login") {
-        // Fall through to TUI — will auto-open config overlay
+        login::run_login(&cwd);
+        return;
     }
 
-    // Reload settings (may have changed from credential loading)
-    let settings = Settings::load_merged(&cwd);
+    // No API key available → auto-launch login before TUI
+    let needs_onboarding =
+        !has_any_api_key() && !args.iter().any(|a| a == "--status" || a == "--help");
+    if needs_onboarding {
+        eprintln!("No API key found. Starting setup...\n");
+        login::run_login(&cwd);
+        // Reload credentials into env after login
+        let cred_path2 = nocode_core::storage::credentials::CredentialStore::default_path();
+        if let Ok(creds) = nocode_core::storage::credentials::CredentialStore::load(&cred_path2) {
+            creds.load_into_env();
+        }
+        if !has_any_api_key() {
+            eprintln!("No provider configured. Run `nocode --login` to set up.");
+            return;
+        }
+    }
+    // Reload settings in case login changed them
+    let settings = if needs_onboarding {
+        Settings::load_merged(&cwd)
+    } else {
+        settings
+    };
 
     let provider_type = resolve_provider(&settings);
     let model = resolve_model(&settings, &provider_type);
@@ -179,15 +202,7 @@ fn main() {
 
     let registry = ToolRegistry::with_defaults(&cwd);
     initialize_runtime_global_registry(&cwd, &settings);
-    let (provider_box, mut provider_warnings) = build_provider(&provider_type, &settings);
-
-    // No API key or --login → force config overlay in TUI
-    let force_config = !has_any_api_key() || args.iter().any(|a| a == "--login");
-    if force_config && provider_warnings.is_empty() {
-        provider_warnings.push("Configure your provider below".to_string());
-    } else if !has_any_api_key() {
-        provider_warnings.insert(0, "No API key configured — set up provider below".to_string());
-    }
+    let (provider_box, provider_warnings) = build_provider(&provider_type, &settings);
 
     let is_tui_mode = !args.iter().any(|a| a.starts_with("--bridge"))
         && !args.iter().any(|a| a == "--status")
@@ -390,15 +405,8 @@ fn build_provider(
             let base = match resolve_custom_base_url(settings) {
                 Ok(url) => url,
                 Err(msg) => {
-                    warnings.push(format!("Custom provider: {msg}"));
-                    // Fall back to a dummy provider that will fail on first call
-                    return (
-                        Box::new(OpenAiResponsesProvider::with_base_url(
-                            String::from("http://localhost:0"),
-                            String::new(),
-                        )) as Box<dyn Provider>,
-                        warnings,
-                    );
+                    eprintln!("Error: {msg}");
+                    std::process::exit(1);
                 }
             };
             let format = resolve_custom_api_format(settings);
@@ -1056,7 +1064,7 @@ fn print_help() {
          Options:\n\
          \x20 --version, -v             Show version\n\
          \x20 --update                  Pull latest source from GitHub and rebuild binary\n\
-         \x20 --login                   Open config overlay (same as /config)\n\
+         \x20 --login                   Interactive provider setup\n\
          \x20 --help, -h                Show this help\n\
          \n\
          Environment:\n\
