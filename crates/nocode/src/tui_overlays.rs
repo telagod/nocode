@@ -122,7 +122,7 @@ pub(crate) fn draw_overlay(
             let text = if servers.is_empty() {
                 r#"No MCP servers connected.
 
-Configure in .nocode/settings.json under "mcp_servers".
+Configure in .nocode/config.toml under "mcp_servers".
 
 Commands:
   /mcp-add <name> <command> [args...]  — Connect a server

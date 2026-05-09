@@ -17,6 +17,16 @@ impl SettingsTier {
     pub fn path_for(&self, cwd: &str) -> std::path::PathBuf {
         let home = std::env::var("HOME").unwrap_or_default();
         match self {
+            Self::User => Path::new(&home).join(".nocode/config.toml"),
+            Self::Project => Path::new(cwd).join(".nocode/config.toml"),
+            Self::Local => Path::new(cwd).join(".nocode/config.local.toml"),
+        }
+    }
+
+    /// Legacy JSON path for backward-compatible reading.
+    fn legacy_json_path(&self, cwd: &str) -> std::path::PathBuf {
+        let home = std::env::var("HOME").unwrap_or_default();
+        match self {
             Self::User => Path::new(&home).join(".nocode/settings.json"),
             Self::Project => Path::new(cwd).join(".nocode/settings.json"),
             Self::Local => Path::new(cwd).join(".nocode/settings.local.json"),
@@ -87,22 +97,29 @@ pub fn normalize_api_format(format: &str) -> &str {
 pub const API_FORMATS: &[&str] = &["openai-responses", "openai-chat", "anthropic", "google"];
 
 impl Settings {
-    /// Load settings from a JSON file, returning default if not found.
+    /// Load settings from a TOML file, returning default if not found.
     pub fn load_from(path: &Path) -> Self {
-        fs::read_to_string(path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        if let Ok(s) = fs::read_to_string(path) {
+            // Try TOML first (primary format)
+            if let Ok(settings) = toml::from_str(&s) {
+                return settings;
+            }
+            // Fallback: try JSON (backward compat for old settings.json)
+            if let Ok(settings) = serde_json::from_str(&s) {
+                return settings;
+            }
+        }
+        Self::default()
     }
 
-    /// Save settings to a JSON file, creating parent directories as needed.
+    /// Save settings to a TOML file, creating parent directories as needed.
     pub fn save_to(&self, path: &Path) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {e}"))?;
         }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize settings: {e}"))?;
-        fs::write(path, json).map_err(|e| format!("Failed to write settings: {e}"))?;
+        let toml_str =
+            toml::to_string_pretty(self).map_err(|e| format!("Failed to serialize settings: {e}"))?;
+        fs::write(path, toml_str).map_err(|e| format!("Failed to write settings: {e}"))?;
         Ok(())
     }
 
@@ -113,8 +130,14 @@ impl Settings {
     }
 
     /// Load settings from a specific tier at the given cwd.
+    /// Falls back to legacy JSON path if TOML not found.
     pub fn load_tier(tier: SettingsTier, cwd: &str) -> Self {
-        Self::load_from(&tier.path_for(cwd))
+        let toml_path = tier.path_for(cwd);
+        if toml_path.exists() {
+            return Self::load_from(&toml_path);
+        }
+        let json_path = tier.legacy_json_path(cwd);
+        Self::load_from(&json_path)
     }
 
     /// Merge another settings on top (later wins for non-None scalars,
@@ -152,11 +175,19 @@ impl Settings {
     }
 
     /// Load 3-tier settings: user → project → local.
+    /// Tries TOML paths first, falls back to legacy JSON paths.
     pub fn load_merged(cwd: &str) -> Self {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let user = Self::load_from(&Path::new(&home).join(".nocode/settings.json"));
-        let project = Self::load_from(&Path::new(cwd).join(".nocode/settings.json"));
-        let local = Self::load_from(&Path::new(cwd).join(".nocode/settings.local.json"));
+        let load_tier_with_fallback = |tier: SettingsTier| -> Self {
+            let toml_path = tier.path_for(cwd);
+            if toml_path.exists() {
+                return Self::load_from(&toml_path);
+            }
+            let json_path = tier.legacy_json_path(cwd);
+            Self::load_from(&json_path)
+        };
+        let user = load_tier_with_fallback(SettingsTier::User);
+        let project = load_tier_with_fallback(SettingsTier::Project);
+        let local = load_tier_with_fallback(SettingsTier::Local);
         user.merge(project).merge(local)
     }
 

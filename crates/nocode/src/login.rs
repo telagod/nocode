@@ -520,7 +520,7 @@ fn step_confirm_save(
                 if url_changed {
                     let _ = writeln!(stdout, "  Base URL:  {}\r", endpoint.base_url);
                 }
-                let _ = writeln!(stdout, "  Saved to ~/.nocode/settings.json\r");
+                let _ = writeln!(stdout, "  Saved to ~/.nocode/config.toml\r");
                 let _ = writeln!(stdout, "\r");
                 let _ = writeln!(stdout, "  Run `nocode` to start.\r");
                 let _ = writeln!(stdout, "\r");
