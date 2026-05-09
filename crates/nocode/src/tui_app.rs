@@ -86,13 +86,6 @@ impl InputMode {
 pub(crate) enum Overlay {
     #[default]
     None,
-    Help,
-    Status,
-    Sessions,
-    Mcp,
-    Agents,
-    Memory,
-    Cost,
     Permission {
         tool_name: String,
         tool_id: String,
@@ -2007,9 +2000,7 @@ pub(crate) fn run_app_loop(
                         ));
                     }
                     WorkerEvent::StateChanged { .. } => {
-                        if matches!(app.overlay, Overlay::Agents) {
-                            app.dirty = true;
-                        }
+                        app.dirty = true;
                     }
                 }
             }

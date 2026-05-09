@@ -1,6 +1,6 @@
 //! TUI slash command handlers — extracted from tui_app.rs.
 
-use crate::tui_app::{InputMode, Overlay, TuiApp};
+use crate::tui_app::{InputMode, TuiApp};
 use nocode_core::message::Message;
 
 /// Handle a resolved slash command action. Returns `true` if the app should break (quit).
@@ -23,21 +23,15 @@ pub(crate) fn handle_slash_command(
             SlashResult::Handled
         }
         CommandAction::Help => {
-            app.overlay = Overlay::Help;
-            app.overlay_scroll = 0;
-            app.dirty = true;
+            cmd_help(app);
             SlashResult::Handled
         }
         CommandAction::Status => {
-            app.overlay = Overlay::Status;
-            app.overlay_scroll = 0;
-            app.dirty = true;
+            cmd_status(app);
             SlashResult::Handled
         }
         CommandAction::Sessions => {
-            app.overlay = Overlay::Sessions;
-            app.overlay_scroll = 0;
-            app.dirty = true;
+            cmd_sessions(app);
             SlashResult::Handled
         }
         CommandAction::Resume => {
@@ -45,15 +39,11 @@ pub(crate) fn handle_slash_command(
             SlashResult::Handled
         }
         CommandAction::Mcp => {
-            app.overlay = Overlay::Mcp;
-            app.overlay_scroll = 0;
-            app.dirty = true;
+            cmd_mcp(app);
             SlashResult::Handled
         }
         CommandAction::Agents => {
-            app.overlay = Overlay::Agents;
-            app.overlay_scroll = 0;
-            app.dirty = true;
+            cmd_agents(app);
             SlashResult::Handled
         }
         CommandAction::Config => {
@@ -61,15 +51,11 @@ pub(crate) fn handle_slash_command(
             SlashResult::Handled
         }
         CommandAction::Memory => {
-            app.overlay = Overlay::Memory;
-            app.overlay_scroll = 0;
-            app.dirty = true;
+            cmd_memory(app);
             SlashResult::Handled
         }
         CommandAction::Cost => {
-            app.overlay = Overlay::Cost;
-            app.overlay_scroll = 0;
-            app.dirty = true;
+            cmd_cost(app);
             SlashResult::Handled
         }
         CommandAction::Theme => {
@@ -1537,6 +1523,167 @@ Max tokens  {max_tokens}
 Directory   {cwd_short}
 
 /model <name> to switch  \u{2022}  nocode --login to reconfigure"
+    );
+    app.push_system(&msg);
+}
+
+fn cmd_help(app: &mut TuiApp) {
+    let cmd_reg = crate::command_registry::CommandRegistry::with_defaults();
+    let mut text = String::from(
+        "\
+Keyboard shortcuts:
+
+Enter        send message
+Shift-Enter  newline
+Ctrl-C       quit
+Esc          clear input
+Up/Down      scroll chat
+Ctrl-A/E     start/end of line
+Ctrl-W       delete word
+Ctrl-U       clear input
+Ctrl-P/N     input history
+Ctrl-V       paste image
+Ctrl-Y       copy last response
+Ctrl-F       search (Ctrl-N/P: next/prev)
+Ctrl-O       toggle thinking blocks
+Ctrl-T       toggle theme
+Ctrl-L       clear chat
+Tab          toggle tool output
+/            command autocomplete
+
+",
+    );
+    text.push_str(&cmd_reg.help_text());
+    app.push_system(&text);
+}
+
+fn cmd_status(app: &mut TuiApp) {
+    let msg = format!(
+        "\
+Session     {}
+Model       {}
+Input tok   {}
+Output tok  {}
+Context     {:.1}%",
+        app.hud.session_name().unwrap_or("(unnamed)"),
+        app.hud.model_name(),
+        app.hud.cumulative_input_tokens(),
+        app.hud.cumulative_output_tokens(),
+        app.hud.context_pct(),
+    );
+    app.push_system(&msg);
+}
+
+fn cmd_mcp(app: &mut TuiApp) {
+    use nocode_core::mcp::manager::global_mcp_manager;
+    let mgr = global_mcp_manager();
+    let mgr = mgr.lock().unwrap_or_else(|e| e.into_inner());
+    let servers = mgr.list_servers();
+    let tools = mgr.all_tools();
+    let text = if servers.is_empty() {
+        "No MCP servers connected.\n\n\
+         /mcp-add <name> <command> [args...]  connect\n\
+         /mcp-remove <name>                   disconnect\n\
+         /mcp-restart <name>                  reconnect"
+            .to_string()
+    } else {
+        let mut lines = vec![format!("MCP servers ({}):", servers.len())];
+        for (name, phase, tool_count) in &servers {
+            let status = match phase {
+                nocode_core::mcp::manager::McpPhase::Connected
+                | nocode_core::mcp::manager::McpPhase::Handshake => "\u{25CF}",
+                nocode_core::mcp::manager::McpPhase::Spawning
+                | nocode_core::mcp::manager::McpPhase::Initializing
+                | nocode_core::mcp::manager::McpPhase::ToolDiscovery
+                | nocode_core::mcp::manager::McpPhase::Reconnecting
+                | nocode_core::mcp::manager::McpPhase::Degraded
+                | nocode_core::mcp::manager::McpPhase::HealthCheck => "\u{25D0}",
+                _ => "\u{25CB}",
+            };
+            lines.push(format!("  {status} {name}: {phase:?} ({tool_count} tools)"));
+        }
+        if !tools.is_empty() {
+            lines.push(format!("\nTools ({}):", tools.len()));
+            for (server, tool) in tools.iter().take(50) {
+                lines.push(format!("  {server}:{}", tool.name));
+            }
+            if tools.len() > 50 {
+                lines.push(format!("  ... and {} more", tools.len() - 50));
+            }
+        }
+        lines.join("\n")
+    };
+    app.push_system(&text);
+}
+
+fn cmd_agents(app: &mut TuiApp) {
+    use nocode_core::agent::worker::global_worker_registry;
+    let reg = global_worker_registry();
+    let reg = reg.lock().unwrap_or_else(|e| e.into_inner());
+    let workers = reg.list();
+    let text = if workers.is_empty() {
+        "No background agents.\n/agent-create <name> <prompt> to spawn one.".to_string()
+    } else {
+        let mut lines = vec![format!("Agents ({}):", workers.len())];
+        for w in &workers {
+            let icon = match w.state {
+                nocode_core::agent::worker::WorkerState::Running => "\u{25B6}",
+                nocode_core::agent::worker::WorkerState::ReadyForPrompt => "\u{25CF}",
+                nocode_core::agent::worker::WorkerState::Finished => "\u{2713}",
+                nocode_core::agent::worker::WorkerState::Failed => "\u{2717}",
+                _ => "\u{25CB}",
+            };
+            let elapsed = w.started_at.map_or(String::new(), |t| {
+                let secs = t.elapsed().as_secs();
+                if secs < 60 {
+                    format!(" ({secs}s)")
+                } else {
+                    format!(" ({}m{}s)", secs / 60, secs % 60)
+                }
+            });
+            lines.push(format!("  {icon} {} ({}) {:?}{elapsed}", w.name, w.id, w.state));
+        }
+        lines.join("\n")
+    };
+    app.push_system(&text);
+}
+
+fn cmd_memory(app: &mut TuiApp) {
+    use nocode_core::storage::memory::MemoryStore;
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let mem_dir = format!("{home}/.nocode/memory");
+    let store = MemoryStore::new(&mem_dir);
+    let text = match store.list() {
+        Ok(entries) if entries.is_empty() => "No memories stored.".to_string(),
+        Ok(entries) => {
+            let mut lines = vec![format!("Memories ({}):", entries.len())];
+            for entry in entries.iter().take(20) {
+                let ty = entry.memory_type.as_str();
+                lines.push(format!("  [{ty}] {} \u{2014} {}", entry.name, entry.description));
+            }
+            if entries.len() > 20 {
+                lines.push(format!("  ... and {} more", entries.len() - 20));
+            }
+            lines.join("\n")
+        }
+        Err(e) => format!("Memory error: {e}"),
+    };
+    app.push_system(&text);
+}
+
+fn cmd_cost(app: &mut TuiApp) {
+    let inp = app.hud.cumulative_input_tokens();
+    let out = app.hud.cumulative_output_tokens();
+    let total = inp + out;
+    let cost = app.hud.estimated_cost();
+    let msg = format!(
+        "\
+Input       {inp}
+Output      {out}
+Total       {total}
+Est. cost   ${cost:.4}
+Context     {:.1}%",
+        app.hud.context_pct(),
     );
     app.push_system(&msg);
 }
