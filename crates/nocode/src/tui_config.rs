@@ -12,6 +12,7 @@ pub(crate) struct TuiConfigOverlay {
     pub form: ConfigFormState,
     pub closed: bool,
     editing: Option<EditState>,
+    picking: Option<PickState>,
 }
 
 struct EditState {
@@ -20,12 +21,18 @@ struct EditState {
     cursor: usize,
 }
 
+struct PickState {
+    field: ConfigField,
+    selected: usize,
+}
+
 impl TuiConfigOverlay {
     pub fn new() -> Self {
         Self {
             form: ConfigFormState::new(),
             closed: false,
             editing: None,
+            picking: None,
         }
     }
 
@@ -54,6 +61,20 @@ impl TuiConfigOverlay {
         if Self::settings_key_for(field).is_none() {
             return;
         }
+        // Provider uses picker, not free-text editing
+        if field == ConfigField::Provider {
+            use crate::provider_presets::ALL_PRESETS;
+            let current_idx = self
+                .form
+                .preset
+                .and_then(|cur| ALL_PRESETS.iter().position(|p| p.name == cur.name))
+                .unwrap_or(0);
+            self.picking = Some(PickState {
+                field,
+                selected: current_idx,
+            });
+            return;
+        }
         let value = self.current_value_for(field);
         let cursor = value.len();
         self.editing = Some(EditState {
@@ -78,19 +99,6 @@ impl TuiConfigOverlay {
                 self.form.model = value.clone();
                 self.form.model_source = ValueSource::User;
             }
-            ConfigField::Provider => {
-                use crate::provider_presets::ALL_PRESETS;
-                let lower = value.to_lowercase();
-                let matched = ALL_PRESETS
-                    .iter()
-                    .find(|p| p.name.to_lowercase() == lower || p.provider_type == lower);
-                if let Some(preset) = matched {
-                    self.form.preset = Some(preset);
-                } else {
-                    self.form.preset = None;
-                }
-                self.form.provider_source = ValueSource::User;
-            }
             ConfigField::BaseUrl => {
                 self.form.base_url = value.clone();
                 self.form.base_url_source = ValueSource::User;
@@ -99,7 +107,7 @@ impl TuiConfigOverlay {
                 self.form.api_format = value.clone();
                 self.form.format_source = ValueSource::User;
             }
-            ConfigField::ApiKey => {}
+            ConfigField::Provider | ConfigField::ApiKey => {}
         }
 
         // ApiKey → credential store
@@ -121,22 +129,6 @@ impl TuiConfigOverlay {
             return;
         }
 
-        // Provider → persist model_provider to settings
-        if edit.field == ConfigField::Provider {
-            let cwd = std::env::current_dir()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            use nocode_core::config::settings::{Settings, SettingsTier};
-            let provider_type = self.form.preset.map(|p| p.provider_type);
-            let _ = Settings::persist_key_value(
-                "model_provider",
-                provider_type,
-                SettingsTier::User,
-                &cwd,
-            );
-            return;
-        }
-
         // Other fields → persist to user tier config.toml
         let cwd = std::env::current_dir()
             .map(|p| p.to_string_lossy().into_owned())
@@ -155,7 +147,51 @@ impl TuiConfigOverlay {
         self.editing = None;
     }
 
+    fn confirm_pick(&mut self) {
+        let Some(pick) = self.picking.take() else {
+            return;
+        };
+        use crate::provider_presets::ALL_PRESETS;
+        let preset = &ALL_PRESETS[pick.selected];
+        self.form.preset = Some(preset);
+        self.form.provider_source = ValueSource::User;
+
+        // Persist model_provider to settings
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        use nocode_core::config::settings::{Settings, SettingsTier};
+        let _ = Settings::persist_key_value(
+            "model_provider",
+            Some(preset.provider_type),
+            SettingsTier::User,
+            &cwd,
+        );
+    }
+
+    fn cancel_pick(&mut self) {
+        self.picking = None;
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) {
+        // Picker mode — up/down to select, Enter to confirm, Esc to cancel
+        if let Some(ref mut pick) = self.picking {
+            use crate::provider_presets::ALL_PRESETS;
+            let count = ALL_PRESETS.len();
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                    pick.selected = (pick.selected + 1) % count;
+                }
+                KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
+                    pick.selected = (pick.selected + count - 1) % count;
+                }
+                KeyCode::Enter => self.confirm_pick(),
+                KeyCode::Esc => self.cancel_pick(),
+                _ => {}
+            }
+            return;
+        }
+
         if let Some(ref mut edit) = self.editing {
             match key.code {
                 KeyCode::Enter => self.confirm_edit(),
@@ -227,7 +263,9 @@ impl TuiConfigOverlay {
         let mut lines: Vec<Line> = Vec::with_capacity(24);
 
         let sel = |field: ConfigField| -> Span {
-            if self.editing.as_ref().is_some_and(|e| e.field == field) {
+            if self.editing.as_ref().is_some_and(|e| e.field == field)
+                || self.picking.as_ref().is_some_and(|p| p.field == field)
+            {
                 Span::styled("✎ ", highlight)
             } else if self.form.focus == field {
                 Span::styled("▸ ", highlight)
@@ -264,8 +302,13 @@ impl TuiConfigOverlay {
             if Self::settings_key_for(field).is_some()
                 && self.form.focus == field
                 && self.editing.is_none()
+                && self.picking.is_none()
             {
-                Span::styled("  [Enter to edit]", dim)
+                if field == ConfigField::Provider {
+                    Span::styled("  [Enter to select]", dim)
+                } else {
+                    Span::styled("  [Enter to edit]", dim)
+                }
             } else {
                 Span::raw("")
             }
@@ -273,18 +316,33 @@ impl TuiConfigOverlay {
 
         // ── Provider ─────────────────────────────
         lines.push(section_line("Provider", 36, section_style, dim));
-        lines.push(Line::from(vec![
-            sel(ConfigField::Provider),
-            Span::styled("Provider  ", dim),
-            field_val(
-                ConfigField::Provider,
-                self.form.display_provider(),
-                dim,
-                normal,
-            ),
-            source_span(&self.form.provider_source),
-            editable_hint(ConfigField::Provider),
-        ]));
+
+        if let Some(ref pick) = self.picking {
+            // Picker mode — show scrollable list of presets
+            use crate::provider_presets::ALL_PRESETS;
+            for (i, preset) in ALL_PRESETS.iter().enumerate() {
+                let is_sel = i == pick.selected;
+                let prefix = if is_sel { "▸ " } else { "  " };
+                let style = if is_sel { highlight } else { normal };
+                lines.push(Line::from(Span::styled(
+                    format!("{prefix}{}", preset.name),
+                    style,
+                )));
+            }
+        } else {
+            lines.push(Line::from(vec![
+                sel(ConfigField::Provider),
+                Span::styled("Provider  ", dim),
+                field_val(
+                    ConfigField::Provider,
+                    self.form.display_provider(),
+                    dim,
+                    normal,
+                ),
+                source_span(&self.form.provider_source),
+                editable_hint(ConfigField::Provider),
+            ]));
+        }
 
         let api_key_display = self.form.display_api_key();
         lines.push(Line::from(vec![
