@@ -69,7 +69,6 @@ pub struct Theme {
     pub md_table_header: Color,
     pub md_table_border: Color,
     pub md_strikethrough: Color,
-
 }
 
 impl Theme {
@@ -124,7 +123,6 @@ impl Theme {
             md_table_header: Color::Cyan,
             md_table_border: Color::DarkGray,
             md_strikethrough: Color::DarkGray,
-
         }
     }
 
@@ -181,7 +179,6 @@ impl Theme {
             md_strikethrough: Color::Gray,
         }
     }
-
 }
 
 impl Default for Theme {

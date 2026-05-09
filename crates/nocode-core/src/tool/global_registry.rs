@@ -309,7 +309,7 @@ mod tests {
         let reg = GlobalToolRegistry::new(base);
         assert!(reg.contains("Bash"));
         assert!(reg.contains("FileRead"));
-        assert!(reg.len() >= 21);
+        assert!(reg.len() >= 18);
     }
 
     #[test]

@@ -143,7 +143,7 @@ impl ToolRegistry {
         self.tools.keys().map(String::as_str).collect()
     }
 
-    /// Create a registry with Claude Code's 21 built-in tools.
+    /// Create a registry with Claude Code's 18 built-in tools.
     pub fn with_defaults(cwd: impl Into<String>) -> Self {
         let cwd = cwd.into();
         let mut registry = Self::new();
@@ -171,23 +171,17 @@ impl ToolRegistry {
         registry.register(Box::new(glob::GlobTool));
         // 12. Grep
         registry.register(Box::new(grep::GrepTool));
-        // 13. ListMcpResources
-        registry.register(Box::new(mcp_tools::ListMcpResourcesTool));
-        // 14. Mcp
+        // 13. Mcp (unified: call / list_resources / read_resource)
         registry.register(Box::new(mcp_tools::McpTool));
-        // 15. NotebookEdit
+        // 14. NotebookEdit
         registry.register(Box::new(interactive_tools::NotebookEditTool));
-        // 16. ReadMcpResource
-        registry.register(Box::new(mcp_tools::ReadMcpResourceTool));
-        // 17. TaskOutput
-        registry.register(Box::new(task_tools::TaskOutputTool));
-        // 18. TaskStop
-        registry.register(Box::new(task_tools::TaskStopTool));
-        // 19. TodoWrite
+        // 15. Task (unified: create/get/list/update/output/stop)
+        registry.register(Box::new(task_tools::TaskTool));
+        // 16. TodoWrite
         registry.register(Box::new(todo_write::TodoWriteTool));
-        // 20. WebFetch
+        // 17. WebFetch
         registry.register(Box::new(web::WebFetchTool));
-        // 21. WebSearch
+        // 18. WebSearch
         registry.register(Box::new(web::WebSearchTool));
         registry
     }

@@ -137,13 +137,13 @@ fn cli_modules_exist() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn tool_registry_has_21_tools() {
+fn tool_registry_has_18_tools() {
     let reg = nocode_core::tool::ToolRegistry::with_defaults("/tmp");
     let names = reg.names();
     assert_eq!(
         names.len(),
-        21,
-        "Expected exactly 21 tools (Claude Code parity), got {}",
+        18,
+        "Expected exactly 18 tools, got {}",
         names.len()
     );
 }
@@ -151,7 +151,7 @@ fn tool_registry_has_21_tools() {
 #[test]
 fn tool_categories_complete() {
     let reg = nocode_core::tool::ToolRegistry::with_defaults("/tmp");
-    // All 21 Claude Code tools
+    // All 18 built-in tools
     for name in &[
         "Agent",
         "AskUserQuestion",
@@ -165,17 +165,14 @@ fn tool_categories_complete() {
         "FileWrite",
         "Glob",
         "Grep",
-        "ListMcpResources",
         "Mcp",
         "NotebookEdit",
-        "ReadMcpResource",
-        "TaskOutput",
-        "TaskStop",
+        "Task",
         "TodoWrite",
         "WebFetch",
         "WebSearch",
     ] {
-        assert!(reg.get(name).is_some(), "Missing Claude Code tool: {name}");
+        assert!(reg.get(name).is_some(), "Missing built-in tool: {name}");
     }
 }
 

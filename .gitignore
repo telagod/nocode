@@ -10,3 +10,4 @@ npm/nocode-win32-x64/bin/nocode.exe
 npm/nocode-win32-arm64/bin/nocode.exe
 .tmp/
 .ace-tool/
+.claude/worktrees/

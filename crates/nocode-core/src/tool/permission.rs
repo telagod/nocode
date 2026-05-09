@@ -123,16 +123,32 @@ impl ToolClassifier {
     pub fn classify(tool_name: &str, input: &serde_json::Value) -> ToolRiskLevel {
         match tool_name {
             // Safe: read-only tools
-            "FileRead" | "Glob" | "Grep" | "TaskGet" | "TaskList" | "TaskOutput" | "MemoryList"
-            | "MemorySearch" | "CronList" | "ToolSearch" | "ListMcpResources"
-            | "ReadMcpResource" | "AskUserQuestion" | "ExitPlanMode" => ToolRiskLevel::Safe,
+            "FileRead" | "Glob" | "Grep" | "Task" | "CronList" | "ToolSearch"
+            | "AskUserQuestion" | "ExitPlanMode" => ToolRiskLevel::Safe,
+            // Memory: list/search are safe; save/delete are write
+            "Memory" => {
+                let action = input["action"].as_str().unwrap_or("list");
+                match action {
+                    "list" | "search" => ToolRiskLevel::Safe,
+                    _ => ToolRiskLevel::Write,
+                }
+            }
+            // Mcp: list_resources and read_resource are safe; call depends on the target
+            "Mcp" => {
+                let action = input["action"].as_str().unwrap_or("call");
+                match action {
+                    "list_resources" | "read_resource" => ToolRiskLevel::Safe,
+                    _ => ToolRiskLevel::Write,
+                }
+            }
 
             // Bash: depends on command content
             "Bash" => Self::classify_bash(input),
 
             // Write: file modifications
-            "FileWrite" | "FileEdit" | "NotebookEdit" | "TodoWrite" | "Config" | "MemorySave"
-            | "MemoryDelete" => ToolRiskLevel::Write,
+            "FileWrite" | "FileEdit" | "NotebookEdit" | "TodoWrite" | "Config" => {
+                ToolRiskLevel::Write
+            }
 
             // Potentially destructive
             "EnterWorktree" | "ExitWorktree" => ToolRiskLevel::Write,
@@ -142,9 +158,6 @@ impl ToolClassifier {
 
             // Web: external network access
             "WebFetch" | "WebSearch" => ToolRiskLevel::Write,
-
-            // MCP: external tool execution
-            "Mcp" => ToolRiskLevel::Write,
 
             // Cron: scheduled execution
             "CronCreate" | "CronDelete" => ToolRiskLevel::Write,
@@ -377,7 +390,7 @@ mod tests {
             ToolRiskLevel::Safe
         );
         assert_eq!(
-            ToolClassifier::classify("TaskList", &input),
+            ToolClassifier::classify("Task", &input),
             ToolRiskLevel::Safe
         );
     }

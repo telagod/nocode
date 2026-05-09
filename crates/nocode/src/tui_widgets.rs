@@ -159,10 +159,7 @@ impl ChatMessage {
                     header_label,
                     Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    " \u{2500}\u{2500}",
-                    Style::default().fg(border_color),
-                ),
+                Span::styled(" \u{2500}\u{2500}", Style::default().fg(border_color)),
             ]));
 
             // Body: │ output lines
@@ -793,9 +790,7 @@ fn tool_user_facing_name(tool_name: &str, args: &str) -> String {
         "WebFetch" => String::from("Fetch"),
         "WebSearch" => String::from("Search"),
         "Agent" => String::from("Agent"),
-        "TaskCreate" => String::from("Task"),
-        "TaskUpdate" => String::from("Task"),
-        "TaskList" => String::from("Tasks"),
+        "Task" => String::from("Task"),
         other => other.to_string(),
     }
 }
@@ -811,16 +806,22 @@ fn tool_args_display(tool_name: &str, args: &str) -> String {
         "Agent" => extract_kv(args, "prompt")
             .map(|s| truncate_str(&s, 40))
             .unwrap_or_default(),
-        "TaskCreate" => extract_kv(args, "description")
-            .map(|s| truncate_str(&s, 40))
-            .unwrap_or_default(),
-        "TaskUpdate" => {
-            let id = extract_kv(args, "task_id").unwrap_or_default();
-            let status = extract_kv(args, "status").unwrap_or_default();
-            if id.is_empty() {
-                String::new()
-            } else {
-                format!("{id} → {status}")
+        "Task" => {
+            let action = extract_kv(args, "action").unwrap_or_default();
+            match action.as_str() {
+                "create" => extract_kv(args, "description")
+                    .map(|s| truncate_str(&s, 40))
+                    .unwrap_or_default(),
+                "update" => {
+                    let id = extract_kv(args, "taskId").unwrap_or_default();
+                    let status = extract_kv(args, "status").unwrap_or_default();
+                    if id.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{id} → {status}")
+                    }
+                }
+                _ => extract_kv(args, "taskId").unwrap_or_default(),
             }
         }
         "Bash" => String::new(), // command already in display name

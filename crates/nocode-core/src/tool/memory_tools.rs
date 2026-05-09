@@ -1,4 +1,4 @@
-//! Memory tools — MemorySave, MemoryList, MemorySearch, MemoryDelete.
+//! Unified Memory tool — save, list, search, delete memory entries.
 
 use crate::storage::memory::{MemoryEntry, MemoryStore, MemoryType};
 use crate::tool::{Tool, ToolOutput};
@@ -9,23 +9,72 @@ fn default_memory_dir() -> String {
     format!("{home}/.nocode/memory")
 }
 
-pub struct MemorySaveTool;
+pub struct MemoryTool;
 
-impl Tool for MemorySaveTool {
+impl Tool for MemoryTool {
     fn name(&self) -> &str {
-        "MemorySave"
+        "Memory"
     }
     fn description(&self) -> &str {
-        "Save a memory entry with YAML frontmatter."
+        "Manage persistent memory entries. Actions: save (create/update a memory entry), \
+         list (show all entries), search (find by keyword), delete (remove by file name)."
     }
     fn input_schema(&self) -> Value {
-        json!({"type":"object","properties":{
-            "name":{"type":"string"},"description":{"type":"string"},
-            "type":{"type":"string","enum":["user","feedback","project","reference"]},
-            "content":{"type":"string"},"file_name":{"type":"string"}
-        },"required":["name","description","type","content","file_name"]})
+        json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["save", "list", "delete", "search"],
+                    "description": "The memory operation to perform"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Memory entry name (required for save)"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Memory entry description (required for save)"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": ["user", "feedback", "project", "reference"],
+                    "description": "Memory type (required for save)"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Memory content to save (required for save)"
+                },
+                "file_name": {
+                    "type": "string",
+                    "description": "File name for the memory entry (required for save and delete)"
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query keyword (required for search)"
+                }
+            },
+            "required": ["action"]
+        })
     }
     fn execute(&self, input: &Value) -> ToolOutput {
+        let Some(action) = input["action"].as_str() else {
+            return ToolOutput::error("Missing required parameter: action");
+        };
+        match action {
+            "save" => self.execute_save(input),
+            "list" => self.execute_list(),
+            "search" => self.execute_search(input),
+            "delete" => self.execute_delete(input),
+            _ => ToolOutput::error(format!(
+                "Unknown action: {action}. Use save, list, search, or delete."
+            )),
+        }
+    }
+}
+
+impl MemoryTool {
+    fn execute_save(&self, input: &Value) -> ToolOutput {
         let name = input["name"].as_str().unwrap_or("");
         let desc = input["description"].as_str().unwrap_or("");
         let mtype = input["type"].as_str().unwrap_or("user");
@@ -50,21 +99,8 @@ impl Tool for MemorySaveTool {
         }
         ToolOutput::success(format!("Saved memory: {file_name}"))
     }
-}
 
-pub struct MemoryListTool;
-
-impl Tool for MemoryListTool {
-    fn name(&self) -> &str {
-        "MemoryList"
-    }
-    fn description(&self) -> &str {
-        "List all saved memory entries."
-    }
-    fn input_schema(&self) -> Value {
-        json!({"type":"object","properties":{}})
-    }
-    fn execute(&self, _input: &Value) -> ToolOutput {
+    fn execute_list(&self) -> ToolOutput {
         let store = MemoryStore::new(&default_memory_dir());
         match store.list() {
             Ok(entries) => {
@@ -82,21 +118,8 @@ impl Tool for MemoryListTool {
             Err(e) => ToolOutput::error(e),
         }
     }
-}
 
-pub struct MemorySearchTool;
-
-impl Tool for MemorySearchTool {
-    fn name(&self) -> &str {
-        "MemorySearch"
-    }
-    fn description(&self) -> &str {
-        "Search memory entries by keyword."
-    }
-    fn input_schema(&self) -> Value {
-        json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"]})
-    }
-    fn execute(&self, input: &Value) -> ToolOutput {
+    fn execute_search(&self, input: &Value) -> ToolOutput {
         let Some(query) = input["query"].as_str() else {
             return ToolOutput::error("Missing required parameter: query");
         };
@@ -118,21 +141,8 @@ impl Tool for MemorySearchTool {
             Err(e) => ToolOutput::error(e),
         }
     }
-}
 
-pub struct MemoryDeleteTool;
-
-impl Tool for MemoryDeleteTool {
-    fn name(&self) -> &str {
-        "MemoryDelete"
-    }
-    fn description(&self) -> &str {
-        "Delete a memory entry by file name."
-    }
-    fn input_schema(&self) -> Value {
-        json!({"type":"object","properties":{"file_name":{"type":"string"}},"required":["file_name"]})
-    }
-    fn execute(&self, input: &Value) -> ToolOutput {
+    fn execute_delete(&self, input: &Value) -> ToolOutput {
         let Some(file_name) = input["file_name"].as_str() else {
             return ToolOutput::error("Missing required parameter: file_name");
         };
@@ -154,9 +164,12 @@ mod tests {
 
     #[test]
     fn memory_save_missing_params() {
-        let tool = MemorySaveTool;
+        let tool = MemoryTool;
+        // Missing action
         assert!(tool.execute(&json!({})).is_error);
-        assert!(tool.execute(&json!({"name": "x"})).is_error);
+        // Save with no other params — invalid type triggers error
+        let result = tool.execute(&json!({"action": "save", "type": "bad"}));
+        assert!(result.is_error);
     }
 
     #[test]
@@ -183,20 +196,28 @@ mod tests {
 
     #[test]
     fn memory_search_missing_query() {
-        let tool = MemorySearchTool;
-        assert!(tool.execute(&json!({})).is_error);
+        let tool = MemoryTool;
+        assert!(tool.execute(&json!({"action": "search"})).is_error);
     }
 
     #[test]
     fn memory_search_succeeds() {
-        let tool = MemorySearchTool;
-        let result = tool.execute(&json!({"query": "nonexistent_xyz"}));
+        let tool = MemoryTool;
+        let result = tool.execute(&json!({"action": "search", "query": "nonexistent_xyz"}));
         assert!(!result.is_error);
     }
 
     #[test]
     fn memory_delete_missing_file() {
-        let tool = MemoryDeleteTool;
-        assert!(tool.execute(&json!({})).is_error);
+        let tool = MemoryTool;
+        assert!(tool.execute(&json!({"action": "delete"})).is_error);
+    }
+
+    #[test]
+    fn memory_unknown_action() {
+        let tool = MemoryTool;
+        let result = tool.execute(&json!({"action": "frobnicate"}));
+        assert!(result.is_error);
+        assert!(result.content.contains("Unknown action"));
     }
 }

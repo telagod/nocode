@@ -289,8 +289,15 @@ impl<'a> ToolExecutor<'a> {
             PermissionMode::Ask => {
                 // Read-only tools are always allowed
                 match name {
-                    "FileRead" | "Glob" | "Grep" | "TaskGet" | "TaskList" | "TaskOutput"
-                    | "MemoryList" | "MemorySearch" | "CronList" | "ToolSearch" => return true,
+                    "FileRead" | "Glob" | "Grep" | "Task" | "CronList" | "ToolSearch" => {
+                        return true;
+                    }
+                    "Memory" => {
+                        let action = input["action"].as_str().unwrap_or("list");
+                        if action == "list" || action == "search" {
+                            return true;
+                        }
+                    }
                     "Bash" => {
                         let cmd = input["command"].as_str().unwrap_or("");
                         if bash_validation::is_read_only_command(cmd) {
@@ -338,9 +345,17 @@ impl<'a> ToolExecutor<'a> {
             PermissionMode::ReadOnly => {
                 // Only allow read-only tools
                 match name {
-                    "FileRead" | "Glob" | "Grep" | "TaskGet" | "TaskList" | "TaskOutput"
-                    | "MemoryList" | "MemorySearch" | "CronList" | "ToolSearch"
-                    | "ListMcpResources" | "ReadMcpResource" | "AskUserQuestion" => true,
+                    "FileRead" | "Glob" | "Grep" | "Task" | "CronList" | "ToolSearch"
+                    | "AskUserQuestion" => true,
+                    "Memory" => {
+                        let action = input["action"].as_str().unwrap_or("list");
+                        matches!(action, "list" | "search")
+                    }
+                    "Mcp" => {
+                        // list_resources and read_resource are read-only; call is not
+                        let action = input["action"].as_str().unwrap_or("call");
+                        matches!(action, "list_resources" | "read_resource")
+                    }
                     "Bash" => {
                         let cmd = input["command"].as_str().unwrap_or("");
                         !bash_validation::is_write_command(cmd)
@@ -387,9 +402,18 @@ impl<'a> ToolExecutor<'a> {
     fn is_read_only_tool(name: &str, input: &Value) -> bool {
         match name {
             // Always read-only
-            "FileRead" | "Glob" | "Grep" | "TaskGet" | "TaskList" | "TaskOutput" | "MemoryList"
-            | "MemorySearch" | "CronList" | "ToolSearch" | "ListMcpResources"
-            | "ReadMcpResource" | "AskUserQuestion" | "EnterPlanMode" | "ExitPlanMode" => true,
+            "FileRead" | "Glob" | "Grep" | "Task" | "CronList" | "ToolSearch"
+            | "AskUserQuestion" | "EnterPlanMode" | "ExitPlanMode" => true,
+            // Memory: list and search are read-only
+            "Memory" => {
+                let action = input["action"].as_str().unwrap_or("list");
+                matches!(action, "list" | "search")
+            }
+            // Mcp: list_resources and read_resource are read-only
+            "Mcp" => {
+                let action = input["action"].as_str().unwrap_or("call");
+                matches!(action, "list_resources" | "read_resource")
+            }
             // Bash: only if the command is read-only
             "Bash" => {
                 let cmd = input["command"].as_str().unwrap_or("");

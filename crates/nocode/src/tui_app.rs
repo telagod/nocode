@@ -552,10 +552,7 @@ impl TuiApp {
             // Split bottom area: completion rows on top, status bar at very bottom
             let bottom_chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(completion_count),
-                    Constraint::Length(1),
-                ])
+                .constraints([Constraint::Length(completion_count), Constraint::Length(1)])
                 .split(status_area);
             let completion_area = bottom_chunks[0];
             let real_status_area = bottom_chunks[1];
