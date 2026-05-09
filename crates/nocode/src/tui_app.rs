@@ -1845,13 +1845,11 @@ pub(crate) fn run_app_loop(
         app.worker_event_rx = Some(worker_rx);
     }
 
-    // Display provider warnings after all init (so banner renders first)
-    // If there are warnings, auto-open config overlay so user can fix settings
+    // Display provider warnings (if any remain) as system messages
     if !warnings.is_empty() {
         for w in &warnings {
             app.push_system(w);
         }
-        app.open_config_overlay();
     }
 
     let mut event_rx: Option<mpsc::Receiver<TuiEvent>> = None;

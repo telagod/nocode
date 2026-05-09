@@ -275,6 +275,41 @@ fn main() {
     }
 
     if is_tui_mode {
+        // Provider not usable → run login flow first, then re-resolve
+        let (provider_box, model, max_tokens, registry, system_blocks) =
+            if !provider_warnings.is_empty() {
+                for w in &provider_warnings {
+                    eprintln!("Warning: {w}");
+                }
+                login::run_login(&cwd);
+                // Reload everything after login
+                let cred_path2 =
+                    nocode_core::storage::credentials::CredentialStore::default_path();
+                if let Ok(creds) =
+                    nocode_core::storage::credentials::CredentialStore::load(&cred_path2)
+                {
+                    creds.load_into_env();
+                }
+                let settings = Settings::load_merged(&cwd);
+                let provider_type = resolve_provider(&settings);
+                let model = resolve_model(&settings, &provider_type);
+                let caps = nocode_core::provider::model_caps::lookup(&model);
+                let max_tokens = settings.max_tokens.unwrap_or(caps.max_output_tokens);
+                let custom_sp = resolve_custom_system_prompt(&settings);
+                let system_blocks = assembly::assemble_system_prompt(
+                    &cwd,
+                    &[],
+                    &TruncationBudget::default(),
+                    custom_sp.as_deref(),
+                );
+                let registry = ToolRegistry::with_defaults(&cwd);
+                initialize_runtime_global_registry(&cwd, &settings);
+                let (provider_box, _) = build_provider(&provider_type, &settings);
+                (provider_box, model, max_tokens, registry, system_blocks)
+            } else {
+                (provider_box, model, max_tokens, registry, system_blocks)
+            };
+
         if let Err(e) = tui::run_tui(
             provider_box,
             registry,
@@ -282,7 +317,7 @@ fn main() {
             model,
             max_tokens,
             max_turns,
-            provider_warnings,
+            vec![],
         ) {
             eprintln!("TUI error: {e}");
         }
