@@ -143,45 +143,22 @@ impl ToolRegistry {
         self.tools.keys().map(String::as_str).collect()
     }
 
-    /// Create a registry with Claude Code's 18 built-in tools.
+    /// Create a registry with the core built-in tools (Pi-inspired minimal set).
     pub fn with_defaults(cwd: impl Into<String>) -> Self {
         let cwd = cwd.into();
         let mut registry = Self::new();
-        // 1. Agent
+        // Core tools — read, write, search, execute
         registry.register(Box::new(agent::AgentTool));
-        // 2. AskUserQuestion
-        registry.register(Box::new(interactive_tools::AskUserQuestionTool::new()));
-        // 3. Bash
         registry.register(Box::new(bash::BashTool::new(&cwd)));
-        // 4. Config
-        registry.register(Box::new(interactive_tools::ConfigTool));
-        // 5. EnterWorktree
-        registry.register(Box::new(session_tools::EnterWorktreeTool));
-        // 6. ExitPlanMode
-        registry.register(Box::new(session_tools::ExitPlanModeTool));
-        // 7. ExitWorktree
-        registry.register(Box::new(session_tools::ExitWorktreeTool));
-        // 8. FileEdit
         registry.register(Box::new(edit::EditTool));
-        // 9. FileRead
         registry.register(Box::new(read::ReadTool));
-        // 10. FileWrite
         registry.register(Box::new(write::WriteTool));
-        // 11. Glob
         registry.register(Box::new(glob::GlobTool));
-        // 12. Grep
         registry.register(Box::new(grep::GrepTool));
-        // 13. Mcp (unified: call / list_resources / read_resource)
+        // Extended tools — high-value beyond Pi's 7
         registry.register(Box::new(mcp_tools::McpTool));
-        // 14. NotebookEdit
-        registry.register(Box::new(interactive_tools::NotebookEditTool));
-        // 15. Task (unified: create/get/list/update/output/stop)
         registry.register(Box::new(task_tools::TaskTool));
-        // 16. TodoWrite
-        registry.register(Box::new(todo_write::TodoWriteTool));
-        // 17. WebFetch
         registry.register(Box::new(web::WebFetchTool));
-        // 18. WebSearch
         registry.register(Box::new(web::WebSearchTool));
         registry
     }

@@ -137,13 +137,13 @@ fn cli_modules_exist() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn tool_registry_has_18_tools() {
+fn tool_registry_has_11_tools() {
     let reg = nocode_core::tool::ToolRegistry::with_defaults("/tmp");
     let names = reg.names();
     assert_eq!(
         names.len(),
-        18,
-        "Expected exactly 18 tools, got {}",
+        11,
+        "Expected exactly 11 tools, got {}",
         names.len()
     );
 }
@@ -151,24 +151,17 @@ fn tool_registry_has_18_tools() {
 #[test]
 fn tool_categories_complete() {
     let reg = nocode_core::tool::ToolRegistry::with_defaults("/tmp");
-    // All 18 built-in tools
+    // All 11 built-in tools
     for name in &[
         "Agent",
-        "AskUserQuestion",
         "Bash",
-        "Config",
-        "EnterWorktree",
-        "ExitPlanMode",
-        "ExitWorktree",
         "FileEdit",
         "FileRead",
         "FileWrite",
         "Glob",
         "Grep",
         "Mcp",
-        "NotebookEdit",
         "Task",
-        "TodoWrite",
         "WebFetch",
         "WebSearch",
     ] {
