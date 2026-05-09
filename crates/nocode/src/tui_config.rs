@@ -32,18 +32,20 @@ impl TuiConfigOverlay {
     fn settings_key_for(field: ConfigField) -> Option<&'static str> {
         match field {
             ConfigField::Model => Some("model"),
+            ConfigField::Provider => Some("model_provider"),
             ConfigField::BaseUrl => Some("custom_base_url"),
             ConfigField::Format => Some("custom_api_format"),
-            _ => None,
+            ConfigField::ApiKey => Some("__api_key__"),
         }
     }
 
     fn current_value_for(&self, field: ConfigField) -> String {
         match field {
             ConfigField::Model => self.form.model.clone(),
+            ConfigField::Provider => self.form.display_provider().to_string(),
             ConfigField::BaseUrl => self.form.base_url.clone(),
             ConfigField::Format => self.form.api_format.clone(),
-            _ => String::new(),
+            ConfigField::ApiKey => String::new(),
         }
     }
 
@@ -65,9 +67,9 @@ impl TuiConfigOverlay {
         let Some(edit) = self.editing.take() else {
             return;
         };
-        let Some(key) = Self::settings_key_for(edit.field) else {
+        if Self::settings_key_for(edit.field).is_none() {
             return;
-        };
+        }
         let value = edit.buffer.trim().to_string();
 
         // Update form state in-memory
@@ -75,6 +77,19 @@ impl TuiConfigOverlay {
             ConfigField::Model => {
                 self.form.model = value.clone();
                 self.form.model_source = ValueSource::User;
+            }
+            ConfigField::Provider => {
+                use crate::provider_presets::ALL_PRESETS;
+                let lower = value.to_lowercase();
+                let matched = ALL_PRESETS
+                    .iter()
+                    .find(|p| p.name.to_lowercase() == lower || p.provider_type == lower);
+                if let Some(preset) = matched {
+                    self.form.preset = Some(preset);
+                } else {
+                    self.form.preset = None;
+                }
+                self.form.provider_source = ValueSource::User;
             }
             ConfigField::BaseUrl => {
                 self.form.base_url = value.clone();
@@ -84,14 +99,50 @@ impl TuiConfigOverlay {
                 self.form.api_format = value.clone();
                 self.form.format_source = ValueSource::User;
             }
-            _ => {}
+            ConfigField::ApiKey => {}
         }
 
-        // Persist to user tier config.toml
+        // ApiKey → credential store
+        if edit.field == ConfigField::ApiKey {
+            if !value.is_empty() {
+                let provider_label = self
+                    .form
+                    .preset
+                    .map_or("custom", |p| p.credential_slot);
+                let cred_path =
+                    nocode_core::storage::credentials::CredentialStore::default_path();
+                let mut store =
+                    nocode_core::storage::credentials::CredentialStore::load(&cred_path)
+                        .unwrap_or_default();
+                store.set_key(provider_label, &value);
+                let _ = store.save(&cred_path);
+                self.form.api_key = value.clone();
+            }
+            return;
+        }
+
+        // Provider → persist model_provider to settings
+        if edit.field == ConfigField::Provider {
+            let cwd = std::env::current_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            use nocode_core::config::settings::{Settings, SettingsTier};
+            let provider_type = self.form.preset.map(|p| p.provider_type);
+            let _ = Settings::persist_key_value(
+                "model_provider",
+                provider_type,
+                SettingsTier::User,
+                &cwd,
+            );
+            return;
+        }
+
+        // Other fields → persist to user tier config.toml
         let cwd = std::env::current_dir()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
         use nocode_core::config::settings::{Settings, SettingsTier};
+        let key = Self::settings_key_for(edit.field).unwrap();
         let persist_value = if value.is_empty() {
             None
         } else {
@@ -225,34 +276,23 @@ impl TuiConfigOverlay {
         lines.push(Line::from(vec![
             sel(ConfigField::Provider),
             Span::styled("Provider  ", dim),
-            if self.form.focus == ConfigField::Provider {
-                Span::styled(self.form.display_provider().to_string(), highlight)
-            } else {
-                Span::styled(
-                    self.form.display_provider().to_string(),
-                    if self.form.display_provider() == "(not set)" {
-                        dim
-                    } else {
-                        normal
-                    },
-                )
-            },
+            field_val(
+                ConfigField::Provider,
+                self.form.display_provider(),
+                dim,
+                normal,
+            ),
             source_span(&self.form.provider_source),
+            editable_hint(ConfigField::Provider),
         ]));
 
-        let api_key_str = self.form.display_api_key();
+        let api_key_display = self.form.display_api_key();
         lines.push(Line::from(vec![
             sel(ConfigField::ApiKey),
             Span::styled("API Key   ", dim),
-            Span::styled(
-                api_key_str,
-                if self.form.api_key.is_empty() {
-                    dim
-                } else {
-                    normal
-                },
-            ),
+            field_val(ConfigField::ApiKey, &api_key_display, dim, normal),
             source_span(&self.form.api_key_source),
+            editable_hint(ConfigField::ApiKey),
         ]));
         lines.push(Line::raw(""));
 
