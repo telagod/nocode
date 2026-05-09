@@ -289,7 +289,7 @@ impl<'a> ToolExecutor<'a> {
             PermissionMode::Ask => {
                 // Read-only tools are always allowed
                 match name {
-                    "FileRead" | "Glob" | "Grep" | "Task" | "CronList" | "ToolSearch" => {
+                    "FileRead" | "Glob" | "Grep" | "CronList" | "ToolSearch" => {
                         return true;
                     }
                     "Memory" => {
@@ -345,7 +345,7 @@ impl<'a> ToolExecutor<'a> {
             PermissionMode::ReadOnly => {
                 // Only allow read-only tools
                 match name {
-                    "FileRead" | "Glob" | "Grep" | "Task" | "CronList" | "ToolSearch"
+                    "FileRead" | "Glob" | "Grep" | "CronList" | "ToolSearch"
                     | "AskUserQuestion" => true,
                     "Memory" => {
                         let action = input["action"].as_str().unwrap_or("list");
@@ -402,7 +402,7 @@ impl<'a> ToolExecutor<'a> {
     fn is_read_only_tool(name: &str, input: &Value) -> bool {
         match name {
             // Always read-only
-            "FileRead" | "Glob" | "Grep" | "Task" | "CronList" | "ToolSearch"
+            "FileRead" | "Glob" | "Grep" | "CronList" | "ToolSearch"
             | "AskUserQuestion" | "EnterPlanMode" | "ExitPlanMode" => true,
             // Memory: list and search are read-only
             "Memory" => {

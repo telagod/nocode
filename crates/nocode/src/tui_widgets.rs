@@ -790,7 +790,6 @@ fn tool_user_facing_name(tool_name: &str, args: &str) -> String {
         "WebFetch" => String::from("Fetch"),
         "WebSearch" => String::from("Search"),
         "Agent" => String::from("Agent"),
-        "Task" => String::from("Task"),
         other => other.to_string(),
     }
 }
@@ -806,24 +805,6 @@ fn tool_args_display(tool_name: &str, args: &str) -> String {
         "Agent" => extract_kv(args, "prompt")
             .map(|s| truncate_str(&s, 40))
             .unwrap_or_default(),
-        "Task" => {
-            let action = extract_kv(args, "action").unwrap_or_default();
-            match action.as_str() {
-                "create" => extract_kv(args, "description")
-                    .map(|s| truncate_str(&s, 40))
-                    .unwrap_or_default(),
-                "update" => {
-                    let id = extract_kv(args, "taskId").unwrap_or_default();
-                    let status = extract_kv(args, "status").unwrap_or_default();
-                    if id.is_empty() {
-                        String::new()
-                    } else {
-                        format!("{id} → {status}")
-                    }
-                }
-                _ => extract_kv(args, "taskId").unwrap_or_default(),
-            }
-        }
         "Bash" => String::new(), // command already in display name
         _ => {
             // Generic: show first key=value, truncated

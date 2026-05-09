@@ -147,7 +147,7 @@ impl ToolRegistry {
     pub fn with_defaults(cwd: impl Into<String>) -> Self {
         let cwd = cwd.into();
         let mut registry = Self::new();
-        // Core tools — read, write, search, execute
+        // Core: read, write, search, execute
         registry.register(Box::new(agent::AgentTool));
         registry.register(Box::new(bash::BashTool::new(&cwd)));
         registry.register(Box::new(edit::EditTool));
@@ -155,8 +155,7 @@ impl ToolRegistry {
         registry.register(Box::new(write::WriteTool));
         registry.register(Box::new(glob::GlobTool));
         registry.register(Box::new(grep::GrepTool));
-        // Extended tools
-        registry.register(Box::new(task_tools::TaskTool));
+        // Extended: web access
         registry.register(Box::new(web::WebFetchTool));
         registry.register(Box::new(web::WebSearchTool));
         registry

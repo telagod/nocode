@@ -123,7 +123,7 @@ impl ToolClassifier {
     pub fn classify(tool_name: &str, input: &serde_json::Value) -> ToolRiskLevel {
         match tool_name {
             // Safe: read-only tools
-            "FileRead" | "Glob" | "Grep" | "Task" | "CronList" | "ToolSearch"
+            "FileRead" | "Glob" | "Grep" | "CronList" | "ToolSearch"
             | "AskUserQuestion" | "ExitPlanMode" => ToolRiskLevel::Safe,
             // Memory: list/search are safe; save/delete are write
             "Memory" => {
@@ -387,10 +387,6 @@ mod tests {
         );
         assert_eq!(
             ToolClassifier::classify("Grep", &input),
-            ToolRiskLevel::Safe
-        );
-        assert_eq!(
-            ToolClassifier::classify("Task", &input),
             ToolRiskLevel::Safe
         );
     }

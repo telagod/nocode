@@ -541,24 +541,30 @@ fn cmd_plan(app: &mut TuiApp, description: Option<&str>) {
                     let preview: String = content.lines().take(20).collect::<Vec<_>>().join("\n");
                     app.push_system(&format!(
                         "Active spec: .nocode/SPEC.md\n\n{preview}\n\n\
-                         Use /plan <description> to create a new spec, or ask to execute the current one."
+                         Say \"execute\" to run, or ask to modify."
                     ));
                 }
-                Err(_) => app.push_system("No active spec. Use /plan <description> to create one."),
+                Err(_) => app.push_system("No active spec. Use /plan <goal> to start."),
             }
         } else {
             app.push_system(
-                "No active spec. Use /plan <description> to start planning.\n\n\
-                 The model will write .nocode/SPEC.md and break it into tasks.",
+                "No active spec.\n\n\
+                 Usage: /plan <goal>\n\
+                 → Agents investigate in parallel\n\
+                 → SPEC.md generated with checklist\n\
+                 → Agents execute tasks concurrently",
             );
         }
         return;
     }
-    // Inject the planning request as a user message hint
+    // Inject planning instruction — model will spawn agents to investigate,
+    // then write SPEC.md, then execute via agents
     app.push_system(&format!(
-        "Planning: {desc}\n\n\
-         Write a spec to .nocode/SPEC.md with: goal, constraints, approach, and steps.\n\
-         Then create Task items for each step."
+        "Plan: {desc}\n\n\
+         1. Spawn agents to investigate the problem in parallel\n\
+         2. Write .nocode/SPEC.md with goal, constraints, and task checklist (- [ ])\n\
+         3. Execute each task via Agent (parallel where independent)\n\
+         4. Mark tasks done (- [x]) as they complete"
     ));
 }
 
