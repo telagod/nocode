@@ -82,6 +82,40 @@ impl InputMode {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Plan mode state machine
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[allow(dead_code)] // Drafting/Review constructed by agentic loop, not cmd_plan
+pub(crate) enum PlanState {
+    #[default]
+    Off,
+    /// Investigating: model is using WebSearch/Agent to gather info
+    Investigating { goal: String },
+    /// Drafting: model has enough info, building the spec
+    Drafting { goal: String },
+    /// Review: spec is ready, user is reviewing
+    Review { goal: String, spec_path: String },
+    /// Executing: user confirmed, agents are working
+    Executing { goal: String, spec_path: String },
+}
+
+impl PlanState {
+    pub fn is_active(&self) -> bool {
+        !matches!(self, Self::Off)
+    }
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Off => "",
+            Self::Investigating { .. } => "PLAN:investigating",
+            Self::Drafting { .. } => "PLAN:drafting",
+            Self::Review { .. } => "PLAN:review",
+            Self::Executing { .. } => "PLAN:executing",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) enum Overlay {
     #[default]
@@ -129,6 +163,7 @@ pub(crate) struct TuiApp {
     pub(crate) history_index: Option<usize>,
     pub(crate) saved_input: String,
     pub(crate) input_mode: InputMode,
+    pub(crate) plan_state: PlanState,
     pub(crate) vim_pending: Option<char>,
     pub(crate) hud: StatusHud,
     pub(crate) error_log: Vec<String>,
@@ -193,6 +228,7 @@ impl TuiApp {
             history_index: None,
             saved_input: String::new(),
             input_mode: InputMode::Insert,
+            plan_state: PlanState::Off,
             vim_pending: None,
             hud: StatusHud::new(model, ""),
             error_log: Vec::new(),
@@ -524,6 +560,9 @@ impl TuiApp {
             .or_else(|| self.search_status())
             .or_else(|| self.slash_command_hint())
             .unwrap_or_else(|| self.hud.render_line());
+        if self.plan_state.is_active() {
+            status_base = format!("{} | {}", self.plan_state.label(), status_base);
+        }
         {
             let history = nocode_core::storage::file_history::global_file_history();
             if let Ok(h) = history.lock() {
@@ -573,6 +612,12 @@ impl TuiApp {
     }
 
     fn hints_text(&self) -> String {
+        if self.plan_state.is_active() {
+            return format!(
+                "/plan:status  /plan confirm  /plan cancel  {}",
+                self.plan_state.label()
+            );
+        }
         if self.input_mode == InputMode::Normal {
             "i:insert  /:cmd  ?:help  q:quit".to_string()
         } else if self.completion_selected.is_some() {

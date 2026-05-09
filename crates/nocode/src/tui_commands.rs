@@ -1,6 +1,6 @@
 //! TUI slash command handlers — extracted from tui_app.rs.
 
-use crate::tui_app::{InputMode, TuiApp};
+use crate::tui_app::{InputMode, PlanState, TuiApp};
 use nocode_core::message::Message;
 
 /// Handle a resolved slash command action. Returns `true` if the app should break (quit).
@@ -532,39 +532,79 @@ fn cmd_init(app: &mut TuiApp) {
 
 fn cmd_plan(app: &mut TuiApp, description: Option<&str>) {
     let desc = description.unwrap_or("").trim();
-    if desc.is_empty() {
-        // Show existing spec if any
-        let spec_path = std::path::Path::new(".nocode/SPEC.md");
-        if spec_path.exists() {
-            match std::fs::read_to_string(spec_path) {
-                Ok(content) => {
-                    let preview: String = content.lines().take(20).collect::<Vec<_>>().join("\n");
+
+    // If already in plan mode, /plan without args shows status
+    if app.plan_state.is_active() {
+        if desc.is_empty() {
+            let label = app.plan_state.label();
+            let spec_path = std::path::Path::new(".nocode/SPEC.md");
+            if spec_path.exists() {
+                if let Ok(content) = std::fs::read_to_string(spec_path) {
+                    let preview: String = content.lines().take(30).collect::<Vec<_>>().join("\n");
                     app.push_system(&format!(
-                        "Active spec: .nocode/SPEC.md\n\n{preview}\n\n\
-                         Say \"execute\" to run, or ask to modify."
+                        "Plan [{label}]\n\n{preview}\n\n\
+                         Say \"confirm\" to execute, \"cancel\" to exit plan mode."
                     ));
+                } else {
+                    app.push_system(&format!("Plan [{label}] — spec not yet generated."));
                 }
-                Err(_) => app.push_system("No active spec. Use /plan <goal> to start."),
+            } else {
+                app.push_system(&format!("Plan [{label}] — investigating..."));
             }
-        } else {
-            app.push_system(
-                "No active spec.\n\n\
-                 Usage: /plan <goal>\n\
-                 → Agents investigate in parallel\n\
-                 → SPEC.md generated with checklist\n\
-                 → Agents execute tasks concurrently",
-            );
+            return;
         }
+        // /plan cancel
+        if desc == "cancel" || desc == "exit" || desc == "off" {
+            app.plan_state = PlanState::Off;
+            nocode_core::tool::session_tools::exit_plan_mode();
+            app.push_system("Plan mode deactivated.");
+            return;
+        }
+        // /plan confirm — transition to executing
+        if desc == "confirm" || desc == "go" || desc == "execute" {
+            if let PlanState::Review {
+                ref goal,
+                ref spec_path,
+            } = app.plan_state
+            {
+                app.plan_state = PlanState::Executing {
+                    goal: goal.clone(),
+                    spec_path: spec_path.clone(),
+                };
+                nocode_core::tool::session_tools::exit_plan_mode();
+                app.push_system(
+                    "Plan confirmed — executing. Agents will work through the spec tasks.",
+                );
+            } else {
+                app.push_system("Spec not ready for execution yet. Continue the conversation.");
+            }
+            return;
+        }
+    }
+
+    // Start new plan
+    if desc.is_empty() {
+        app.push_system(
+            "Usage: /plan <goal>\n\n\
+             Enters plan mode:\n\
+             → Model investigates using WebSearch and agents\n\
+             → Asks you questions to clarify\n\
+             → Generates .nocode/SPEC.md\n\
+             → You review and confirm\n\
+             → Agents execute in parallel",
+        );
         return;
     }
-    // Inject planning instruction — model will spawn agents to investigate,
-    // then write SPEC.md, then execute via agents
+
+    // Enter plan mode
+    app.plan_state = PlanState::Investigating {
+        goal: desc.to_string(),
+    };
+    nocode_core::tool::session_tools::enter_plan_mode();
     app.push_system(&format!(
-        "Plan: {desc}\n\n\
-         1. Spawn agents to investigate the problem in parallel\n\
-         2. Write .nocode/SPEC.md with goal, constraints, and task checklist (- [ ])\n\
-         3. Execute each task via Agent (parallel where independent)\n\
-         4. Mark tasks done (- [x]) as they complete"
+        "Plan mode: {desc}\n\n\
+         Investigating... I'll search for relevant information and ask questions.\n\
+         Use /plan to check progress, /plan cancel to exit."
     ));
 }
 
