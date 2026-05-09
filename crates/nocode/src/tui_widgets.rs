@@ -8,33 +8,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
-// ---------------------------------------------------------------------------
-// Color bridge: crossterm::style::Color → ratatui::style::Color
-// ---------------------------------------------------------------------------
-
-pub(crate) fn convert_color(c: crossterm::style::Color) -> Color {
-    match c {
-        crossterm::style::Color::Rgb { r, g, b } => Color::Rgb(r, g, b),
-        crossterm::style::Color::Red => Color::Red,
-        crossterm::style::Color::Green => Color::Green,
-        crossterm::style::Color::Blue => Color::Blue,
-        crossterm::style::Color::Yellow => Color::Yellow,
-        crossterm::style::Color::Cyan => Color::Cyan,
-        crossterm::style::Color::Magenta => Color::Magenta,
-        crossterm::style::Color::White => Color::White,
-        crossterm::style::Color::DarkGrey => Color::DarkGray,
-        crossterm::style::Color::DarkYellow => Color::Yellow,
-        crossterm::style::Color::Grey => Color::Gray,
-        crossterm::style::Color::DarkRed => Color::LightRed,
-        crossterm::style::Color::DarkGreen => Color::DarkGray,
-        crossterm::style::Color::DarkBlue => Color::Blue,
-        crossterm::style::Color::DarkMagenta => Color::Magenta,
-        crossterm::style::Color::DarkCyan => Color::DarkGray,
-        crossterm::style::Color::Black => Color::Black,
-        _ => Color::White,
-    }
-}
-
 /// Detect diff lines and return appropriate color, or None for non-diff lines.
 fn diff_line_color(line: &str, theme: &crate::tui_theme::Theme) -> Option<Color> {
     if line.starts_with("+++") || line.starts_with("---") {
@@ -73,14 +46,14 @@ impl ChatMessageKind {
     fn prefix(&self) -> (&str, Color) {
         let theme = default_theme();
         match self {
-            Self::User => ("\u{276F} ", theme.user),           // ❯
-            Self::Assistant => ("\u{23BF} ", theme.assistant), // ⎿
-            Self::System => ("\u{2022} ", theme.system),       // •
-            Self::Error => ("\u{2716} ", theme.error),         // ✖
-            Self::Tool => ("\u{25CF} ", theme.tool),           // ●
-            Self::Spinner => ("\u{2234} ", theme.spinner),     // ∴
-            Self::Permission => ("\u{26A0} ", theme.warning),  // ⚠
-            Self::Thinking => ("\u{2234} ", theme.text_dim),   // ∴
+            Self::User => ("\u{276F} ", theme.user),          // ❯
+            Self::Assistant => ("  ", theme.assistant),       // just indent
+            Self::System => ("\u{2022} ", theme.text_dim),    // • in dim
+            Self::Error => ("\u{2716} ", theme.error),        // ✖
+            Self::Tool => ("\u{25CF} ", theme.tool),          // ● (Phase 3 will change)
+            Self::Spinner => ("  ", theme.spinner),           // just indent
+            Self::Permission => ("\u{26A0} ", theme.warning), // ⚠
+            Self::Thinking => ("  ", theme.text_dim),         // just indent
         }
     }
 }
@@ -136,7 +109,7 @@ impl ChatMessage {
             .lines()
             .map(|l| {
                 let mut rl = RenderedLine::new();
-                rl.push(LineSegment::new(l, crossterm::style::Color::White));
+                rl.push(LineSegment::new(l, Color::White));
                 rl
             })
             .collect();
@@ -164,49 +137,41 @@ impl ChatMessage {
         let (prefix, prefix_color) = self.kind.prefix();
         let mut result = Vec::with_capacity(self.lines.len() + 3);
 
-        // Tool call: "● **ToolName** (args)" with status indicator — Claude Code style
+        // Tool call: rounded card style — ╭─ name ─╮ / │ output / ╰─ status ─╯
         if let Some(info) = &self.tool_info {
-            let indicator_color = if info.result_preview.is_some() {
-                theme.success // green = done
+            let border_color = if info.result_preview.is_some() {
+                theme.success
             } else {
-                theme.tool // yellow = in progress
+                theme.tool
             };
-            let status_suffix = if info.result_preview.is_some() {
-                " \u{2713}" // ✓
-            } else {
-                " \u{2026}" // …
-            };
-            // Tool-specific user-facing summary
             let display_name = tool_user_facing_name(&info.tool_name, &info.arguments_summary);
             let args_display = tool_args_display(&info.tool_name, &info.arguments_summary);
 
-            let mut spans = vec![
-                Span::styled("\u{25CF} ", Style::default().fg(indicator_color)),
+            // Header: ╭─ name (args) ─╮
+            let header_label = if args_display.is_empty() {
+                display_name
+            } else {
+                format!("{display_name} ({args_display})")
+            };
+            result.push(Line::from(vec![
+                Span::styled("  \u{256D}\u{2500} ", Style::default().fg(border_color)),
                 Span::styled(
-                    display_name,
+                    header_label,
                     Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
                 ),
-            ];
-            if !args_display.is_empty() {
-                spans.push(Span::styled(
-                    format!(" ({args_display})"),
-                    Style::default().fg(theme.text_dim),
-                ));
-            }
-            spans.push(Span::styled(
-                status_suffix,
-                Style::default().fg(indicator_color),
-            ));
-            result.push(Line::from(spans));
+                Span::styled(
+                    " \u{2500}\u{2500}",
+                    Style::default().fg(border_color),
+                ),
+            ]));
 
-            // Tool output lines with ⎿ prefix
+            // Body: │ output lines
             if !info.collapsed {
                 for rendered_line in &self.lines {
                     let mut spans: Vec<Span<'_>> = vec![Span::styled(
-                        "  \u{23BF} ",
-                        Style::default().fg(theme.border),
+                        "  \u{2502} ",
+                        Style::default().fg(border_color),
                     )];
-                    // Diff-aware coloring for tool output
                     let line_text: String = rendered_line
                         .segments
                         .iter()
@@ -217,15 +182,28 @@ impl ChatMessage {
                         spans.push(Span::styled(line_text, Style::default().fg(color)));
                     } else {
                         spans.extend(rendered_line.segments.iter().map(|seg| {
-                            Span::styled(
-                                seg.text.as_str(),
-                                Style::default().fg(convert_color(seg.color)),
-                            )
+                            Span::styled(seg.text.as_str(), Style::default().fg(seg.color))
                         }));
                     }
                     result.push(Line::from(spans));
                 }
             }
+
+            // Footer: ╰─ status ─╯
+            let status_label = if info.result_preview.is_some() {
+                "\u{2713} done"
+            } else {
+                "\u{2026} running"
+            };
+            result.push(Line::from(vec![
+                Span::styled("  \u{2570}\u{2500}", Style::default().fg(border_color)),
+                Span::styled(
+                    format!(" {status_label} "),
+                    Style::default().fg(theme.text_dim),
+                ),
+                Span::styled("\u{2500}\u{256F}", Style::default().fg(border_color)),
+            ]));
+
             return result;
         }
 
@@ -307,7 +285,7 @@ impl ChatMessage {
                 let mut spans: Vec<Span<'_>> =
                     vec![Span::styled(line_prefix, Style::default().fg(prefix_color))];
                 spans.extend(rendered_line.segments.iter().map(|seg| {
-                    let mut style = Style::default().fg(convert_color(seg.color));
+                    let mut style = Style::default().fg(seg.color);
                     if seg.bold {
                         style = style.add_modifier(Modifier::BOLD);
                     }
@@ -328,7 +306,7 @@ impl ChatMessage {
             let mut spans: Vec<Span<'_>> =
                 vec![Span::styled(line_prefix, Style::default().fg(prefix_col))];
             spans.extend(rendered_line.segments.iter().map(|seg| {
-                let mut style = Style::default().fg(convert_color(seg.color));
+                let mut style = Style::default().fg(seg.color);
                 if seg.bold {
                     style = style.add_modifier(Modifier::BOLD);
                 }
@@ -348,12 +326,14 @@ impl ChatMessage {
 
     /// Estimate height in terminal rows at given width.
     pub fn height(&self, _width: u16) -> u16 {
-        let badge_line = if matches!(self.kind, ChatMessageKind::Spinner) {
-            0
+        if self.tool_info.is_some() {
+            // Card: header + body lines + footer = lines + 2
+            (self.lines.len() as u16).saturating_add(2).max(2)
+        } else if matches!(self.kind, ChatMessageKind::Spinner) {
+            (self.lines.len() as u16).max(1)
         } else {
-            1
-        };
-        (self.lines.len() as u16).saturating_add(badge_line).max(1)
+            (self.lines.len() as u16).saturating_add(1).max(1)
+        }
     }
 }
 
@@ -400,6 +380,29 @@ impl<'a> InputBox<'a> {
 impl Widget for InputBox<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = default_theme();
+
+        // Thin separator line above input (Pi-style)
+        let content_area = if area.height >= 2 {
+            let sep_area = Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: 1,
+            };
+            let sep: String = "\u{2500}".repeat(area.width as usize);
+            Paragraph::new(sep)
+                .style(Style::default().fg(theme.input_border))
+                .render(sep_area, buf);
+            Rect {
+                x: area.x,
+                y: area.y + 1,
+                width: area.width,
+                height: area.height - 1,
+            }
+        } else {
+            area
+        };
+
         // Multi-line: split by newlines, first line gets "> " prefix, rest get "  "
         let input_lines: Vec<&str> = self.input.split('\n').collect();
         let mut lines: Vec<Line<'_>> = Vec::with_capacity(input_lines.len());
@@ -458,7 +461,7 @@ impl Widget for InputBox<'_> {
             }
         }
         let paragraph = Paragraph::new(lines).scroll((self.scroll_y, 0));
-        paragraph.render(area, buf);
+        paragraph.render(content_area, buf);
     }
 }
 
@@ -577,7 +580,7 @@ impl Widget for OverlayBlock<'_> {
         Clear.render(overlay_area, buf);
 
         let block = Block::default()
-            .borders(Borders::ALL)
+            .borders(Borders::TOP | Borders::BOTTOM)
             .border_style(Style::default().fg(theme.claude))
             .title(format!(" {} ", self.title))
             .title_style(

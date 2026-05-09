@@ -1502,10 +1502,7 @@ fn cmd_config(app: &mut TuiApp) {
         cwd.clone()
     };
 
-    let model = settings
-        .model
-        .as_deref()
-        .unwrap_or(app.hud.model_name());
+    let model = settings.model.as_deref().unwrap_or(app.hud.model_name());
     let provider = settings.model_provider.as_deref().unwrap_or("(auto)");
     let base_url = settings.custom_base_url.as_deref().unwrap_or("-");
     let format = settings.custom_api_format.as_deref().unwrap_or("-");
@@ -1641,7 +1638,10 @@ fn cmd_agents(app: &mut TuiApp) {
                     format!(" ({}m{}s)", secs / 60, secs % 60)
                 }
             });
-            lines.push(format!("  {icon} {} ({}) {:?}{elapsed}", w.name, w.id, w.state));
+            lines.push(format!(
+                "  {icon} {} ({}) {:?}{elapsed}",
+                w.name, w.id, w.state
+            ));
         }
         lines.join("\n")
     };
@@ -1659,7 +1659,10 @@ fn cmd_memory(app: &mut TuiApp) {
             let mut lines = vec![format!("Memories ({}):", entries.len())];
             for entry in entries.iter().take(20) {
                 let ty = entry.memory_type.as_str();
-                lines.push(format!("  [{ty}] {} \u{2014} {}", entry.name, entry.description));
+                lines.push(format!(
+                    "  [{ty}] {} \u{2014} {}",
+                    entry.name, entry.description
+                ));
             }
             if entries.len() > 20 {
                 lines.push(format!("  ... and {} more", entries.len() - 20));

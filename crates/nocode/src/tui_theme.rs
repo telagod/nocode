@@ -51,17 +51,25 @@ pub struct Theme {
     pub diff_added: Color,
     pub diff_removed: Color,
 
-    // Badges (bg, fg)
-    pub badge_user_bg: Color,
-    pub badge_user_fg: Color,
-    pub badge_assistant_bg: Color,
-    pub badge_assistant_fg: Color,
-    pub badge_tool_bg: Color,
-    pub badge_tool_fg: Color,
-    pub badge_error_bg: Color,
-    pub badge_error_fg: Color,
-    pub badge_system_bg: Color,
-    pub badge_system_fg: Color,
+    // Markdown
+    pub md_heading1: Color,
+    pub md_heading2: Color,
+    pub md_heading3: Color,
+    pub md_heading4: Color,
+    pub md_bold: Color,
+    pub md_italic: Color,
+    pub md_code_inline: Color,
+    pub md_code_fence: Color,
+    pub md_code_line_prefix: Color,
+    pub md_link: Color,
+    pub md_blockquote: Color,
+    pub md_rule: Color,
+    pub md_text: Color,
+    pub md_list_bullet: Color,
+    pub md_table_header: Color,
+    pub md_table_border: Color,
+    pub md_strikethrough: Color,
+
 }
 
 impl Theme {
@@ -84,10 +92,10 @@ impl Theme {
             text_inactive: Color::DarkGray,
             background: Color::Reset,
 
-            user_msg_bg: Color::Rgb(20, 30, 20),
+            user_msg_bg: Color::Reset,
             assistant_msg_bg: Color::Reset,
-            tool_msg_bg: Color::Rgb(25, 25, 15),
-            error_msg_bg: Color::Rgb(40, 15, 15),
+            tool_msg_bg: Color::Reset,
+            error_msg_bg: Color::Rgb(30, 12, 12),
 
             status_bar_bg: Color::Rgb(30, 30, 40),
             status_bar_fg: Color::White,
@@ -99,16 +107,24 @@ impl Theme {
             diff_added: Color::Rgb(80, 200, 80),
             diff_removed: Color::Rgb(200, 80, 80),
 
-            badge_user_bg: Color::Green,
-            badge_user_fg: Color::Black,
-            badge_assistant_bg: Color::Cyan,
-            badge_assistant_fg: Color::Black,
-            badge_tool_bg: Color::Yellow,
-            badge_tool_fg: Color::Black,
-            badge_error_bg: Color::Red,
-            badge_error_fg: Color::White,
-            badge_system_bg: Color::DarkGray,
-            badge_system_fg: Color::White,
+            md_heading1: Color::Cyan,
+            md_heading2: Color::White,
+            md_heading3: Color::Blue,
+            md_heading4: Color::DarkGray,
+            md_bold: Color::Yellow,
+            md_italic: Color::Magenta,
+            md_code_inline: Color::Green,
+            md_code_fence: Color::DarkGray,
+            md_code_line_prefix: Color::DarkGray,
+            md_link: Color::Blue,
+            md_blockquote: Color::DarkGray,
+            md_rule: Color::DarkGray,
+            md_text: Color::White,
+            md_list_bullet: Color::White,
+            md_table_header: Color::Cyan,
+            md_table_border: Color::DarkGray,
+            md_strikethrough: Color::DarkGray,
+
         }
     }
 
@@ -131,10 +147,10 @@ impl Theme {
             text_inactive: Color::Gray,
             background: Color::Reset,
 
-            user_msg_bg: Color::Rgb(230, 245, 230),
+            user_msg_bg: Color::Reset,
             assistant_msg_bg: Color::Reset,
-            tool_msg_bg: Color::Rgb(245, 242, 225),
-            error_msg_bg: Color::Rgb(255, 230, 230),
+            tool_msg_bg: Color::Reset,
+            error_msg_bg: Color::Rgb(255, 240, 240),
 
             status_bar_bg: Color::Rgb(230, 230, 240),
             status_bar_fg: Color::Black,
@@ -146,30 +162,26 @@ impl Theme {
             diff_added: Color::Rgb(0, 140, 0),
             diff_removed: Color::Rgb(180, 0, 0),
 
-            badge_user_bg: Color::Rgb(0, 120, 0),
-            badge_user_fg: Color::White,
-            badge_assistant_bg: Color::Rgb(0, 100, 140),
-            badge_assistant_fg: Color::White,
-            badge_tool_bg: Color::Rgb(140, 100, 0),
-            badge_tool_fg: Color::White,
-            badge_error_bg: Color::Rgb(180, 0, 0),
-            badge_error_fg: Color::White,
-            badge_system_bg: Color::Gray,
-            badge_system_fg: Color::White,
+            md_heading1: Color::Rgb(0, 120, 160),
+            md_heading2: Color::Black,
+            md_heading3: Color::Rgb(0, 80, 160),
+            md_heading4: Color::Gray,
+            md_bold: Color::Rgb(140, 100, 0),
+            md_italic: Color::Rgb(120, 0, 120),
+            md_code_inline: Color::Rgb(0, 120, 0),
+            md_code_fence: Color::Gray,
+            md_code_line_prefix: Color::Gray,
+            md_link: Color::Rgb(0, 80, 160),
+            md_blockquote: Color::Gray,
+            md_rule: Color::Gray,
+            md_text: Color::Black,
+            md_list_bullet: Color::Black,
+            md_table_header: Color::Rgb(0, 120, 160),
+            md_table_border: Color::Gray,
+            md_strikethrough: Color::Gray,
         }
     }
 
-    /// Returns `(background, foreground)` for a message-kind badge.
-    pub fn badge_style(&self, kind: &str) -> (Color, Color) {
-        match kind {
-            "user" => (self.badge_user_bg, self.badge_user_fg),
-            "assistant" => (self.badge_assistant_bg, self.badge_assistant_fg),
-            "tool" => (self.badge_tool_bg, self.badge_tool_fg),
-            "error" => (self.badge_error_bg, self.badge_error_fg),
-            "system" => (self.badge_system_bg, self.badge_system_fg),
-            _ => (self.border, self.text),
-        }
-    }
 }
 
 impl Default for Theme {
@@ -269,21 +281,6 @@ mod tests {
         let v = toggle_theme();
         assert_eq!(v, ThemeVariant::Dark);
         assert_eq!(default_theme().variant, ThemeVariant::Dark);
-    }
-
-    #[test]
-    fn badge_style_returns_correct_pairs() {
-        let theme = Theme::dark();
-        assert_eq!(theme.badge_style("user"), (Color::Green, Color::Black));
-        assert_eq!(theme.badge_style("assistant"), (Color::Cyan, Color::Black));
-        assert_eq!(theme.badge_style("tool"), (Color::Yellow, Color::Black));
-        assert_eq!(theme.badge_style("error"), (Color::Red, Color::White));
-        assert_eq!(theme.badge_style("system"), (Color::DarkGray, Color::White));
-        // Unknown kind falls back to border/text.
-        assert_eq!(
-            theme.badge_style("unknown"),
-            (Color::DarkGray, Color::White)
-        );
     }
 
     #[test]

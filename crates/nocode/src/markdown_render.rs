@@ -1,9 +1,11 @@
-use crossterm::style::Color;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use ratatui::style::Color;
 use std::sync::OnceLock;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SynStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
+
+use crate::tui_theme::default_theme;
 
 /// Cached syntect resources — loaded once, reused across all renders.
 fn syntax_set() -> &'static SyntaxSet {
@@ -85,6 +87,8 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
     let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
     let parser = Parser::new_ext(input, options);
 
+    let theme = default_theme();
+
     let mut lines: Vec<RenderedLine> = Vec::new();
     let mut current = RenderedLine::new();
 
@@ -113,10 +117,10 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
 
     let heading_color = |level: HeadingLevel| -> Color {
         match level {
-            HeadingLevel::H1 => Color::Cyan,
-            HeadingLevel::H2 => Color::White,
-            HeadingLevel::H3 => Color::Blue,
-            _ => Color::DarkGrey,
+            HeadingLevel::H1 => theme.md_heading1,
+            HeadingLevel::H2 => theme.md_heading2,
+            HeadingLevel::H3 => theme.md_heading3,
+            _ => theme.md_heading4,
         }
     };
 
@@ -156,7 +160,7 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
                 } else {
                     format!("```{}", code_block_lang)
                 };
-                fence_line.push(LineSegment::new(label, Color::DarkGrey));
+                fence_line.push(LineSegment::new(label, theme.md_code_fence));
                 lines.push(fence_line);
             }
             Event::End(TagEnd::CodeBlock) => {
@@ -167,7 +171,7 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
                 }
                 // closing fence
                 let mut fence_line = RenderedLine::new();
-                fence_line.push(LineSegment::new("```", Color::DarkGrey));
+                fence_line.push(LineSegment::new("```", theme.md_code_fence));
                 lines.push(fence_line);
                 code_block_lang.clear();
             }
@@ -199,7 +203,7 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
                     }
                     _ => format!("{indent}\u{2022} "),
                 };
-                current.push(LineSegment::new(bullet, Color::White));
+                current.push(LineSegment::new(bullet, theme.md_list_bullet));
             }
             Event::End(TagEnd::Item) => {
                 flush(&mut lines, &mut current);
@@ -227,11 +231,11 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
             }
             Event::End(TagEnd::Link) => {
                 if let Some(url) = link_url.take() {
-                    current.push(LineSegment::new(format!("({url})"), Color::Blue));
+                    current.push(LineSegment::new(format!("({url})"), theme.md_link));
                 }
             }
             Event::Code(text) => {
-                current.push(LineSegment::new(text.to_string(), Color::Green));
+                current.push(LineSegment::new(text.to_string(), theme.md_code_inline));
             }
             Event::Text(text) => {
                 let text_str = text.to_string();
@@ -246,14 +250,14 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
                     // Each line of code block gets prefix + syntect highlighting
                     let ss = syntax_set();
                     let ts = theme_set();
-                    let theme = &ts.themes["base16-ocean.dark"];
+                    let syn_theme = &ts.themes["base16-ocean.dark"];
                     let syntax = if code_block_lang.is_empty() {
                         ss.find_syntax_plain_text()
                     } else {
                         ss.find_syntax_by_token(&code_block_lang)
                             .unwrap_or_else(|| ss.find_syntax_plain_text())
                     };
-                    let mut highlighter = HighlightLines::new(syntax, theme);
+                    let mut highlighter = HighlightLines::new(syntax, syn_theme);
 
                     let trimmed = text_str.trim_end_matches('\n');
                     for (i, code_line) in trimmed.split('\n').enumerate() {
@@ -261,7 +265,7 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
                             flush(&mut lines, &mut current);
                         }
                         if i > 0 || current.is_empty() {
-                            current.push(LineSegment::new("\u{2502} ", Color::DarkGrey));
+                            current.push(LineSegment::new("\u{2502} ", theme.md_code_line_prefix));
                         }
                         if !code_line.is_empty() {
                             let line_with_nl = format!("{code_line}\n");
@@ -271,18 +275,18 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
                                         let trimmed_frag = fragment.trim_end_matches('\n');
                                         if !trimmed_frag.is_empty() {
                                             let SynStyle { foreground, .. } = style;
-                                            let color = Color::Rgb {
-                                                r: foreground.r,
-                                                g: foreground.g,
-                                                b: foreground.b,
-                                            };
+                                            let color = Color::Rgb(
+                                                foreground.r,
+                                                foreground.g,
+                                                foreground.b,
+                                            );
                                             current.push(LineSegment::new(trimmed_frag, color));
                                         }
                                     }
                                 }
                                 Err(_) => {
-                                    // Fallback to green on highlight failure
-                                    current.push(LineSegment::new(code_line, Color::Green));
+                                    // Fallback to code inline color on highlight failure
+                                    current.push(LineSegment::new(code_line, theme.md_code_inline));
                                 }
                             }
                         }
@@ -298,44 +302,42 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
                             flush(&mut lines, &mut current);
                         }
                         if i > 0 || current.is_empty() {
-                            current.push(LineSegment::new(&prefix, Color::DarkGrey));
+                            current.push(LineSegment::new(&prefix, theme.md_blockquote));
                         }
                         if !quote_line.is_empty() {
-                            current.push(LineSegment::new(quote_line, Color::DarkGrey));
+                            current.push(LineSegment::new(quote_line, theme.md_blockquote));
                         }
                     }
                 } else if bold_depth > 0 && italic_depth > 0 {
-                    let mut seg = LineSegment::new(text_str, Color::Yellow).bold().italic();
+                    let mut seg = LineSegment::new(text_str, theme.md_bold).bold().italic();
                     if strikethrough_depth > 0 {
                         seg = seg.strikethrough();
                     }
                     current.push(seg);
                 } else if bold_depth > 0 {
-                    let mut seg = LineSegment::new(text_str, Color::Yellow).bold();
+                    let mut seg = LineSegment::new(text_str, theme.md_bold).bold();
                     if strikethrough_depth > 0 {
                         seg = seg.strikethrough();
                     }
                     current.push(seg);
                 } else if italic_depth > 0 {
-                    let mut seg = LineSegment::new(text_str, Color::Magenta).italic();
+                    let mut seg = LineSegment::new(text_str, theme.md_italic).italic();
                     if strikethrough_depth > 0 {
                         seg = seg.strikethrough();
                     }
                     current.push(seg);
                 } else if strikethrough_depth > 0 {
-                    current.push(LineSegment::new(text_str, Color::DarkGrey).strikethrough());
+                    current
+                        .push(LineSegment::new(text_str, theme.md_strikethrough).strikethrough());
                 } else if link_url.is_some() {
-                    current.push(LineSegment::new(text_str, Color::Blue));
+                    current.push(LineSegment::new(text_str, theme.md_link));
                 } else {
-                    current.push(LineSegment::new(text_str, Color::White));
+                    current.push(LineSegment::new(text_str, theme.md_text));
                 }
             }
             Event::Rule => {
                 let mut rule_line = RenderedLine::new();
-                rule_line.push(LineSegment::new(
-                    "\u{2500}\u{2500}\u{2500}",
-                    Color::DarkGrey,
-                ));
+                rule_line.push(LineSegment::new("\u{2500}\u{2500}\u{2500}", theme.md_rule));
                 lines.push(rule_line);
             }
             Event::SoftBreak | Event::HardBreak => {
@@ -356,12 +358,12 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
                 // Render header row
                 let header_text = table_row.join(" \u{2502} ");
                 let mut header_line = RenderedLine::new();
-                header_line.push(LineSegment::new(&header_text, Color::Cyan).bold());
+                header_line.push(LineSegment::new(&header_text, theme.md_table_header).bold());
                 lines.push(header_line);
                 // Separator
                 let sep = "\u{2500}".repeat(header_text.len().max(3));
                 let mut sep_line = RenderedLine::new();
-                sep_line.push(LineSegment::new(&sep, Color::DarkGrey));
+                sep_line.push(LineSegment::new(&sep, theme.md_table_border));
                 lines.push(sep_line);
                 table_is_header = false;
                 table_row.clear();
@@ -373,7 +375,7 @@ pub fn render_markdown_to_lines(input: &str) -> Vec<RenderedLine> {
                 if !table_is_header {
                     let row_text = table_row.join(" \u{2502} ");
                     let mut row_line = RenderedLine::new();
-                    row_line.push(LineSegment::new(&row_text, Color::White));
+                    row_line.push(LineSegment::new(&row_text, theme.md_text));
                     lines.push(row_line);
                 }
                 table_row.clear();
@@ -429,7 +431,7 @@ mod tests {
         assert!(non_empty[1].segments[0].bold);
         assert_eq!(non_empty[2].segments[0].color, Color::Blue);
         assert!(non_empty[2].segments[0].bold);
-        assert_eq!(non_empty[3].segments[0].color, Color::DarkGrey);
+        assert_eq!(non_empty[3].segments[0].color, Color::DarkGray);
         assert!(non_empty[3].segments[0].bold);
     }
 
@@ -470,7 +472,7 @@ mod tests {
             .find(|s| s.text == "hello")
             .unwrap();
         // With syntect, plain text gets RGB colors from the theme, not Color::Green
-        matches!(code_seg.color, Color::Rgb { .. } | Color::Green);
+        matches!(code_seg.color, Color::Rgb(..) | Color::Green);
     }
 
     #[test]
@@ -490,7 +492,7 @@ mod tests {
         let has_rgb = code_lines.iter().any(|line| {
             line.segments
                 .iter()
-                .any(|s| matches!(s.color, Color::Rgb { .. }))
+                .any(|s| matches!(s.color, Color::Rgb(..)))
         });
         assert!(
             has_rgb,

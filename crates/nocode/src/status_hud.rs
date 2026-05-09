@@ -158,7 +158,8 @@ impl StatusHud {
         self.render_compact_line()
     }
 
-    /// Shared compact renderer — Claude Code style: "model · mode · $0.05 · 12% ctx · 1.2K tok"
+    /// Shared compact renderer — essentials only: "model · $0.05 · ▰▰▱▱▱ 12%"
+    /// Elapsed time is appended only when a turn is actively running.
     fn render_compact_line(&self) -> String {
         let dot = " \u{00B7} ";
         let model = if self.model_name.is_empty() {
@@ -166,29 +167,10 @@ impl StatusHud {
         } else {
             &self.model_name
         };
-        let mode = shorten_permission_mode(&self.permission_mode);
         let cost = self.format_cost();
         let ctx = format_context_bar(self.context_window_pct);
-        let total_tok = self.cumulative_input_tokens + self.cumulative_output_tokens;
-        let tok = format!("{} tok", format_tokens(total_tok));
 
-        let mut parts: Vec<&str> = vec![model, mode, &cost, &ctx];
-
-        // Short CWD: show last 2 path components
-        let short_cwd;
-        if !self.cwd.is_empty() {
-            let components: Vec<&str> = self.cwd.split('/').filter(|s| !s.is_empty()).collect();
-            short_cwd = if components.len() <= 2 {
-                self.cwd.clone()
-            } else {
-                format!("…/{}", components[components.len() - 2..].join("/"))
-            };
-            parts.push(&short_cwd);
-        }
-
-        if total_tok > 0 {
-            parts.push(&tok);
-        }
+        let mut parts: Vec<&str> = vec![model, &cost, &ctx];
 
         let elapsed;
         if let Some(ms) = self.elapsed_ms() {
@@ -343,9 +325,11 @@ mod tests {
         let line = hud.render_line();
 
         assert!(line.contains("claude-opus"));
-        assert!(line.contains("1.4K tok"));
         assert!(line.contains("$"));
         assert!(line.contains("0%"));
+        // Token count and elapsed are NOT shown when no turn is active
+        assert!(!line.contains("tok"));
+        assert!(!line.contains("s\u{00B7}")); // no elapsed separator
     }
 
     #[test]
@@ -356,9 +340,10 @@ mod tests {
         let line = hud.render_line_streaming();
 
         assert!(line.contains("claude-opus"));
-        assert!(line.contains("60 tok"));
         assert!(line.contains("$"));
         assert!(line.contains("s")); // elapsed contains seconds
+        // Token count no longer shown in compact bar
+        assert!(!line.contains("tok"));
     }
 
     #[test]
@@ -406,11 +391,14 @@ mod tests {
     }
 
     #[test]
-    fn render_line_includes_permission_mode() {
+    fn render_line_excludes_permission_mode() {
         let mut hud = StatusHud::new("sonnet", "sess");
         hud.set_permission_mode("WorkspaceWrite");
         let line = hud.render_line();
-        assert!(line.contains("workspace"));
+        // Permission mode is no longer shown in the compact status bar
+        assert!(!line.contains("workspace"));
+        // But it still renders without panic
+        assert!(line.contains("sonnet"));
     }
 
     #[test]

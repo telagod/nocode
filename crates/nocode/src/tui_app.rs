@@ -323,7 +323,7 @@ impl TuiApp {
                 let prefix = if i == 0 { "∴ " } else { "  " };
                 rl.push(crate::markdown_render::LineSegment::new(
                     format!("{prefix}{l}"),
-                    crossterm::style::Color::DarkGrey,
+                    ratatui::style::Color::DarkGray,
                 ));
                 rl
             })
@@ -394,7 +394,9 @@ impl TuiApp {
     }
 
     fn total_content_height(&self) -> u16 {
-        self.height_cache.iter().copied().sum()
+        let msg_h: u16 = self.height_cache.iter().copied().sum();
+        let spacers = self.height_cache.len().saturating_sub(1) as u16;
+        msg_h + spacers
     }
 
     // -- drawing --
@@ -410,10 +412,21 @@ impl TuiApp {
 
         let is_busy = self.thinking_spinner.is_some();
 
-        // Unified layout: content area fills everything, status bar floats at bottom
+        // Unified layout: content area fills everything, bottom area for status or completion
+        let has_completion = self.completion_selected.is_some() && !self.overlay.is_open();
+        let completion_count = if has_completion {
+            self.completion_suggestions().len().min(10) as u16
+        } else {
+            0
+        };
+        let bottom_h = if completion_count > 0 {
+            completion_count + 1 // completion rows + status bar
+        } else {
+            1 // just status bar
+        };
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .constraints([Constraint::Min(1), Constraint::Length(bottom_h)])
             .split(frame.area());
 
         let content_area = chunks[0];
@@ -424,7 +437,7 @@ impl TuiApp {
             // Input at bottom, banner fills the space above
             let input_lines =
                 (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).min(10);
-            let input_h = input_lines.min(content_area.height.saturating_sub(2));
+            let input_h = (input_lines + 1).min(content_area.height.saturating_sub(2)); // +1 for separator
 
             // If there are system messages (warnings, update notices), show them between banner and input
             let system_lines: Vec<ratatui::text::Line<'_>> = self
@@ -533,14 +546,25 @@ impl TuiApp {
             }
         }
         let status = StatusBar::new(&status_base);
-        frame.render_widget(status, status_area);
 
-        // 3. Command completion popup
-        if self.completion_selected.is_some()
-            && !self.overlay.is_open()
-            && let Some(input_rect) = self.last_input_rect
-        {
-            self.draw_completion_popup(frame, input_rect);
+        // 3. Bottom area: completion dropdown (if active) + status bar
+        if completion_count > 0 {
+            // Split bottom area: completion rows on top, status bar at very bottom
+            let bottom_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(completion_count),
+                    Constraint::Length(1),
+                ])
+                .split(status_area);
+            let completion_area = bottom_chunks[0];
+            let real_status_area = bottom_chunks[1];
+            frame.render_widget(status, real_status_area);
+            if let Some(input_rect) = self.last_input_rect {
+                self.draw_completion_inline(frame, completion_area, input_rect);
+            }
+        } else {
+            frame.render_widget(status, status_area);
         }
 
         // 4. Overlay
@@ -574,6 +598,9 @@ impl TuiApp {
             0
         };
         let char_col = line_text.chars().count();
+        // Account for separator line occupying the first row
+        let sep_offset: u16 = if input_rect.height >= 2 { 1 } else { 0 };
+        let content_height = input_rect.height.saturating_sub(sep_offset);
         let usable_width = input_rect.width.saturating_sub(2 + mode_prefix_width) as usize;
         if usable_width > 0 {
             if char_col < self.input_view_offset {
@@ -585,16 +612,15 @@ impl TuiApp {
         let visible_col = char_col.saturating_sub(self.input_view_offset) as u16;
         let cursor_col = visible_col + 2 + mode_prefix_width;
         let cursor_x = input_rect.x + cursor_col;
-        let input_lines = input_rect.height;
-        if input_lines > 0 {
+        if content_height > 0 {
             if cursor_line < self.input_scroll_y {
                 self.input_scroll_y = cursor_line;
-            } else if cursor_line >= self.input_scroll_y + input_lines {
-                self.input_scroll_y = cursor_line.saturating_sub(input_lines) + 1;
+            } else if cursor_line >= self.input_scroll_y + content_height {
+                self.input_scroll_y = cursor_line.saturating_sub(content_height) + 1;
             }
         }
         let visible_cursor_line = cursor_line.saturating_sub(self.input_scroll_y);
-        let cursor_y = input_rect.y + visible_cursor_line;
+        let cursor_y = input_rect.y + sep_offset + visible_cursor_line;
         if cursor_y < input_rect.y + input_rect.height {
             frame.set_cursor_position((cursor_x, cursor_y));
         }
@@ -612,7 +638,7 @@ impl TuiApp {
         self.ensure_height_cache(inner.width);
 
         let input_lines =
-            (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).clamp(1, 10);
+            (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).clamp(1, 10) + 1; // +1 for separator
 
         let chat_h = self.total_content_height();
         let separator_h: u16 = if chat_h > 0 { 1 } else { 0 };
@@ -634,7 +660,12 @@ impl TuiApp {
 
         for (i, msg) in self.chat_messages.iter().enumerate() {
             let h = self.height_cache.get(i).copied().unwrap_or(1);
-            let msg_end = accumulated + h;
+            let spacer: u16 = if i + 1 < self.chat_messages.len() {
+                1
+            } else {
+                0
+            };
+            let msg_end = accumulated + h + spacer;
 
             if msg_end <= scroll_from_top {
                 accumulated = msg_end;
@@ -711,6 +742,11 @@ impl TuiApp {
                 }
             }
 
+            // Breathing spacer between messages (not after last)
+            if spacer > 0 && y_offset < visible && first_visible_skip == 0 {
+                y_offset += 1;
+            }
+
             accumulated = msg_end;
             if y_offset >= visible {
                 break;
@@ -768,72 +804,32 @@ impl TuiApp {
         );
     }
 
-    /// Draw command completion popup above the input box.
-    fn draw_completion_popup(&self, frame: &mut Frame, input_area: Rect) {
+    /// Draw completion suggestions inline in a dedicated area (Pi-style dropdown below input).
+    fn draw_completion_inline(&self, frame: &mut Frame, area: Rect, _input_area: Rect) {
         let suggestions = self.completion_suggestions();
-        if suggestions.is_empty() {
+        if suggestions.is_empty() || area.height == 0 {
             return;
         }
         let selected = self.completion_selected.unwrap_or(0);
-        let count = suggestions.len().min(10) as u16;
-        let popup_height = count + 2; // +2 for border
-
-        // Position: above input box if space, otherwise below
-        let (popup_y, actual_height) = if input_area.y >= popup_height {
-            (input_area.y - popup_height, popup_height)
-        } else if input_area.y > 2 {
-            // Partial fit above
-            (0, input_area.y)
-        } else {
-            // No space above — render below input
-            let below_y = input_area.y + input_area.height;
-            let available = frame.area().height.saturating_sub(below_y);
-            if available < 3 {
-                return; // No space at all
-            }
-            (below_y, popup_height.min(available))
-        };
-
-        let popup_width = input_area.width.min(60);
-        let popup_area = Rect {
-            x: input_area.x,
-            y: popup_y,
-            width: popup_width,
-            height: actual_height,
-        };
-
-        // Clear background
-        frame.render_widget(ratatui::widgets::Clear, popup_area);
-
         let theme = crate::tui_theme::default_theme();
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(ratatui::style::Style::default().fg(theme.border))
-            .title(" Commands ")
-            .title_style(ratatui::style::Style::default().fg(theme.claude));
+        let count = suggestions.len().min(area.height as usize);
 
-        let inner = block.inner(popup_area);
-        frame.render_widget(block, popup_area);
-
-        // Render each suggestion line
-        for (i, (label, summary)) in suggestions.iter().take(count as usize).enumerate() {
-            let is_selected = i == selected;
-            let y = inner.y + i as u16;
-            if y >= inner.y + inner.height {
+        for (i, (label, summary)) in suggestions.iter().take(count).enumerate() {
+            let y = area.y + i as u16;
+            if y >= area.y + area.height {
                 break;
             }
-
+            let is_selected = i == selected;
             let line_area = Rect {
-                x: inner.x,
+                x: area.x,
                 y,
-                width: inner.width,
+                width: area.width,
                 height: 1,
             };
 
-            // Truncate label safely (UTF-8 aware)
-            let max_label = 20.min(inner.width as usize / 2);
+            let max_label = 20.min(area.width as usize / 2);
             let display_label = safe_truncate(label, max_label);
-            let remaining = inner.width as usize - display_label.len() - 1;
+            let remaining = area.width as usize - display_label.len() - 1;
             let display_summary = safe_truncate_ellipsis(summary, remaining);
 
             let style = if is_selected {
@@ -841,17 +837,16 @@ impl TuiApp {
                     .fg(theme.background)
                     .bg(theme.claude)
             } else {
-                ratatui::style::Style::default().fg(theme.text)
+                ratatui::style::Style::default().fg(theme.text_dim)
             };
 
-            // Fill background for selected line
             if is_selected {
                 let bg_block =
                     Block::default().style(ratatui::style::Style::default().bg(theme.claude));
                 frame.render_widget(bg_block, line_area);
             }
 
-            let text = format!("{display_label} {display_summary}");
+            let text = format!("  {display_label} {display_summary}");
             let para = ratatui::widgets::Paragraph::new(text).style(style);
             frame.render_widget(para, line_area);
         }
@@ -1865,7 +1860,7 @@ pub(crate) fn run_app_loop(
                                 let mut rl = crate::markdown_render::RenderedLine::new();
                                 rl.push(crate::markdown_render::LineSegment::new(
                                     format!("\u{276F} {label} {preview}"),
-                                    crossterm::style::Color::DarkGrey,
+                                    ratatui::style::Color::DarkGray,
                                 ));
                                 rl
                             }];

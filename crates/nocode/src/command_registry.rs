@@ -67,6 +67,8 @@ pub struct CommandEntry {
     pub summary: &'static str,
     pub argument_hint: Option<&'static str>,
     pub action: CommandAction,
+    /// Hidden commands resolve when typed directly but don't appear in autocomplete.
+    pub hidden: bool,
 }
 
 /// Registry of all available slash commands.
@@ -77,35 +79,19 @@ pub struct CommandRegistry {
 
 impl CommandRegistry {
     /// Create a registry with all built-in commands.
+    ///
+    /// Commands are ordered by usage priority — the first 10 appear when
+    /// the user types `/` with no further input.
     pub fn with_defaults() -> Self {
         let commands = vec![
-            CommandEntry {
-                name: "quit",
-                aliases: &["exit", "q"],
-                summary: "Exit nocode",
-                argument_hint: None,
-                action: CommandAction::Quit,
-            },
-            CommandEntry {
-                name: "clear",
-                aliases: &[],
-                summary: "Clear conversation history",
-                argument_hint: None,
-                action: CommandAction::Clear,
-            },
+            // ── Tier 1: Top 10 (visible on bare `/`) ──
             CommandEntry {
                 name: "help",
                 aliases: &["?", "h"],
                 summary: "Show available commands",
                 argument_hint: None,
                 action: CommandAction::Help,
-            },
-            CommandEntry {
-                name: "status",
-                aliases: &["s"],
-                summary: "Show session status and diagnostics",
-                argument_hint: None,
-                action: CommandAction::Status,
+                hidden: false,
             },
             CommandEntry {
                 name: "model",
@@ -113,34 +99,7 @@ impl CommandRegistry {
                 summary: "Show or switch the active model",
                 argument_hint: Some("<model_name>"),
                 action: CommandAction::Model,
-            },
-            CommandEntry {
-                name: "sessions",
-                aliases: &[],
-                summary: "List saved sessions",
-                argument_hint: None,
-                action: CommandAction::Sessions,
-            },
-            CommandEntry {
-                name: "resume",
-                aliases: &[],
-                summary: "Resume a saved session",
-                argument_hint: Some("<session_id>"),
-                action: CommandAction::Resume,
-            },
-            CommandEntry {
-                name: "mcp",
-                aliases: &[],
-                summary: "Show connected MCP servers and tools",
-                argument_hint: None,
-                action: CommandAction::Mcp,
-            },
-            CommandEntry {
-                name: "agents",
-                aliases: &["workers"],
-                summary: "Show background agent workers",
-                argument_hint: None,
-                action: CommandAction::Agents,
+                hidden: false,
             },
             CommandEntry {
                 name: "compact",
@@ -148,244 +107,15 @@ impl CommandRegistry {
                 summary: "Compact conversation context",
                 argument_hint: None,
                 action: CommandAction::Compact,
+                hidden: false,
             },
             CommandEntry {
-                name: "config",
-                aliases: &["settings", "login"],
-                summary: "Show current configuration",
+                name: "clear",
+                aliases: &[],
+                summary: "Clear conversation history",
                 argument_hint: None,
-                action: CommandAction::Config,
-            },
-            CommandEntry {
-                name: "memory",
-                aliases: &["mem"],
-                summary: "List or search memories",
-                argument_hint: Some("[search_query]"),
-                action: CommandAction::Memory,
-            },
-            CommandEntry {
-                name: "theme",
-                aliases: &[],
-                summary: "Toggle dark/light theme",
-                argument_hint: None,
-                action: CommandAction::Theme,
-            },
-            CommandEntry {
-                name: "vim",
-                aliases: &[],
-                summary: "Toggle vim input mode",
-                argument_hint: None,
-                action: CommandAction::Vim,
-            },
-            CommandEntry {
-                name: "export",
-                aliases: &[],
-                summary: "Export conversation to file",
-                argument_hint: Some("[path]"),
-                action: CommandAction::Export,
-            },
-            CommandEntry {
-                name: "history",
-                aliases: &[],
-                summary: "Show command history",
-                argument_hint: None,
-                action: CommandAction::History,
-            },
-            CommandEntry {
-                name: "version",
-                aliases: &["v"],
-                summary: "Show nocode version",
-                argument_hint: None,
-                action: CommandAction::Version,
-            },
-            CommandEntry {
-                name: "bug",
-                aliases: &[],
-                summary: "Report a bug",
-                argument_hint: None,
-                action: CommandAction::Bug,
-            },
-            CommandEntry {
-                name: "doctor",
-                aliases: &[],
-                summary: "Run diagnostics and health checks",
-                argument_hint: None,
-                action: CommandAction::Doctor,
-            },
-            CommandEntry {
-                name: "permissions",
-                aliases: &["perms"],
-                summary: "Show or change permission mode",
-                argument_hint: Some("[mode]"),
-                action: CommandAction::Permissions,
-            },
-            CommandEntry {
-                name: "cost",
-                aliases: &[],
-                summary: "Show token usage and estimated cost",
-                argument_hint: None,
-                action: CommandAction::Cost,
-            },
-            CommandEntry {
-                name: "init",
-                aliases: &[],
-                summary: "Initialize CLAUDE.md in current project",
-                argument_hint: None,
-                action: CommandAction::Init,
-            },
-            CommandEntry {
-                name: "plan",
-                aliases: &["ultraplan"],
-                summary: "Enter plan mode for structured task planning",
-                argument_hint: Some("[description]"),
-                action: CommandAction::Plan,
-            },
-            CommandEntry {
-                name: "review",
-                aliases: &["ultrareview"],
-                summary: "Review code changes (staged or working tree)",
-                argument_hint: Some("[path|--staged]"),
-                action: CommandAction::Review,
-            },
-            CommandEntry {
-                name: "skills",
-                aliases: &[],
-                summary: "List available skills and slash commands",
-                argument_hint: None,
-                action: CommandAction::Skills,
-            },
-            CommandEntry {
-                name: "env",
-                aliases: &[],
-                summary: "Show relevant environment variables",
-                argument_hint: None,
-                action: CommandAction::Env,
-            },
-            CommandEntry {
-                name: "keybindings",
-                aliases: &["keys"],
-                summary: "Show keyboard shortcuts",
-                argument_hint: None,
-                action: CommandAction::Keybindings,
-            },
-            CommandEntry {
-                name: "bughunter",
-                aliases: &[],
-                summary: "Scan project for common bugs and issues",
-                argument_hint: Some("[path]"),
-                action: CommandAction::BugHunter,
-            },
-            CommandEntry {
-                name: "security-review",
-                aliases: &["secreview"],
-                summary: "Security review of project code",
-                argument_hint: Some("[path]"),
-                action: CommandAction::SecurityReview,
-            },
-            CommandEntry {
-                name: "mcp-add",
-                aliases: &[],
-                summary: "Add and connect an MCP server",
-                argument_hint: Some("<name> <command> [args...]"),
-                action: CommandAction::McpAdd,
-            },
-            CommandEntry {
-                name: "mcp-remove",
-                aliases: &["mcp-rm"],
-                summary: "Disconnect and remove an MCP server",
-                argument_hint: Some("<name>"),
-                action: CommandAction::McpRemove,
-            },
-            CommandEntry {
-                name: "mcp-restart",
-                aliases: &[],
-                summary: "Restart an MCP server connection",
-                argument_hint: Some("<name>"),
-                action: CommandAction::McpRestart,
-            },
-            CommandEntry {
-                name: "insights",
-                aliases: &[],
-                summary: "Show session insights and statistics",
-                argument_hint: None,
-                action: CommandAction::Insights,
-            },
-            CommandEntry {
-                name: "agent-create",
-                aliases: &["agent-new"],
-                summary: "Create a new background agent worker",
-                argument_hint: Some("<name> <prompt>"),
-                action: CommandAction::AgentCreate,
-            },
-            CommandEntry {
-                name: "agent-stop",
-                aliases: &["agent-cancel", "agent-kill"],
-                summary: "Cancel a running background agent",
-                argument_hint: Some("<id|name>"),
-                action: CommandAction::AgentStop,
-            },
-            CommandEntry {
-                name: "feature-flags",
-                aliases: &["ff", "flags"],
-                summary: "List or toggle feature flags",
-                argument_hint: Some("[flag_name] [on|off]"),
-                action: CommandAction::FeatureFlags,
-            },
-            CommandEntry {
-                name: "permissions-add",
-                aliases: &["perm-add"],
-                summary: "Add a permission rule for a tool",
-                argument_hint: Some("<tool> <allow|deny> [pattern]"),
-                action: CommandAction::PermissionsAdd,
-            },
-            CommandEntry {
-                name: "permissions-remove",
-                aliases: &["perm-rm"],
-                summary: "Remove a permission rule",
-                argument_hint: Some("<tool> [pattern]"),
-                action: CommandAction::PermissionsRemove,
-            },
-            CommandEntry {
-                name: "plugin-install",
-                aliases: &["plugin-add"],
-                summary: "Install a plugin from a local path",
-                argument_hint: Some("<path>"),
-                action: CommandAction::PluginInstall,
-            },
-            CommandEntry {
-                name: "plugin-remove",
-                aliases: &["plugin-rm"],
-                summary: "Uninstall a plugin by name",
-                argument_hint: Some("<name>"),
-                action: CommandAction::PluginRemove,
-            },
-            CommandEntry {
-                name: "plugin-list",
-                aliases: &["plugins"],
-                summary: "List installed plugins with details",
-                argument_hint: None,
-                action: CommandAction::PluginList,
-            },
-            CommandEntry {
-                name: "telemetry",
-                aliases: &["telem"],
-                summary: "Show or toggle telemetry opt-in/out",
-                argument_hint: Some("[on|off|status]"),
-                action: CommandAction::Telemetry,
-            },
-            CommandEntry {
-                name: "ide",
-                aliases: &[],
-                summary: "Show IDE server status or start/stop",
-                argument_hint: Some("[start|stop|status]"),
-                action: CommandAction::Ide,
-            },
-            CommandEntry {
-                name: "voice",
-                aliases: &[],
-                summary: "Voice input mode (requires system microphone)",
-                argument_hint: Some("[start|stop|status]"),
-                action: CommandAction::Voice,
+                action: CommandAction::Clear,
+                hidden: false,
             },
             CommandEntry {
                 name: "copy",
@@ -393,6 +123,39 @@ impl CommandRegistry {
                 summary: "Copy last assistant response to clipboard",
                 argument_hint: None,
                 action: CommandAction::Copy,
+                hidden: false,
+            },
+            CommandEntry {
+                name: "config",
+                aliases: &["settings", "login"],
+                summary: "Show current configuration",
+                argument_hint: None,
+                action: CommandAction::Config,
+                hidden: false,
+            },
+            CommandEntry {
+                name: "status",
+                aliases: &["s"],
+                summary: "Show session status and diagnostics",
+                argument_hint: None,
+                action: CommandAction::Status,
+                hidden: false,
+            },
+            CommandEntry {
+                name: "cost",
+                aliases: &[],
+                summary: "Show token usage and estimated cost",
+                argument_hint: None,
+                action: CommandAction::Cost,
+                hidden: false,
+            },
+            CommandEntry {
+                name: "export",
+                aliases: &[],
+                summary: "Export conversation to file",
+                argument_hint: Some("[path]"),
+                action: CommandAction::Export,
+                hidden: false,
             },
             CommandEntry {
                 name: "undo",
@@ -400,13 +163,32 @@ impl CommandRegistry {
                 summary: "Undo the last file modification",
                 argument_hint: None,
                 action: CommandAction::Undo,
+                hidden: false,
+            },
+            // ── Tier 2: Session ──
+            CommandEntry {
+                name: "resume",
+                aliases: &[],
+                summary: "Resume a saved session",
+                argument_hint: Some("<session_id>"),
+                action: CommandAction::Resume,
+                hidden: false,
             },
             CommandEntry {
-                name: "redo",
+                name: "sessions",
                 aliases: &[],
-                summary: "Redo the last undone file modification",
+                summary: "List saved sessions",
                 argument_hint: None,
-                action: CommandAction::Redo,
+                action: CommandAction::Sessions,
+                hidden: false,
+            },
+            CommandEntry {
+                name: "history",
+                aliases: &[],
+                summary: "Show command history",
+                argument_hint: None,
+                action: CommandAction::History,
+                hidden: true,
             },
             CommandEntry {
                 name: "rewind",
@@ -414,6 +196,278 @@ impl CommandRegistry {
                 summary: "Rewind conversation to a previous state",
                 argument_hint: Some("[message_index]"),
                 action: CommandAction::Rewind,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "redo",
+                aliases: &[],
+                summary: "Redo the last undone file modification",
+                argument_hint: None,
+                action: CommandAction::Redo,
+                hidden: false,
+            },
+            CommandEntry {
+                name: "memory",
+                aliases: &["mem"],
+                summary: "List or search memories",
+                argument_hint: Some("[search_query]"),
+                action: CommandAction::Memory,
+                hidden: true,
+            },
+            // ── Tier 3: Tools & Agents ──
+            CommandEntry {
+                name: "mcp",
+                aliases: &[],
+                summary: "Show connected MCP servers and tools",
+                argument_hint: None,
+                action: CommandAction::Mcp,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "mcp-add",
+                aliases: &[],
+                summary: "Add and connect an MCP server",
+                argument_hint: Some("<name> <command> [args...]"),
+                action: CommandAction::McpAdd,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "mcp-remove",
+                aliases: &["mcp-rm"],
+                summary: "Disconnect and remove an MCP server",
+                argument_hint: Some("<name>"),
+                action: CommandAction::McpRemove,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "mcp-restart",
+                aliases: &[],
+                summary: "Restart an MCP server connection",
+                argument_hint: Some("<name>"),
+                action: CommandAction::McpRestart,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "agents",
+                aliases: &["workers"],
+                summary: "Show background agent workers",
+                argument_hint: None,
+                action: CommandAction::Agents,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "agent-create",
+                aliases: &["agent-new"],
+                summary: "Create a new background agent worker",
+                argument_hint: Some("<name> <prompt>"),
+                action: CommandAction::AgentCreate,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "agent-stop",
+                aliases: &["agent-cancel", "agent-kill"],
+                summary: "Cancel a running background agent",
+                argument_hint: Some("<id|name>"),
+                action: CommandAction::AgentStop,
+                hidden: true,
+            },
+            // ── Tier 4: Plugins ──
+            CommandEntry {
+                name: "plugin-list",
+                aliases: &["plugins"],
+                summary: "List installed plugins with details",
+                argument_hint: None,
+                action: CommandAction::PluginList,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "plugin-install",
+                aliases: &["plugin-add"],
+                summary: "Install a plugin from a local path",
+                argument_hint: Some("<path>"),
+                action: CommandAction::PluginInstall,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "plugin-remove",
+                aliases: &["plugin-rm"],
+                summary: "Uninstall a plugin by name",
+                argument_hint: Some("<name>"),
+                action: CommandAction::PluginRemove,
+                hidden: true,
+            },
+            // ── Tier 5: Permissions ──
+            CommandEntry {
+                name: "permissions",
+                aliases: &["perms"],
+                summary: "Show or change permission mode",
+                argument_hint: Some("[mode]"),
+                action: CommandAction::Permissions,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "permissions-add",
+                aliases: &["perm-add"],
+                summary: "Add a permission rule for a tool",
+                argument_hint: Some("<tool> <allow|deny> [pattern]"),
+                action: CommandAction::PermissionsAdd,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "permissions-remove",
+                aliases: &["perm-rm"],
+                summary: "Remove a permission rule",
+                argument_hint: Some("<tool> [pattern]"),
+                action: CommandAction::PermissionsRemove,
+                hidden: true,
+            },
+            // ── Tier 6: Code tasks ──
+            CommandEntry {
+                name: "plan",
+                aliases: &["ultraplan"],
+                summary: "Enter plan mode for structured task planning",
+                argument_hint: Some("[description]"),
+                action: CommandAction::Plan,
+                hidden: false,
+            },
+            CommandEntry {
+                name: "review",
+                aliases: &["ultrareview"],
+                summary: "Review code changes (staged or working tree)",
+                argument_hint: Some("[path|--staged]"),
+                action: CommandAction::Review,
+                hidden: false,
+            },
+            CommandEntry {
+                name: "init",
+                aliases: &[],
+                summary: "Initialize CLAUDE.md in current project",
+                argument_hint: None,
+                action: CommandAction::Init,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "skills",
+                aliases: &[],
+                summary: "List available skills and slash commands",
+                argument_hint: None,
+                action: CommandAction::Skills,
+                hidden: true,
+            },
+            // ── Tier 7: Debug & diagnostics ──
+            CommandEntry {
+                name: "doctor",
+                aliases: &[],
+                summary: "Run diagnostics and health checks",
+                argument_hint: None,
+                action: CommandAction::Doctor,
+                hidden: false,
+            },
+            CommandEntry {
+                name: "bug",
+                aliases: &[],
+                summary: "Report a bug",
+                argument_hint: None,
+                action: CommandAction::Bug,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "bughunter",
+                aliases: &[],
+                summary: "Scan project for common bugs and issues",
+                argument_hint: Some("[path]"),
+                action: CommandAction::BugHunter,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "security-review",
+                aliases: &["secreview"],
+                summary: "Security review of project code",
+                argument_hint: Some("[path]"),
+                action: CommandAction::SecurityReview,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "insights",
+                aliases: &[],
+                summary: "Show session insights and statistics",
+                argument_hint: None,
+                action: CommandAction::Insights,
+                hidden: true,
+            },
+            // ── Tier 8: Settings & preferences ──
+            CommandEntry {
+                name: "theme",
+                aliases: &[],
+                summary: "Toggle dark/light theme",
+                argument_hint: None,
+                action: CommandAction::Theme,
+                hidden: false,
+            },
+            CommandEntry {
+                name: "vim",
+                aliases: &[],
+                summary: "Toggle vim input mode",
+                argument_hint: None,
+                action: CommandAction::Vim,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "keybindings",
+                aliases: &["keys"],
+                summary: "Show keyboard shortcuts",
+                argument_hint: None,
+                action: CommandAction::Keybindings,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "env",
+                aliases: &[],
+                summary: "Show relevant environment variables",
+                argument_hint: None,
+                action: CommandAction::Env,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "feature-flags",
+                aliases: &["ff", "flags"],
+                summary: "List or toggle feature flags",
+                argument_hint: Some("[flag_name] [on|off]"),
+                action: CommandAction::FeatureFlags,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "telemetry",
+                aliases: &["telem"],
+                summary: "Show or toggle telemetry opt-in/out",
+                argument_hint: Some("[on|off|status]"),
+                action: CommandAction::Telemetry,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "ide",
+                aliases: &[],
+                summary: "Show IDE server status or start/stop",
+                argument_hint: Some("[start|stop|status]"),
+                action: CommandAction::Ide,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "voice",
+                aliases: &[],
+                summary: "Voice input mode (requires system microphone)",
+                argument_hint: Some("[start|stop|status]"),
+                action: CommandAction::Voice,
+                hidden: true,
+            },
+            // ── Tier 9: Lifecycle ──
+            CommandEntry {
+                name: "version",
+                aliases: &["v"],
+                summary: "Show nocode version",
+                argument_hint: None,
+                action: CommandAction::Version,
+                hidden: true,
             },
             CommandEntry {
                 name: "update",
@@ -421,6 +475,15 @@ impl CommandRegistry {
                 summary: "Rebuild from source and update binary",
                 argument_hint: None,
                 action: CommandAction::Update,
+                hidden: true,
+            },
+            CommandEntry {
+                name: "quit",
+                aliases: &["exit", "q"],
+                summary: "Exit nocode",
+                argument_hint: None,
+                action: CommandAction::Quit,
+                hidden: false,
             },
         ];
 
@@ -457,6 +520,7 @@ impl CommandRegistry {
     }
 
     /// Return command recommendations for a slash input prefix.
+    /// Hidden commands only appear when the user types an exact prefix match.
     pub fn recommend(&self, input: &str, max_results: usize) -> Vec<&CommandEntry> {
         let trimmed = input.trim();
         if !trimmed.starts_with('/') {
@@ -474,10 +538,19 @@ impl CommandRegistry {
         let mut summary_matches = Vec::new();
 
         for cmd in &self.commands {
+            // Hidden commands only show when user typed enough to match name exactly
+            if cmd.hidden && !cmd.name.starts_with(&prefix) {
+                continue;
+            }
+            // Skip hidden commands on empty prefix (bare `/`)
+            if cmd.hidden && prefix.is_empty() {
+                continue;
+            }
             let name_match = cmd.name.starts_with(&prefix)
                 || cmd.aliases.iter().any(|alias| alias.starts_with(&prefix));
-            let summary_match = prefix.is_empty() || cmd.summary.to_lowercase().contains(&prefix);
-            if name_match || prefix.is_empty() {
+            let summary_match =
+                !cmd.hidden && (prefix.is_empty() || cmd.summary.to_lowercase().contains(&prefix));
+            if name_match || (prefix.is_empty() && !cmd.hidden) {
                 exact_prefix.push(cmd);
             } else if summary_match {
                 summary_matches.push(cmd);

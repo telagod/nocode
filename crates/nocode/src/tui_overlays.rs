@@ -48,7 +48,9 @@ pub(crate) fn draw_overlay(
                     text.push('\n');
                 }
             }
-            text.push_str("[Enter] Confirm  [Esc] Cancel  [\u{2190}\u{2192}] Change  [1-4] Quick select");
+            text.push_str(
+                "[Enter] Confirm  [Esc] Cancel  [\u{2190}\u{2192}] Change  [1-4] Quick select",
+            );
             let overlay_w = OverlayBlock::new("Question", &text);
             frame.render_widget(overlay_w, area);
         }

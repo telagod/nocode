@@ -112,7 +112,6 @@ fn cli_modules_exist() {
         "tui_app.rs",
         "tui_theme.rs",
         "tui_widgets.rs",
-        "tui_input.rs",
         "tui_permission.rs",
         "command_registry.rs",
         "login.rs",
