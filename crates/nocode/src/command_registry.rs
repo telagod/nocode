@@ -152,7 +152,7 @@ impl CommandRegistry {
             CommandEntry {
                 name: "config",
                 aliases: &["settings", "login"],
-                summary: "View and edit configuration (model, provider, base URL)",
+                summary: "Show current configuration",
                 argument_hint: None,
                 action: CommandAction::Config,
             },

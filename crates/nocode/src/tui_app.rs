@@ -91,7 +91,6 @@ pub(crate) enum Overlay {
     Sessions,
     Mcp,
     Agents,
-    Config,
     Memory,
     Cost,
     Permission {
@@ -111,13 +110,7 @@ impl Overlay {
     }
 }
 
-impl TuiApp {
-    pub(crate) fn open_config_overlay(&mut self) {
-        self.config_overlay = Some(crate::tui_config::TuiConfigOverlay::new());
-        self.overlay = Overlay::Config;
-        self.dirty = true;
-    }
-}
+impl TuiApp {}
 
 // ---------------------------------------------------------------------------
 // TuiApp — main application state
@@ -170,8 +163,6 @@ pub(crate) struct TuiApp {
     pub(crate) input_view_offset: usize,
     /// Vertical scroll offset for input box (multi-line input).
     pub(crate) input_scroll_y: u16,
-    /// New config overlay (state machine + TUI).
-    pub(crate) config_overlay: Option<crate::tui_config::TuiConfigOverlay>,
     /// Last rendered input rect (for completion popup positioning).
     pub(crate) last_input_rect: Option<Rect>,
 }
@@ -224,7 +215,6 @@ impl TuiApp {
             overlay_scroll: 0,
             input_view_offset: 0,
             input_scroll_y: 0,
-            config_overlay: None,
             last_input_rect: None,
         }
     }
@@ -562,13 +552,7 @@ impl TuiApp {
 
         // 4. Overlay
         if self.overlay.is_open() {
-            if matches!(self.overlay, Overlay::Config) {
-                if let Some(ref config) = self.config_overlay {
-                    config.draw(frame, frame.area());
-                }
-            } else {
-                self.draw_overlay(frame, frame.area());
-            }
+            self.draw_overlay(frame, frame.area());
         }
 
         self.dirty = false;
@@ -894,19 +878,6 @@ impl TuiApp {
 
         // Overlay open — handle keys
         if self.overlay.is_open() {
-            if matches!(self.overlay, Overlay::Config) {
-                if let Some(ref mut config) = self.config_overlay {
-                    config.handle_key(key);
-                    if config.closed {
-                        self.config_overlay = None;
-                        self.overlay = Overlay::None;
-                    }
-                } else {
-                    self.overlay = Overlay::None;
-                }
-                self.dirty = true;
-                return HandleKeyResult::Continue;
-            }
             // Permission overlay: y/n/a to respond
             if matches!(self.overlay, Overlay::Permission { .. }) {
                 use nocode_core::tool::permission::PermissionDecision;
@@ -1662,9 +1633,6 @@ impl TuiApp {
     }
 
     fn handle_paste(&mut self, text: &str) {
-        if matches!(self.overlay, Overlay::Config) {
-            return;
-        }
         self.input.insert_str(self.cursor_pos, text);
         self.cursor_pos += text.len();
         self.update_completion();

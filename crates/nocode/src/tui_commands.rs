@@ -57,7 +57,7 @@ pub(crate) fn handle_slash_command(
             SlashResult::Handled
         }
         CommandAction::Config => {
-            app.open_config_overlay();
+            app.push_system("Use /model <name> to switch models, or nocode --login to reconfigure provider");
             SlashResult::Handled
         }
         CommandAction::Memory => {
@@ -111,7 +111,18 @@ pub(crate) fn handle_slash_command(
         CommandAction::Model => {
             if let Some(new_model) = args {
                 app.hud.model_name = new_model.clone();
-                app.push_system(&format!("Model switched to: {new_model}"));
+                // Persist to settings
+                let cwd = std::env::current_dir()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                use nocode_core::config::settings::{Settings, SettingsTier};
+                let _ = Settings::persist_key_value(
+                    "model",
+                    Some(&new_model),
+                    SettingsTier::User,
+                    &cwd,
+                );
+                app.push_system(&format!("Set model to \x1b[1m{new_model}\x1b[0m"));
             } else {
                 app.push_system(&format!("Current model: {}", app.hud.model_name()));
             }

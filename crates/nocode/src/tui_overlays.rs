@@ -224,10 +224,6 @@ Commands:
             let overlay_w = OverlayBlock::new("Agents", &text).with_scroll(scroll);
             frame.render_widget(overlay_w, area);
         }
-        Overlay::Config => {
-            // Config overlay rendering is handled by TuiConfigOverlay::draw()
-            // which is called from the main render loop in tui_app.rs.
-        }
         Overlay::Memory => {
             use nocode_core::storage::memory::MemoryStore;
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
