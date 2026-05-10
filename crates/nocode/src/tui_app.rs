@@ -35,6 +35,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::widgets::Block;
 use std::io;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::time::Duration;
 use unicode_width::UnicodeWidthChar;
@@ -187,6 +188,8 @@ pub(crate) struct TuiApp {
     pub(crate) chat_scroll: u16,
     pub(crate) overlay: Overlay,
     pub(crate) thinking_spinner: Option<Spinner>,
+    spinner_display: String,
+    cancel_token: Arc<AtomicBool>,
     pub(crate) dirty: bool,
     height_cache: Vec<u16>,
     height_cache_width: u16,
@@ -255,6 +258,8 @@ impl TuiApp {
             chat_scroll: 0,
             overlay: Overlay::None,
             thinking_spinner: None,
+            spinner_display: String::new(),
+            cancel_token: Arc::new(AtomicBool::new(false)),
             dirty: true,
             height_cache: Vec::new(),
             height_cache_width: 0,
@@ -602,7 +607,38 @@ impl TuiApp {
     }
 
     fn total_content_height(&self) -> u16 {
-        self.height_cache.iter().copied().sum()
+        let mut total: u16 = 0;
+        let mut prev_kind: Option<ChatMessageKind> = None;
+        for (i, msg) in self.chat_messages.iter().enumerate() {
+            if let Some(pk) = prev_kind
+                && pk != msg.kind
+            {
+                total += 1;
+            }
+            total += self.height_cache.get(i).copied().unwrap_or(1);
+            prev_kind = Some(msg.kind);
+        }
+        total
+    }
+
+    fn content_height_up_to(&self, idx: usize) -> u16 {
+        let mut total: u16 = 0;
+        let mut prev_kind: Option<ChatMessageKind> = None;
+        for (i, msg) in self.chat_messages.iter().enumerate().take(idx) {
+            if let Some(pk) = prev_kind
+                && pk != msg.kind
+            {
+                total += 1;
+            }
+            total += self.height_cache.get(i).copied().unwrap_or(1);
+            prev_kind = Some(msg.kind);
+        }
+        if let (Some(pk), Some(msg)) = (prev_kind, self.chat_messages.get(idx))
+            && pk != msg.kind
+        {
+            total += 1;
+        }
+        total
     }
 
     // -- drawing --
@@ -738,6 +774,18 @@ impl TuiApp {
             },
         ];
 
+        if let Some(spinner) = &self.thinking_spinner {
+            let color = if spinner.mode == crate::spinner::SpinnerMode::Stalled {
+                theme.warning
+            } else {
+                ratatui::style::Color::Cyan
+            };
+            parts.push(StatusPart {
+                text: self.spinner_display.clone(),
+                color,
+            });
+        }
+
         if self.plan_state.is_active() {
             parts.push(StatusPart {
                 text: self.plan_state.label().to_string(),
@@ -828,9 +876,10 @@ impl TuiApp {
 
         let input_lines =
             (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).clamp(1, 10) + 1; // +1 for top separator
+        let gap = if self.chat_messages.is_empty() { 0u16 } else { 1 };
 
         let chat_h = self.total_content_height();
-        let total_h = chat_h + input_lines;
+        let total_h = chat_h + gap + input_lines;
 
         let visible = area.height;
         let max_scroll = total_h.saturating_sub(visible);
@@ -845,18 +894,32 @@ impl TuiApp {
         let mut accumulated: u16 = 0;
         let mut first_visible_skip: u16 = 0;
         let mut y_offset: u16 = top_padding;
+        let mut prev_kind: Option<ChatMessageKind> = None;
 
         for (i, msg) in self.chat_messages.iter().enumerate() {
             let h = self.height_cache.get(i).copied().unwrap_or(1);
-            let msg_end = accumulated + h;
+
+            // Inter-message gap: 1 blank line between different message kinds
+            let msg_gap = if let Some(pk) = prev_kind {
+                u16::from(pk != msg.kind)
+            } else {
+                0
+            };
+            let msg_end = accumulated + msg_gap + h;
 
             if msg_end <= scroll_from_top {
                 accumulated = msg_end;
+                prev_kind = Some(msg.kind);
                 continue;
             }
 
             if y_offset == top_padding && accumulated < scroll_from_top {
                 first_visible_skip = scroll_from_top.saturating_sub(accumulated);
+            }
+
+            // Render the gap line (if not scrolled past)
+            if msg_gap > 0 && first_visible_skip == 0 && y_offset < visible {
+                y_offset += msg_gap;
             }
 
             let bg = match msg.kind {
@@ -926,9 +989,15 @@ impl TuiApp {
             }
 
             accumulated = msg_end;
+            prev_kind = Some(msg.kind);
             if y_offset >= visible {
                 break;
             }
+        }
+
+        // Gap between messages and input
+        if gap > 0 && y_offset < visible {
+            y_offset += gap;
         }
 
         // Render input box at end of content flow
@@ -1722,7 +1791,7 @@ impl TuiApp {
         }
         // Calculate the row offset of this message from the bottom
         let total = self.total_content_height();
-        let msg_top: u16 = self.height_cache[..msg_idx].iter().copied().sum();
+        let msg_top: u16 = self.content_height_up_to(msg_idx);
         let msg_bottom: u16 = msg_top + self.height_cache[msg_idx];
         // scroll is measured from bottom (0 = at bottom)
         let scroll_to_show = total.saturating_sub(msg_bottom);
@@ -2122,7 +2191,9 @@ pub(crate) fn run_app_loop(
     loop {
         // 1. Tick spinner
         if let Some(spinner) = app.thinking_spinner.as_mut() {
-            spinner.tick();
+            let frame = spinner.tick();
+            app.spinner_display = frame.display;
+            app.dirty = true;
         }
 
         // 2. Drain channel events
@@ -2148,6 +2219,8 @@ pub(crate) fn run_app_loop(
                     }
                     Ok(TuiEvent::ToolStart { name }) => {
                         app.thinking_spinner = None;
+                        app.streaming_text.clear();
+                        app.streaming_thinking.clear();
                         app.push_tool_start(&name);
                     }
                     Ok(TuiEvent::InputJsonDelta { name, partial_json }) => {
@@ -2329,8 +2402,8 @@ pub(crate) fn run_app_loop(
                         match (key.code, key.modifiers) {
                             (KeyCode::Char('c'), KeyModifiers::CONTROL) => break,
                             (KeyCode::Esc, _) => {
-                                // Can't cancel the sync loop, just note it
-                                app.push_system("waiting for model response...");
+                                app.cancel_token.store(true, std::sync::atomic::Ordering::Relaxed);
+                                app.push_system("Cancelling...");
                             }
                             (KeyCode::Up, _) => {
                                 app.chat_scroll = app.chat_scroll.saturating_add(1);
@@ -2418,6 +2491,7 @@ pub(crate) fn run_app_loop(
 
                                 app.hud.start_turn();
                                 app.thinking_spinner = Some(Spinner::new("Thinking..."));
+                                app.cancel_token.store(false, std::sync::atomic::Ordering::Relaxed);
                                 is_busy = true;
 
                                 // Launch background thread
@@ -2427,6 +2501,11 @@ pub(crate) fn run_app_loop(
                                 let r = registry_slot.take().expect("registry available");
                                 let msgs = messages.clone();
                                 let current_model = app.hud.model_name.clone();
+                                let cwd_for_settings = std::env::current_dir()
+                                    .map(|p| p.to_string_lossy().into_owned())
+                                    .unwrap_or_default();
+                                let pre_settings = Settings::load_merged(&cwd_for_settings);
+                                let reasoning = pre_settings.reasoning_effort.clone();
                                 let cfg = LoopConfig {
                                     model: current_model.clone(),
                                     max_tokens,
@@ -2434,9 +2513,10 @@ pub(crate) fn run_app_loop(
                                     system: system.clone(),
                                     tools: tool_defs.clone(),
                                     parallel_tool_execution: true,
-                                    reasoning_effort: None,
+                                    reasoning_effort: reasoning,
                                 };
 
+                                let cancel = app.cancel_token.clone();
                                 let tx_complete = tx.clone();
                                 let tx_perm = tx.clone();
                                 std::thread::spawn(move || {
@@ -2458,12 +2538,15 @@ pub(crate) fn run_app_loop(
                                     let executor =
                                         ToolExecutor::new(&r).with_prompter(&perm_bridge);
                                     let mut observer = ChannelObserver { tx };
-                                    let result = r#loop::run_agentic_loop(
+                                    let mut budget = nocode_core::query::budget::TokenBudget::for_model(&cfg.model, Some(cfg.max_tokens));
+                                    let result = r#loop::run_agentic_loop_with_cancel(
                                         provider.as_ref(),
                                         &executor,
                                         &cfg,
                                         msgs,
                                         &mut observer,
+                                        &mut budget,
+                                        Some(cancel),
                                     );
                                     let loop_result = result.map_err(|e| format!("{e}"));
                                     let _ = tx_complete.send(TuiEvent::Complete(loop_result, r));
