@@ -191,8 +191,11 @@ impl MemoryStore {
     }
 
     pub fn list(&self) -> Result<Vec<MemoryEntry>, String> {
-        let dir =
-            fs::read_dir(&self.base_dir).map_err(|e| format!("failed to read memory dir: {e}"))?;
+        let dir = match fs::read_dir(&self.base_dir) {
+            Ok(d) => d,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(format!("failed to read memory dir: {e}")),
+        };
         let mut entries = Vec::new();
         for item in dir {
             let item = item.map_err(|e| format!("dir entry error: {e}"))?;
