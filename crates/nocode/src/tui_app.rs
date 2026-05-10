@@ -2118,12 +2118,72 @@ pub(crate) fn run_app_loop(
                 for msg in &loaded {
                     match msg.role {
                         nocode_core::message::Role::User => {
-                            app.push_user_message(&msg.text_content());
+                            // User messages may contain tool_results (responses to tool_use)
+                            let mut has_tool_result = false;
+                            for block in &msg.content {
+                                if let nocode_core::message::ContentBlock::ToolResult {
+                                    content,
+                                    is_error,
+                                    ..
+                                } = block
+                                {
+                                    has_tool_result = true;
+                                    app.push_tool_done("Tool", content, *is_error);
+                                }
+                            }
+                            if !has_tool_result {
+                                app.push_user_message(&msg.text_content());
+                            }
                         }
                         nocode_core::message::Role::Assistant => {
-                            let text = msg.text_content();
-                            if !text.is_empty() {
-                                app.update_streaming_assistant(&text);
+                            for block in &msg.content {
+                                match block {
+                                    nocode_core::message::ContentBlock::Text { text }
+                                        if !text.is_empty() =>
+                                    {
+                                        app.update_streaming_assistant(text);
+                                    }
+                                    nocode_core::message::ContentBlock::ToolUse {
+                                        name,
+                                        input,
+                                        ..
+                                    } => {
+                                        let args_summary = if let Some(obj) = input.as_object() {
+                                            obj.iter()
+                                                .next()
+                                                .map(|(k, v)| {
+                                                    format!(
+                                                        "{k}={}",
+                                                        crate::tool_render::truncate_str(
+                                                            &v.to_string(),
+                                                            40
+                                                        )
+                                                    )
+                                                })
+                                                .unwrap_or_default()
+                                        } else {
+                                            String::new()
+                                        };
+                                        let info = crate::tui_widgets::ToolCallInfo {
+                                            tool_name: name.clone(),
+                                            arguments_summary: args_summary,
+                                            result_preview: None,
+                                            collapsed: true,
+                                        };
+                                        let chat_msg = ChatMessage::tool_call(info, Vec::new());
+                                        app.chat_messages.push(chat_msg);
+                                        app.on_message_added();
+                                    }
+                                    nocode_core::message::ContentBlock::Thinking { thinking }
+                                        if !thinking.is_empty() =>
+                                    {
+                                        app.update_streaming_thinking(thinking);
+                                        if let Some(last) = app.chat_messages.last_mut() {
+                                            last.thinking_collapsed = true;
+                                        }
+                                    }
+                                    _ => {}
+                                }
                             }
                         }
                     }
