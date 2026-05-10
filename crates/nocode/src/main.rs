@@ -159,6 +159,23 @@ fn main() {
         return;
     }
 
+    // --resume / -c: resume a previous session
+    let resume_session_id: Option<String> = if let Some(sid) = extract_arg(&args, "--resume") {
+        Some(sid)
+    } else if args.iter().any(|a| a == "--resume" || a == "-c") {
+        // --resume (no arg) or -c: resume last session from .nocode/last_session
+        let marker = std::path::Path::new(&cwd).join(".nocode/last_session");
+        match std::fs::read_to_string(&marker) {
+            Ok(sid) if !sid.trim().is_empty() => Some(sid.trim().to_string()),
+            _ => {
+                eprintln!("No previous session found. Start a new one with `nocode`.");
+                return;
+            }
+        }
+    } else {
+        None
+    };
+
     // No API key available → auto-launch login before TUI
     let needs_onboarding =
         !has_any_api_key() && !args.iter().any(|a| a == "--status" || a == "--help");
@@ -327,6 +344,7 @@ fn main() {
             max_tokens,
             max_turns,
             vec![],
+            resume_session_id.as_deref(),
         ) {
             eprintln!("TUI error: {e}");
         }
@@ -1100,6 +1118,8 @@ fn print_help() {
          \x20 --version, -v             Show version\n\
          \x20 --update                  Pull latest source from GitHub and rebuild binary\n\
          \x20 --login                   Interactive provider setup\n\
+         \x20 --resume [session_id]     Resume a previous session (omit id for last session)\n\
+         \x20 -c                        Shorthand for --resume (continue last session)\n\
          \x20 --help, -h                Show this help\n\
          \n\
          Environment:\n\

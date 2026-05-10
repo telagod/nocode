@@ -4,6 +4,12 @@
 //! via mpsc channels. The TUI thread owns the terminal and polls both
 //! crossterm events and channel events at 50ms intervals.
 
+/// Information returned when the app loop exits.
+pub(crate) struct SessionExit {
+    pub session_id: String,
+    pub message_count: usize,
+}
+
 use crate::command_registry::CommandRegistry;
 use crate::markdown_render::render_markdown_to_lines;
 use crate::spinner::Spinner;
@@ -117,7 +123,7 @@ impl PlanState {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub(crate) enum Overlay {
     #[default]
     None,
@@ -130,6 +136,11 @@ pub(crate) enum Overlay {
         selected: Vec<usize>,
     },
     Errors(Vec<String>),
+    SessionPicker {
+        sessions: Vec<nocode_core::session::persistence::SessionInfo>,
+        selected: usize,
+        show_all: bool,
+    },
 }
 
 impl Overlay {
@@ -507,6 +518,9 @@ impl TuiApp {
         {
             last.lines = lines;
             self.invalidate_last_height();
+            if self.sticky_scroll {
+                self.chat_scroll = 0;
+            }
             self.dirty = true;
             return;
         }
@@ -535,6 +549,9 @@ impl TuiApp {
         {
             last.lines = lines;
             self.invalidate_last_height();
+            if self.sticky_scroll {
+                self.chat_scroll = 0;
+            }
             self.dirty = true;
             return;
         }
@@ -558,27 +575,16 @@ impl TuiApp {
     }
 
     fn message_height(msg: &ChatMessage, width: u16) -> u16 {
-        // Fast path: collapsed tool messages are 1 line
-        if (msg.kind == ChatMessageKind::Tool || msg.kind == ChatMessageKind::Error)
-            && let Some(info) = &msg.tool_info
-            && info.collapsed
-        {
-            return 1;
-        }
-        // Use pre-computed lines count instead of re-rendering
+        let rlines = msg.to_ratatui_lines();
         let mut total: u16 = 0;
-        for line in &msg.lines {
-            let line_width: usize = line
-                .segments
-                .iter()
-                .map(|s| UnicodeWidthStr::width(s.text.as_str()))
-                .sum();
-            let wrapped = if width > 0 {
+        for line in &rlines {
+            let line_width: usize = line.spans.iter().map(|s| s.width()).sum();
+            let wrapped = if width > 0 && line_width > width as usize {
                 (line_width as u16).div_ceil(width)
             } else {
                 1
             };
-            total += wrapped.max(1);
+            total += wrapped;
         }
         total.max(1)
     }
@@ -770,7 +776,7 @@ impl TuiApp {
         } else if !self.pending_images.is_empty() {
             "Enter:send  Esc:clear images".to_string()
         } else {
-            "Enter:send  Shift+Enter:newline  Esc:vim  /:cmd".to_string()
+            "Enter:send  Shift+Enter:newline  Shift+drag:copy  Esc:vim  /:cmd".to_string()
         }
     }
 
@@ -1116,6 +1122,56 @@ impl TuiApp {
                             if let Some(cur) = selected.first_mut() {
                                 *cur = idx;
                             }
+                        }
+                        _ => {}
+                    }
+                }
+                self.dirty = true;
+                return HandleKeyResult::Continue;
+            }
+            // Session picker overlay: ↑↓ navigate, Tab toggle scope, Enter select, Esc close
+            if matches!(self.overlay, Overlay::SessionPicker { .. }) {
+                if let Overlay::SessionPicker {
+                    ref sessions,
+                    ref mut selected,
+                    ref mut show_all,
+                } = self.overlay
+                {
+                    let count = sessions.len();
+                    match key.code {
+                        KeyCode::Up if count > 0 => {
+                            *selected = selected.saturating_sub(1);
+                        }
+                        KeyCode::Down if count > 0 => {
+                            *selected = (*selected + 1).min(count.saturating_sub(1));
+                        }
+                        KeyCode::Tab | KeyCode::BackTab => {
+                            *show_all = !*show_all;
+                            *selected = 0;
+                            // Reload sessions with new scope
+                            let cwd = std::env::current_dir()
+                                .map(|p| p.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            let new_sessions = if *show_all {
+                                load_all_sessions()
+                            } else {
+                                nocode_core::session::persistence::SessionPersistence::list_sessions_with_info(&cwd)
+                            };
+                            if let Overlay::SessionPicker {
+                                ref mut sessions, ..
+                            } = self.overlay
+                            {
+                                *sessions = new_sessions;
+                            }
+                        }
+                        KeyCode::Enter if count > 0 => {
+                            let sid = sessions[*selected].id.clone();
+                            self.overlay = Overlay::None;
+                            self.dirty = true;
+                            return HandleKeyResult::ResumeSession(sid);
+                        }
+                        KeyCode::Esc => {
+                            self.overlay = Overlay::None;
                         }
                         _ => {}
                     }
@@ -1925,6 +1981,7 @@ pub(crate) enum HandleKeyResult {
     Continue,
     Quit,
     Submit(String),
+    ResumeSession(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -1941,7 +1998,8 @@ pub(crate) fn run_app_loop(
     max_tokens: u32,
     max_turns: u32,
     warnings: Vec<String>,
-) -> io::Result<()> {
+    resume_session_id: Option<&str>,
+) -> io::Result<SessionExit> {
     let mut app = TuiApp::new(model);
 
     // Set provider info on banner from settings
@@ -1964,16 +2022,51 @@ pub(crate) fn run_app_loop(
     let mut messages: Vec<Message> = Vec::new();
     let tool_defs = tool_definitions_for_model(&registry);
 
-    // Auto-generate session ID for persistence
-    let session_id = format!(
-        "{}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
-        std::process::id()
-    );
-    app.hud.session_id = session_id;
+    // Session ID: resume existing or generate new
+    let session_id = if let Some(rid) = resume_session_id {
+        rid.to_string()
+    } else {
+        format!(
+            "{}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            std::process::id()
+        )
+    };
+    app.hud.session_id = session_id.clone();
+
+    // Resume: load previous session messages
+    if resume_session_id.is_some() {
+        use nocode_core::session::persistence::SessionPersistence;
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match SessionPersistence::resume(&cwd, &session_id) {
+            Ok((_persistence, loaded)) => {
+                let msg_count = loaded.len();
+                for msg in &loaded {
+                    match msg.role {
+                        nocode_core::message::Role::User => {
+                            app.push_user_message(&msg.text_content());
+                        }
+                        nocode_core::message::Role::Assistant => {
+                            let text = msg.text_content();
+                            if !text.is_empty() {
+                                app.update_streaming_assistant(&text);
+                            }
+                        }
+                    }
+                }
+                messages = loaded;
+                app.push_system(&format!("Resumed session ({msg_count} messages)"));
+            }
+            Err(e) => {
+                app.push_error(&format!("Failed to resume session: {e}"));
+            }
+        }
+    }
 
     // Load persistent input history
     app.load_input_history();
@@ -2259,6 +2352,40 @@ pub(crate) fn run_app_loop(
                     } else {
                         match app.handle_key(key) {
                             HandleKeyResult::Quit => break,
+                            HandleKeyResult::ResumeSession(sid) => {
+                                use nocode_core::session::persistence::SessionPersistence;
+                                let cwd = std::env::current_dir()
+                                    .map(|p| p.to_string_lossy().into_owned())
+                                    .unwrap_or_default();
+                                match SessionPersistence::resume(&cwd, &sid) {
+                                    Ok((_persistence, loaded)) => {
+                                        let msg_count = loaded.len();
+                                        messages = loaded;
+                                        app.chat_messages.clear();
+                                        app.invalidate_height_cache();
+                                        for msg in &messages {
+                                            match msg.role {
+                                                nocode_core::message::Role::User => {
+                                                    app.push_user_message(&msg.text_content());
+                                                }
+                                                nocode_core::message::Role::Assistant => {
+                                                    let text = msg.text_content();
+                                                    if !text.is_empty() {
+                                                        app.update_streaming_assistant(&text);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        app.hud.session_id = sid.clone();
+                                        app.push_system(&format!(
+                                            "Resumed session '{sid}' ({msg_count} messages)"
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        app.push_error(&format!("Failed to resume: {e}"));
+                                    }
+                                }
+                            }
                             HandleKeyResult::Submit(text) => {
                                 // Handle slash commands via registry
                                 let cmd_reg = CommandRegistry::with_defaults();
@@ -2383,20 +2510,71 @@ pub(crate) fn run_app_loop(
         }
     }
 
-    // Show resume hint if session has messages
-    if !messages.is_empty() && !app.hud.session_id.is_empty() {
-        eprintln!(
-            "\n  To resume this session: nocode --resume {}\n",
-            app.hud.session_id
-        );
+    // Save last session marker for quick resume
+    let msg_count = messages.len();
+    let sid = app.hud.session_id.clone();
+    if !messages.is_empty() && !sid.is_empty() {
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let marker_path = std::path::Path::new(&cwd).join(".nocode/last_session");
+        let _ = std::fs::create_dir_all(marker_path.parent().unwrap());
+        let _ = std::fs::write(&marker_path, &sid);
     }
 
-    Ok(())
+    Ok(SessionExit {
+        session_id: sid,
+        message_count: msg_count,
+    })
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Scan all `.nocode/sessions/` dirs under $HOME for global session listing.
+fn load_all_sessions() -> Vec<nocode_core::session::persistence::SessionInfo> {
+    use nocode_core::session::persistence::SessionPersistence;
+    let home = std::env::var("HOME").unwrap_or_default();
+    let mut all = Vec::new();
+
+    // Current project
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    all.extend(SessionPersistence::list_sessions_with_info(&cwd));
+
+    // Walk common project roots for other sessions
+    let search_dirs = [&cwd, &home];
+    for root in &search_dirs {
+        let session_dir = std::path::Path::new(root).join(".nocode/sessions");
+        if session_dir.exists() {
+            let mut found = SessionPersistence::list_sessions_with_info(root);
+            for s in &mut found {
+                // Tag with project root for disambiguation
+                if **root != cwd {
+                    s.first_user_message = Some(format!(
+                        "[{}] {}",
+                        std::path::Path::new(root)
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy(),
+                        s.first_user_message.as_deref().unwrap_or("(empty)")
+                    ));
+                }
+            }
+            // Deduplicate by id
+            for s in found {
+                if !all.iter().any(|existing| existing.id == s.id) {
+                    all.push(s);
+                }
+            }
+        }
+    }
+
+    all.sort_by_key(|s| std::cmp::Reverse(s.modified_at));
+    all
+}
 
 fn highlight_search_in_line<'a>(
     line: ratatui::text::Line<'a>,

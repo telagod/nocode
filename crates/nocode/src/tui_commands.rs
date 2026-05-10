@@ -269,21 +269,16 @@ fn cmd_sessions(app: &mut TuiApp) {
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let infos = SessionPersistence::list_sessions_with_info(&cwd);
-    if infos.is_empty() {
-        app.push_system("No saved sessions.");
+    let sessions = SessionPersistence::list_sessions_with_info(&cwd);
+    if sessions.is_empty() {
+        app.push_system("No saved sessions in this project.");
     } else {
-        let mut lines = vec!["Saved sessions:".to_string()];
-        for info in infos.iter().take(20) {
-            let preview = info.first_user_message.as_deref().unwrap_or("(empty)");
-            lines.push(format!(
-                "  {} ({} msgs) — {}",
-                info.id, info.message_count, preview
-            ));
-        }
-        lines.push(String::new());
-        lines.push("Use /resume <id> to restore.".to_string());
-        app.push_system(&lines.join("\n"));
+        app.overlay = crate::tui_app::Overlay::SessionPicker {
+            sessions,
+            selected: 0,
+            show_all: false,
+        };
+        app.dirty = true;
     }
 }
 
@@ -295,6 +290,7 @@ fn cmd_resume(app: &mut TuiApp, session_id: Option<&str>, messages: &mut Vec<Mes
     if let Some(session_id) = session_id {
         match SessionPersistence::resume(&cwd, session_id) {
             Ok((_persistence, loaded)) => {
+                let msg_count = loaded.len();
                 *messages = loaded;
                 app.chat_messages.clear();
                 app.invalidate_height_cache();
@@ -311,17 +307,26 @@ fn cmd_resume(app: &mut TuiApp, session_id: Option<&str>, messages: &mut Vec<Mes
                         }
                     }
                 }
-                app.push_system(&format!(
-                    "Resumed session '{session_id}' ({} messages)",
-                    messages.len()
-                ));
+                app.hud.session_id = session_id.to_string();
+                app.push_system(&format!("Resumed session '{session_id}' ({msg_count} messages)"));
             }
             Err(e) => {
                 app.push_error(&format!("Failed to resume: {e}"));
             }
         }
     } else {
-        app.push_system("Usage: /resume <session_id>");
+        // Open session picker overlay
+        let sessions = SessionPersistence::list_sessions_with_info(&cwd);
+        if sessions.is_empty() {
+            app.push_system("No saved sessions in this project.");
+        } else {
+            app.overlay = crate::tui_app::Overlay::SessionPicker {
+                sessions,
+                selected: 0,
+                show_all: false,
+            };
+            app.dirty = true;
+        }
     }
 }
 

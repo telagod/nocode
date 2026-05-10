@@ -25,6 +25,7 @@ pub(crate) fn run_tui(
     max_tokens: u32,
     max_turns: u32,
     warnings: Vec<String>,
+    resume_session_id: Option<&str>,
 ) -> io::Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(io::Error::other("nocode tui requires an interactive TTY"));
@@ -54,9 +55,10 @@ pub(crate) fn run_tui(
         max_tokens,
         max_turns,
         warnings,
+        resume_session_id,
     );
 
-    // Cleanup
+    // Cleanup — must happen before printing to stdout
     disable_raw_mode()?;
     execute!(
         io::stdout(),
@@ -66,5 +68,16 @@ pub(crate) fn run_tui(
         LeaveAlternateScreen
     )?;
 
-    result
+    // Print resume hint AFTER leaving alternate screen so user can see it
+    match &result {
+        Ok(exit_info) if exit_info.message_count > 0 => {
+            eprintln!(
+                "\n  To resume: nocode --resume {}\n",
+                exit_info.session_id
+            );
+        }
+        _ => {}
+    }
+
+    result.map(|_| ())
 }
