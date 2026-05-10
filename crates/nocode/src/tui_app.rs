@@ -26,7 +26,7 @@ use nocode_core::tool::executor::ToolExecutor;
 use nocode_core::tool::global_registry::tool_definitions_for_model;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::widgets::{Block, Borders};
+use ratatui::widgets::Block;
 use std::io;
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -786,30 +786,40 @@ impl TuiApp {
     }
 
     fn draw_unified_content(&mut self, frame: &mut Frame, area: Rect) {
-        let block = Block::default().borders(Borders::NONE);
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-
-        if inner.width == 0 || inner.height == 0 {
+        if area.width == 0 || area.height == 0 {
             return;
         }
 
-        self.ensure_height_cache(inner.width);
+        self.ensure_height_cache(area.width);
 
+        // Fixed input box at bottom, chat fills the rest above
         let input_lines =
             (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).clamp(1, 10) + 2; // +2 for top/bottom separators
+        let input_h = input_lines.min(area.height.saturating_sub(1));
+        let chat_area_h = area.height.saturating_sub(input_h);
 
+        let chat_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: chat_area_h,
+        };
+        let input_rect = Rect {
+            x: area.x,
+            y: area.y + chat_area_h,
+            width: area.width,
+            height: input_h,
+        };
+
+        // --- Render chat messages in scrollable area ---
         let chat_h = self.total_content_height();
-        let separator_h: u16 = if chat_h > 0 { 1 } else { 0 };
-        let total_h = chat_h + separator_h + input_lines;
-
-        let visible = inner.height;
-        let max_scroll = total_h.saturating_sub(visible);
+        let visible = chat_area.height;
+        let max_scroll = chat_h.saturating_sub(visible);
         let scroll = self.chat_scroll.min(max_scroll);
         let scroll_from_top = max_scroll.saturating_sub(scroll);
 
         // Bottom-align: when content is shorter than viewport, push it down
-        let top_padding = visible.saturating_sub(total_h);
+        let top_padding = visible.saturating_sub(chat_h);
 
         let theme = crate::tui_theme::default_theme();
 
@@ -831,7 +841,7 @@ impl TuiApp {
                 continue;
             }
 
-            if y_offset == 0 && accumulated < scroll_from_top {
+            if y_offset == top_padding && accumulated < scroll_from_top {
                 first_visible_skip = scroll_from_top.saturating_sub(accumulated);
             }
 
@@ -857,8 +867,8 @@ impl TuiApp {
                 };
 
                 let line_display_width: usize = line.spans.iter().map(|s| s.width()).sum();
-                let line_rows = if inner.width > 0 && line_display_width > inner.width as usize {
-                    (line_display_width as u16).div_ceil(inner.width)
+                let line_rows = if area.width > 0 && line_display_width > area.width as usize {
+                    (line_display_width as u16).div_ceil(area.width)
                 } else {
                     1
                 };
@@ -876,9 +886,9 @@ impl TuiApp {
 
                 if bg != ratatui::style::Color::Reset {
                     let line_rect = Rect {
-                        x: inner.x,
-                        y: inner.y + y_offset,
-                        width: inner.width,
+                        x: chat_area.x,
+                        y: chat_area.y + y_offset,
+                        width: chat_area.width,
                         height: render_rows,
                     };
                     let bg_block = Block::default().style(ratatui::style::Style::default().bg(bg));
@@ -886,9 +896,9 @@ impl TuiApp {
                 }
 
                 let line_rect = Rect {
-                    x: inner.x,
-                    y: inner.y + y_offset,
-                    width: inner.width,
+                    x: chat_area.x,
+                    y: chat_area.y + y_offset,
+                    width: chat_area.width,
                     height: render_rows,
                 };
                 let para = ratatui::widgets::Paragraph::new(vec![line])
@@ -912,46 +922,20 @@ impl TuiApp {
             }
         }
 
-        // Render separator between chat and input (if there are messages)
-        if y_offset < visible && chat_h > 0 {
-            // Account for separator in scroll math
-            let sep_start = chat_h;
-            if sep_start >= scroll_from_top && sep_start < scroll_from_top + visible {
-                // Skip separator if partially scrolled past
-                if first_visible_skip == 0 {
-                    y_offset += 1;
-                }
-            } else if sep_start < scroll_from_top {
-                // separator scrolled past
-            } else {
-                y_offset += 1;
-            }
-        }
-
-        // Render input box as part of the content flow
-        if y_offset < visible {
-            let input_rect = Rect {
-                x: inner.x,
-                y: inner.y + y_offset,
-                width: inner.width,
-                height: input_lines.min(visible.saturating_sub(y_offset)),
-            };
-            let mode_label = if self.input_mode == InputMode::Normal {
-                self.input_mode.label()
-            } else {
-                ""
-            };
-            let input_widget = InputBox::new(&self.input, self.cursor_pos)
-                .with_mode(mode_label)
-                .with_view_offset(self.input_view_offset)
-                .with_scroll_y(self.input_scroll_y)
-                .with_status(self.build_status_parts_vec());
-            frame.render_widget(input_widget, input_rect);
-            self.last_input_rect = Some(input_rect);
-            self.set_cursor_in_rect(frame, input_rect, mode_label);
+        // --- Render fixed input box at bottom ---
+        let mode_label = if self.input_mode == InputMode::Normal {
+            self.input_mode.label()
         } else {
-            self.last_input_rect = None;
-        }
+            ""
+        };
+        let input_widget = InputBox::new(&self.input, self.cursor_pos)
+            .with_mode(mode_label)
+            .with_view_offset(self.input_view_offset)
+            .with_scroll_y(self.input_scroll_y)
+            .with_status(self.build_status_parts_vec());
+        frame.render_widget(input_widget, input_rect);
+        self.last_input_rect = Some(input_rect);
+        self.set_cursor_in_rect(frame, input_rect, mode_label);
     }
 
     fn draw_overlay(&self, frame: &mut Frame, area: Rect) {

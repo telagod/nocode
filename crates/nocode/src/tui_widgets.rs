@@ -302,37 +302,63 @@ impl ChatMessage {
             return result;
         }
 
-        // Tool call: rounded card style — ╭─ name ─╮ / │ output / ╰─ status ─╯
+        // Tool call: compact Claude Code style — "● name (args)" + "⎿ output"
         if let Some(info) = &self.tool_info {
-            let border_color = if info.result_preview.is_some() {
-                theme.success
-            } else {
-                theme.tool
-            };
+            let done = info.result_preview.is_some();
+            let icon_color = if done { theme.success } else { theme.tool };
+            let icon = if done { "\u{2713}" } else { "\u{25CF}" };
             let display_name = tool_user_facing_name(&info.tool_name, &info.arguments_summary);
             let args_display = tool_args_display(&info.tool_name, &info.arguments_summary);
 
-            // Header: ╭─ name (args) ─╮
+            // Header: ● name (args)  or  ✓ name (args)
             let header_label = if args_display.is_empty() {
                 display_name
             } else {
                 format!("{display_name} ({args_display})")
             };
             result.push(Line::from(vec![
-                Span::styled("  \u{256D}\u{2500} ", Style::default().fg(border_color)),
+                Span::styled(
+                    format!("{icon} "),
+                    Style::default().fg(icon_color),
+                ),
                 Span::styled(
                     header_label,
-                    Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.text_dim),
                 ),
-                Span::styled(" \u{2500}\u{2500}", Style::default().fg(border_color)),
             ]));
 
-            // Body: │ output lines
-            if !info.collapsed {
+            // Body: ⎿ output lines — collapsed shows last line + "…+N lines"
+            let max_preview = 3;
+            if info.collapsed && self.lines.len() > max_preview {
+                // Show last line as preview
+                if let Some(last) = self.lines.last() {
+                    let text: String = last.segments.iter().map(|s| s.text.as_str()).collect();
+                    let preview = if text.chars().count() > 60 {
+                        let t: String = text.chars().take(59).collect();
+                        format!("{t}\u{2026}")
+                    } else {
+                        text
+                    };
+                    let remaining = self.lines.len().saturating_sub(1);
+                    result.push(Line::from(vec![
+                        Span::styled("  \u{23BF} ", Style::default().fg(icon_color)),
+                        Span::styled(preview, Style::default().fg(theme.text_dim)),
+                    ]));
+                    if remaining > 0 {
+                        result.push(Line::from(vec![
+                            Span::styled("    ", Style::default().fg(theme.border)),
+                            Span::styled(
+                                format!("\u{2026} +{remaining} lines (ctrl+o to expand)"),
+                                Style::default().fg(theme.text_inactive),
+                            ),
+                        ]));
+                    }
+                }
+            } else {
                 for rendered_line in &self.lines {
                     let mut spans: Vec<Span<'_>> = vec![Span::styled(
-                        "  \u{2502} ",
-                        Style::default().fg(border_color),
+                        "  \u{23BF} ",
+                        Style::default().fg(icon_color),
                     )];
                     let line_text: String = rendered_line
                         .segments
@@ -350,21 +376,6 @@ impl ChatMessage {
                     result.push(Line::from(spans));
                 }
             }
-
-            // Footer: ╰─ status ─╯
-            let status_label = if info.result_preview.is_some() {
-                "\u{2713} done"
-            } else {
-                "\u{2026} running"
-            };
-            result.push(Line::from(vec![
-                Span::styled("  \u{2570}\u{2500}", Style::default().fg(border_color)),
-                Span::styled(
-                    format!(" {status_label} "),
-                    Style::default().fg(theme.text_dim),
-                ),
-                Span::styled("\u{2500}\u{256F}", Style::default().fg(border_color)),
-            ]));
 
             return result;
         }
@@ -499,10 +510,16 @@ impl ChatMessage {
                 .saturating_add(2) // header + footer
                 .saturating_add(sep);
         }
-        if self.tool_info.is_some() {
-            // Card: header + body lines + footer = lines + 2
-            (self.lines.len() as u16).saturating_add(2).max(2)
-        } else if matches!(self.kind, ChatMessageKind::Spinner) {
+        if let Some(info) = &self.tool_info {
+            if info.collapsed {
+                if self.lines.len() > 3 {
+                    return 3; // header + last line preview + "…+N lines"
+                }
+                return 1; // just header if no output
+            }
+            return (self.lines.len() as u16).saturating_add(1).max(1);
+        }
+        if matches!(self.kind, ChatMessageKind::Spinner) {
             (self.lines.len() as u16).max(1)
         } else {
             (self.lines.len() as u16).saturating_add(1).max(1)
