@@ -215,7 +215,7 @@ fn main() {
             }
         }
     };
-    let max_turns = settings.max_turns.unwrap_or(10);
+    let max_turns = settings.max_turns.unwrap_or(200);
     let caps = nocode_core::provider::model_caps::lookup(&model);
     let max_tokens = settings.max_tokens.unwrap_or(caps.max_output_tokens);
 
@@ -498,7 +498,7 @@ fn run_status(cwd: &str, provider: &ModelProvider, model: &str, settings: &Setti
     println!("Working directory: {cwd}");
     println!("Provider: {}", provider.as_str());
     println!("Model: {model}");
-    println!("Max turns: {}", settings.max_turns.unwrap_or(10));
+    println!("Max turns: {}", settings.max_turns.unwrap_or(200));
     println!("Max tokens: {}", settings.max_tokens.unwrap_or(16384));
     println!();
     let keys = [
@@ -765,7 +765,7 @@ fn run_ide_server() {
         eprintln!("Warning: {w}");
     }
     let max_tokens = settings.max_tokens.unwrap_or(16384);
-    let max_turns = settings.max_turns.unwrap_or(10);
+    let max_turns = settings.max_turns.unwrap_or(200);
 
     let handler = IdeRequestHandler::new(
         IdeServerConfig::default(),
@@ -848,7 +848,7 @@ fn run_mcp_server() {
         eprintln!("Warning: {w}");
     }
     let max_tokens = settings.max_tokens.unwrap_or(16384);
-    let max_turns = settings.max_turns.unwrap_or(10);
+    let max_turns = settings.max_turns.unwrap_or(200);
 
     let server = McpServer::with_provider(
         registry,
@@ -1037,7 +1037,7 @@ fn run_agent_host() {
     }
     let executor = ToolExecutor::new(&registry);
     let max_tokens = settings.max_tokens.unwrap_or(16384);
-    let max_turns = settings.max_turns.unwrap_or(10);
+    let max_turns = settings.max_turns.unwrap_or(200);
 
     let messages = vec![Message::user_text(prompt)];
     let config = r#loop::LoopConfig {

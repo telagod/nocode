@@ -11,9 +11,9 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 pub const STREAM_READ_POLL_INTERVAL: Duration = Duration::from_millis(250);
-pub const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+pub const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(86400);
 pub const USER_CANCELLED_MESSAGE: &str = "Cancelled by user";
-const HTTP_TIMEOUT: Duration = Duration::from_secs(600);
+const HTTP_TIMEOUT: Duration = Duration::from_secs(86400);
 
 enum StreamBridgeMessage {
     Chunk(Vec<u8>),
