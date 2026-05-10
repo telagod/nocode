@@ -521,6 +521,14 @@ pub(crate) struct InputBox<'a> {
     pub mode_label: &'a str,
     pub view_offset: usize,
     pub scroll_y: u16,
+    pub status_parts: Vec<StatusPart>,
+}
+
+/// A colored segment in the status line above the input.
+#[derive(Clone)]
+pub(crate) struct StatusPart {
+    pub text: String,
+    pub color: Color,
 }
 
 impl<'a> InputBox<'a> {
@@ -531,6 +539,7 @@ impl<'a> InputBox<'a> {
             mode_label: "",
             view_offset: 0,
             scroll_y: 0,
+            status_parts: Vec::new(),
         }
     }
 
@@ -548,13 +557,18 @@ impl<'a> InputBox<'a> {
         self.scroll_y = scroll_y;
         self
     }
+
+    pub fn with_status(mut self, parts: Vec<StatusPart>) -> Self {
+        self.status_parts = parts;
+        self
+    }
 }
 
 impl Widget for InputBox<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = default_theme();
 
-        // Thin separator line above input (Pi-style)
+        // Separator line above input — embeds status info with colors
         let content_area = if area.height >= 2 {
             let sep_area = Rect {
                 x: area.x,
@@ -562,10 +576,48 @@ impl Widget for InputBox<'_> {
                 width: area.width,
                 height: 1,
             };
-            let sep: String = "\u{2500}".repeat(area.width as usize);
-            Paragraph::new(sep)
-                .style(Style::default().fg(theme.input_border))
-                .render(sep_area, buf);
+
+            if self.status_parts.is_empty() {
+                // Plain separator
+                let sep: String = "\u{2500}".repeat(area.width as usize);
+                Paragraph::new(sep)
+                    .style(Style::default().fg(theme.input_border))
+                    .render(sep_area, buf);
+            } else {
+                // Status-embedded separator: ─── model · $cost · ctx% ───
+                let mut spans: Vec<Span<'_>> = Vec::new();
+                spans.push(Span::styled(
+                    "\u{2500}\u{2500} ",
+                    Style::default().fg(theme.border),
+                ));
+                let mut content_len: usize = 3; // "── "
+                for (i, part) in self.status_parts.iter().enumerate() {
+                    if i > 0 {
+                        spans.push(Span::styled(
+                            " \u{00B7} ",
+                            Style::default().fg(theme.border),
+                        ));
+                        content_len += 3;
+                    }
+                    spans.push(Span::styled(
+                        part.text.as_str(),
+                        Style::default().fg(part.color),
+                    ));
+                    content_len += part.text.len();
+                }
+                spans.push(Span::styled(" ", Style::default().fg(theme.border)));
+                content_len += 1;
+                let remaining = (area.width as usize).saturating_sub(content_len);
+                if remaining > 0 {
+                    spans.push(Span::styled(
+                        "\u{2500}".repeat(remaining),
+                        Style::default().fg(theme.border),
+                    ));
+                }
+                let line = Line::from(spans);
+                Paragraph::new(line).render(sep_area, buf);
+            }
+
             Rect {
                 x: area.x,
                 y: area.y + 1,

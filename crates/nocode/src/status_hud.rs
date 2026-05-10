@@ -202,6 +202,28 @@ impl StatusHud {
             format!("${total:.2}")
         }
     }
+
+    /// Short model name for inline status display.
+    #[must_use]
+    pub fn model_name_short(&self) -> String {
+        if self.model_name.is_empty() {
+            "no model".to_string()
+        } else {
+            self.model_name.clone()
+        }
+    }
+
+    /// Short cost string.
+    #[must_use]
+    pub fn format_cost_short(&self) -> String {
+        self.format_cost()
+    }
+
+    /// Short context usage string: "▰▰▱▱▱ 23%"
+    #[must_use]
+    pub fn format_context_short(&self) -> String {
+        format_context_bar(self.context_window_pct)
+    }
 }
 
 /// Format context window usage as a visual mini-bar: "▰▰▰▱▱ 42%"

@@ -11,7 +11,7 @@ use crate::status_hud::StatusHud;
 use crate::tui_commands::{SlashResult, handle_slash_command};
 use crate::tui_events::{ChannelObserver, TuiEvent};
 use crate::tui_widgets::{
-    ChatMessage, ChatMessageKind, InputBox, PlanChoiceInfo, PlanChoiceOption, StatusBar,
+    ChatMessage, ChatMessageKind, InputBox, PlanChoiceInfo, PlanChoiceOption, StatusPart,
     WelcomeBanner, WelcomeBannerInfo,
 };
 
@@ -202,6 +202,7 @@ pub(crate) struct TuiApp {
 pub(crate) struct PendingImage {
     pub media_type: String,
     pub base64_data: String,
+    #[allow(dead_code)]
     pub size_bytes: usize,
 }
 
@@ -581,27 +582,21 @@ impl TuiApp {
             return;
         }
 
-        let is_busy = self.thinking_spinner.is_some();
-
-        // Unified layout: content area fills everything, bottom area for status or completion
+        // Unified layout: content fills everything, bottom only for completion dropdown
         let has_completion = self.completion_selected.is_some() && !self.overlay.is_open();
         let completion_count = if has_completion {
             self.completion_suggestions().len().min(10) as u16
         } else {
             0
         };
-        let bottom_h = if completion_count > 0 {
-            completion_count + 1 // completion rows + status bar
-        } else {
-            1 // just status bar
-        };
+        let bottom_h = completion_count; // 0 if no completion
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(1), Constraint::Length(bottom_h)])
             .split(frame.area());
 
         let content_area = chunks[0];
-        let status_area = chunks[1];
+        let completion_area = chunks[1];
 
         // 1. Banner or unified content (chat + input in one scrollable flow)
         if self.show_banner {
@@ -662,7 +657,8 @@ impl TuiApp {
                 let input_widget = InputBox::new(&self.input, self.cursor_pos)
                     .with_mode(mode_label)
                     .with_view_offset(self.input_view_offset)
-                    .with_scroll_y(self.input_scroll_y);
+                    .with_scroll_y(self.input_scroll_y)
+                    .with_status(self.build_status_parts_vec());
                 frame.render_widget(input_widget, input_rect);
                 self.last_input_rect = Some(input_rect);
                 self.set_cursor_in_rect(frame, input_rect, mode_label);
@@ -671,74 +667,14 @@ impl TuiApp {
             self.draw_unified_content(frame, content_area);
         }
 
-        // 2. Status bar (always visible, floating at bottom)
-        let pending_img_hint = if self.pending_images.is_empty() {
-            None
-        } else {
-            let total_kb: usize = self
-                .pending_images
-                .iter()
-                .map(|i| i.size_bytes / 1024)
-                .sum();
-            Some(format!(
-                "[{} image{} attached, {}KB]",
-                self.pending_images.len(),
-                if self.pending_images.len() > 1 {
-                    "s"
-                } else {
-                    ""
-                },
-                total_kb
-            ))
-        };
-        let mut status_base = pending_img_hint
-            .or_else(|| self.search_status())
-            .or_else(|| self.slash_command_hint())
-            .unwrap_or_else(|| self.hud.render_line());
-        if self.plan_state.is_active() {
-            status_base = format!("{} | {}", self.plan_state.label(), status_base);
-        }
+        // 2. Completion dropdown (if active)
+        if completion_count > 0
+            && let Some(input_rect) = self.last_input_rect
         {
-            let history = nocode_core::storage::file_history::global_file_history();
-            if let Ok(h) = history.lock() {
-                let uc = h.undo_count();
-                let rc = h.redo_count();
-                if uc > 0 || rc > 0 {
-                    status_base.push_str(&format!(" | undo:{uc} redo:{rc}"));
-                }
-            }
-        }
-        if self.unseen_count > 0 && self.chat_scroll > 0 {
-            status_base.push_str(&format!(" | {} new", self.unseen_count));
-        }
-        // Hints inline with status when not busy
-        if !is_busy {
-            let hints_text = self.hints_text();
-            if !hints_text.is_empty() {
-                status_base.push_str(" | ");
-                status_base.push_str(&hints_text);
-            }
-        }
-        let status = StatusBar::new(&status_base);
-
-        // 3. Bottom area: completion dropdown (if active) + status bar
-        if completion_count > 0 {
-            // Split bottom area: completion rows on top, status bar at very bottom
-            let bottom_chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(completion_count), Constraint::Length(1)])
-                .split(status_area);
-            let completion_area = bottom_chunks[0];
-            let real_status_area = bottom_chunks[1];
-            frame.render_widget(status, real_status_area);
-            if let Some(input_rect) = self.last_input_rect {
-                self.draw_completion_inline(frame, completion_area, input_rect);
-            }
-        } else {
-            frame.render_widget(status, status_area);
+            self.draw_completion_inline(frame, completion_area, input_rect);
         }
 
-        // 4. Overlay
+        // 3. Overlay
         if self.overlay.is_open() {
             self.draw_overlay(frame, frame.area());
         }
@@ -746,6 +682,38 @@ impl TuiApp {
         self.dirty = false;
     }
 
+    /// Build colored status parts for the input separator line.
+    fn build_status_parts_vec(&self) -> Vec<StatusPart> {
+        let theme = crate::tui_theme::default_theme();
+        let model = self.hud.model_name_short();
+        let cost = self.hud.format_cost_short();
+        let ctx = self.hud.format_context_short();
+
+        let mut parts = vec![
+            StatusPart {
+                text: model,
+                color: theme.claude,
+            },
+            StatusPart {
+                text: cost,
+                color: theme.success,
+            },
+            StatusPart {
+                text: ctx,
+                color: theme.text_dim,
+            },
+        ];
+
+        if self.plan_state.is_active() {
+            parts.push(StatusPart {
+                text: self.plan_state.label().to_string(),
+                color: theme.warning,
+            });
+        }
+        parts
+    }
+
+    #[allow(dead_code)]
     fn hints_text(&self) -> String {
         // Active inline choice — show choice shortcuts
         if self.active_plan_choice.is_some() {
@@ -976,7 +944,8 @@ impl TuiApp {
             let input_widget = InputBox::new(&self.input, self.cursor_pos)
                 .with_mode(mode_label)
                 .with_view_offset(self.input_view_offset)
-                .with_scroll_y(self.input_scroll_y);
+                .with_scroll_y(self.input_scroll_y)
+                .with_status(self.build_status_parts_vec());
             frame.render_widget(input_widget, input_rect);
             self.last_input_rect = Some(input_rect);
             self.set_cursor_in_rect(frame, input_rect, mode_label);
@@ -1710,6 +1679,7 @@ impl TuiApp {
     }
 
     /// Get the search status line for display.
+    #[allow(dead_code)]
     pub(crate) fn search_status(&self) -> Option<String> {
         if !self.search_active {
             return None;
@@ -1719,6 +1689,7 @@ impl TuiApp {
         Some(format!("Search: {} ({}/{})", self.search_query, idx, count))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn slash_command_hint(&self) -> Option<String> {
         if !self.input.trim_start().starts_with('/') {
             return None;
