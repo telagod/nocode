@@ -140,6 +140,31 @@ impl Overlay {
 
 impl TuiApp {}
 
+/// Extract readable output from Bash tool JSON result.
+fn extract_bash_output(content: &str) -> String {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(content) {
+        let stdout = v["stdout"].as_str().unwrap_or("");
+        let stderr = v["stderr"].as_str().unwrap_or("");
+        let mut out = String::new();
+        if !stdout.is_empty() {
+            out.push_str(stdout.trim_end());
+        }
+        if !stderr.is_empty() {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(stderr.trim_end());
+        }
+        if out.is_empty() {
+            "(no output)".to_string()
+        } else {
+            out
+        }
+    } else {
+        content.to_string()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // TuiApp — main application state
 // ---------------------------------------------------------------------------
@@ -432,8 +457,13 @@ impl TuiApp {
     }
 
     pub fn push_tool_done(&mut self, name: &str, content: &str, is_error: bool) {
-        // Try to update the last Tool message with structured result
-        let content_lines = crate::markdown_render::render_markdown_to_lines(content);
+        // Parse Bash JSON output to extract just stdout/stderr
+        let display_content = if name == "Bash" || name == "bash" {
+            extract_bash_output(content)
+        } else {
+            content.to_string()
+        };
+        let content_lines = crate::markdown_render::render_markdown_to_lines(&display_content);
         if let Some(last) = self.chat_messages.last_mut()
             && last.kind == ChatMessageKind::Tool
         {
@@ -790,34 +820,19 @@ impl TuiApp {
 
         self.ensure_height_cache(area.width);
 
-        // Fixed input box at bottom, chat fills the rest above
         let input_lines =
             (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).clamp(1, 10) + 2; // +2 for top/bottom separators
-        let input_h = input_lines.min(area.height.saturating_sub(1));
-        let chat_area_h = area.height.saturating_sub(input_h);
 
-        let chat_area = Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width,
-            height: chat_area_h,
-        };
-        let input_rect = Rect {
-            x: area.x,
-            y: area.y + chat_area_h,
-            width: area.width,
-            height: input_h,
-        };
-
-        // --- Render chat messages in scrollable area ---
         let chat_h = self.total_content_height();
-        let visible = chat_area.height;
-        let max_scroll = chat_h.saturating_sub(visible);
+        let total_h = chat_h + input_lines;
+
+        let visible = area.height;
+        let max_scroll = total_h.saturating_sub(visible);
         let scroll = self.chat_scroll.min(max_scroll);
         let scroll_from_top = max_scroll.saturating_sub(scroll);
 
         // Bottom-align: when content is shorter than viewport, push it down
-        let top_padding = visible.saturating_sub(chat_h);
+        let top_padding = visible.saturating_sub(total_h);
 
         let theme = crate::tui_theme::default_theme();
 
@@ -879,9 +894,9 @@ impl TuiApp {
 
                 if bg != ratatui::style::Color::Reset {
                     let line_rect = Rect {
-                        x: chat_area.x,
-                        y: chat_area.y + y_offset,
-                        width: chat_area.width,
+                        x: area.x,
+                        y: area.y + y_offset,
+                        width: area.width,
                         height: render_rows,
                     };
                     let bg_block = Block::default().style(ratatui::style::Style::default().bg(bg));
@@ -889,9 +904,9 @@ impl TuiApp {
                 }
 
                 let line_rect = Rect {
-                    x: chat_area.x,
-                    y: chat_area.y + y_offset,
-                    width: chat_area.width,
+                    x: area.x,
+                    y: area.y + y_offset,
+                    width: area.width,
                     height: render_rows,
                 };
                 let para = ratatui::widgets::Paragraph::new(vec![line])
@@ -910,20 +925,30 @@ impl TuiApp {
             }
         }
 
-        // --- Render fixed input box at bottom ---
-        let mode_label = if self.input_mode == InputMode::Normal {
-            self.input_mode.label()
+        // Render input box at end of content flow
+        if y_offset < visible {
+            let input_rect = Rect {
+                x: area.x,
+                y: area.y + y_offset,
+                width: area.width,
+                height: input_lines.min(visible.saturating_sub(y_offset)),
+            };
+            let mode_label = if self.input_mode == InputMode::Normal {
+                self.input_mode.label()
+            } else {
+                ""
+            };
+            let input_widget = InputBox::new(&self.input, self.cursor_pos)
+                .with_mode(mode_label)
+                .with_view_offset(self.input_view_offset)
+                .with_scroll_y(self.input_scroll_y)
+                .with_status(self.build_status_parts_vec());
+            frame.render_widget(input_widget, input_rect);
+            self.last_input_rect = Some(input_rect);
+            self.set_cursor_in_rect(frame, input_rect, mode_label);
         } else {
-            ""
-        };
-        let input_widget = InputBox::new(&self.input, self.cursor_pos)
-            .with_mode(mode_label)
-            .with_view_offset(self.input_view_offset)
-            .with_scroll_y(self.input_scroll_y)
-            .with_status(self.build_status_parts_vec());
-        frame.render_widget(input_widget, input_rect);
-        self.last_input_rect = Some(input_rect);
-        self.set_cursor_in_rect(frame, input_rect, mode_label);
+            self.last_input_rect = None;
+        }
     }
 
     fn draw_overlay(&self, frame: &mut Frame, area: Rect) {
