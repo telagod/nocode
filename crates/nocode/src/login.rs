@@ -468,13 +468,9 @@ fn step_endpoint(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<En
     let mut base_url = provider.base_url.to_string();
     let mut api_format = provider.api_format.to_string();
     let mut fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
-
-    enum EditState {
-        Idle,
-        EditingUrl(String),
-        EditingFormat,
-    }
-    let mut state = EditState::Idle;
+    let mut selected: usize = 0; // 0 = Base URL, 1 = Format
+    let mut editing = false;
+    let mut edit_buf = String::new();
 
     loop {
         clear(stdout);
@@ -485,117 +481,134 @@ fn step_endpoint(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<En
         draw_field(stdout, "Provider", &format!("{BOLD}{}{RESET}", provider.name));
         let _ = writeln!(stdout, "\r");
 
-        match &state {
-            EditState::Idle => {
-                let _ = writeln!(
-                    stdout,
-                    "  {FG_DIM}Base URL{RESET}  {base_url}\r"
-                );
-                let _ = writeln!(
-                    stdout,
-                    "  {FG_DIM}Format{RESET}    {api_format}\r"
-                );
-                let _ = writeln!(stdout, "\r");
-                let _ = writeln!(
-                    stdout,
-                    "  {FG_DIM}u{RESET} edit URL  {FG_DIM}f{RESET} edit format  {FG_GREEN}Enter{RESET} next  {FG_DIM}Esc{RESET} back\r"
-                );
-            }
-            EditState::EditingUrl(buf) => {
-                let display = if buf.is_empty() {
-                    format!("{FG_DIM}{base_url}{RESET}")
-                } else {
-                    buf.clone()
-                };
-                let _ = writeln!(
-                    stdout,
-                    "  {FG_CYAN}Base URL{RESET}  {display}{FG_DIM}\u{2588}{RESET}\r"
-                );
-                let _ = writeln!(
-                    stdout,
-                    "  {FG_DIM}Format{RESET}    {api_format}\r"
-                );
-                let _ = writeln!(stdout, "\r");
-                let _ = writeln!(
-                    stdout,
-                    "  {FG_DIM}type/paste URL  Enter confirm  Esc cancel{RESET}\r"
-                );
-            }
-            EditState::EditingFormat => {
-                let _ = writeln!(
-                    stdout,
-                    "  {FG_DIM}Base URL{RESET}  {base_url}\r"
-                );
-                let _ = writeln!(
-                    stdout,
-                    "  {FG_CYAN}Format{RESET}    {FG_DIM}\u{25C2}{RESET} {BOLD}{}{RESET} {FG_DIM}\u{25B8}{RESET}\r",
-                    formats[fmt_idx]
-                );
-                let _ = writeln!(stdout, "\r");
-                let _ = writeln!(
-                    stdout,
-                    "  {FG_DIM}\u{2190}/\u{2192} cycle  Enter confirm  Esc cancel{RESET}\r"
-                );
-            }
+        // Row 0: Base URL
+        if editing && selected == 0 {
+            let display = if edit_buf.is_empty() {
+                format!("{FG_DIM}{base_url}{RESET}")
+            } else {
+                edit_buf.clone()
+            };
+            let _ = writeln!(
+                stdout,
+                "  {FG_CYAN}{BOLD}\u{25B8} Base URL{RESET}  {display}{FG_DIM}\u{2588}{RESET}\r"
+            );
+        } else if selected == 0 {
+            let _ = writeln!(
+                stdout,
+                "  {FG_CYAN}{BOLD}\u{25B8} Base URL{RESET}  {base_url}\r"
+            );
+        } else {
+            let _ = writeln!(
+                stdout,
+                "  {FG_DIM}  Base URL  {base_url}{RESET}\r"
+            );
+        }
+
+        // Row 1: Format
+        if editing && selected == 1 {
+            let _ = writeln!(
+                stdout,
+                "  {FG_CYAN}{BOLD}\u{25B8} Format{RESET}    {FG_DIM}\u{25C2}{RESET} {BOLD}{}{RESET} {FG_DIM}\u{25B8}{RESET}\r",
+                formats[fmt_idx]
+            );
+        } else if selected == 1 {
+            let _ = writeln!(
+                stdout,
+                "  {FG_CYAN}{BOLD}\u{25B8} Format{RESET}    {api_format}\r"
+            );
+        } else {
+            let _ = writeln!(
+                stdout,
+                "  {FG_DIM}  Format    {api_format}{RESET}\r"
+            );
+        }
+
+        let _ = writeln!(stdout, "\r");
+
+        // Hint line
+        if editing && selected == 0 {
+            let _ = writeln!(
+                stdout,
+                "  {FG_DIM}type/paste URL  Enter confirm  Esc cancel{RESET}\r"
+            );
+        } else if editing && selected == 1 {
+            let _ = writeln!(
+                stdout,
+                "  {FG_DIM}\u{2190}/\u{2192} cycle  Enter confirm  Esc cancel{RESET}\r"
+            );
+        } else {
+            let _ = writeln!(
+                stdout,
+                "  {FG_DIM}\u{2191}\u{2193} select  Enter edit  Tab next step  Esc back{RESET}\r"
+            );
         }
         let _ = stdout.flush();
 
         match read_event()? {
             InputEvent::Paste(text) => {
-                if let EditState::EditingUrl(ref mut buf) = state {
-                    buf.push_str(text.trim());
+                if editing && selected == 0 {
+                    edit_buf.push_str(text.trim());
                 }
             }
-            InputEvent::Key(key) => match &mut state {
-                EditState::Idle => match key.code {
-                    KeyCode::Char('u') | KeyCode::Char('U') => {
-                        state = EditState::EditingUrl(String::new());
+            InputEvent::Key(key) => {
+                if editing {
+                    match selected {
+                        0 => match key.code {
+                            KeyCode::Enter => {
+                                let trimmed = edit_buf.trim().trim_end_matches('/').to_string();
+                                if !trimmed.is_empty() {
+                                    base_url = trimmed;
+                                }
+                                edit_buf.clear();
+                                editing = false;
+                            }
+                            KeyCode::Esc => {
+                                edit_buf.clear();
+                                editing = false;
+                            }
+                            KeyCode::Backspace => { edit_buf.pop(); }
+                            KeyCode::Char(c) => edit_buf.push(c),
+                            _ => {}
+                        },
+                        1 => match key.code {
+                            KeyCode::Left => {
+                                fmt_idx = if fmt_idx == 0 { formats.len() - 1 } else { fmt_idx - 1 };
+                            }
+                            KeyCode::Right => {
+                                fmt_idx = (fmt_idx + 1) % formats.len();
+                            }
+                            KeyCode::Enter => {
+                                api_format = formats[fmt_idx].to_string();
+                                editing = false;
+                            }
+                            KeyCode::Esc => {
+                                fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
+                                editing = false;
+                            }
+                            _ => {}
+                        },
+                        _ => {}
                     }
-                    KeyCode::Char('f') | KeyCode::Char('F') => {
-                        fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
-                        state = EditState::EditingFormat;
-                    }
-                    KeyCode::Enter => {
-                        return Some(EndpointOverride { base_url, api_format });
-                    }
-                    KeyCode::Esc => return None,
-                    _ => {}
-                },
-                EditState::EditingUrl(buf) => match key.code {
-                    KeyCode::Enter => {
-                        let trimmed = buf.trim().trim_end_matches('/').to_string();
-                        if !trimmed.is_empty() {
-                            base_url = trimmed;
+                } else {
+                    match key.code {
+                        KeyCode::Up if selected > 0 => selected -= 1,
+                        KeyCode::Down if selected < 1 => selected += 1,
+                        KeyCode::Enter => {
+                            editing = true;
+                            if selected == 0 {
+                                edit_buf.clear();
+                            } else {
+                                fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
+                            }
                         }
-                        state = EditState::Idle;
+                        KeyCode::Tab | KeyCode::Char('\t') => {
+                            return Some(EndpointOverride { base_url, api_format });
+                        }
+                        KeyCode::Esc => return None,
+                        _ => {}
                     }
-                    KeyCode::Esc => {
-                        state = EditState::Idle;
-                    }
-                    KeyCode::Backspace => {
-                        buf.pop();
-                    }
-                    KeyCode::Char(c) => buf.push(c),
-                    _ => {}
-                },
-                EditState::EditingFormat => match key.code {
-                    KeyCode::Left => {
-                        fmt_idx = if fmt_idx == 0 { formats.len() - 1 } else { fmt_idx - 1 };
-                    }
-                    KeyCode::Right => {
-                        fmt_idx = (fmt_idx + 1) % formats.len();
-                    }
-                    KeyCode::Enter => {
-                        api_format = formats[fmt_idx].to_string();
-                        state = EditState::Idle;
-                    }
-                    KeyCode::Esc => {
-                        fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
-                        state = EditState::Idle;
-                    }
-                    _ => {}
-                },
-            },
+                }
+            }
         }
     }
 }
