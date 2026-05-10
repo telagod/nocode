@@ -885,11 +885,38 @@ impl<'a> WelcomeBanner<'a> {
     }
 }
 
-const LOGO: &[&str] = &[
-    "┌┐┌  ┌─┐  ┌─╴  ┌─┐  ┌─┤  ┌─╴",
-    "│││  │ │  │    │ │  │ │  ├─╴",
-    "┘ └  └─┘  └─╴  └─┘  └─┘  └─╴",
+/// Half-block pixel-art logo for "nocode" — 2 rows, rendered with per-letter gradient colors.
+/// Each letter pair: (top_row, bottom_row, color)
+const LOGO_LETTERS: &[(&str, &str, Color)] = &[
+    ("\u{2590}\u{259B}\u{259C}\u{258C}", "\u{2590}\u{258C}\u{259D}\u{258C}", Color::Rgb(167, 139, 250)), // n — lavender
+    ("\u{259F}\u{2580}\u{2599}", "\u{259C}\u{2584}\u{259B}", Color::Rgb(129, 140, 248)),                  // o — indigo
+    ("\u{259F}\u{2580}\u{2580}", "\u{259C}\u{2584}\u{2584}", Color::Rgb(99, 179, 237)),                   // c — blue
+    ("\u{259F}\u{2580}\u{2599}", "\u{259C}\u{2584}\u{259B}", Color::Rgb(56, 189, 248)),                   // o — sky
+    ("\u{259F}\u{2580}\u{258C}", "\u{259C}\u{2584}\u{2598}", Color::Rgb(34, 211, 238)),                   // d — cyan
+    ("\u{259F}\u{2580}\u{2580}", "\u{259C}\u{2580}\u{2584}", Color::Rgb(94, 234, 212)),                   // e — teal
 ];
+
+/// Build the logo as two `Line`s of colored Spans.
+fn build_logo_lines() -> Vec<Line<'static>> {
+    let gap = "  ";
+    let mut top_spans: Vec<Span<'static>> = Vec::new();
+    let mut bot_spans: Vec<Span<'static>> = Vec::new();
+    for (i, &(top, bot, color)) in LOGO_LETTERS.iter().enumerate() {
+        if i > 0 {
+            top_spans.push(Span::styled(gap, Style::default()));
+            bot_spans.push(Span::styled(gap, Style::default()));
+        }
+        top_spans.push(Span::styled(
+            top,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ));
+        bot_spans.push(Span::styled(
+            bot,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ));
+    }
+    vec![Line::from(top_spans), Line::from(bot_spans)]
+}
 
 /// Prompt suggestions shown on startup — rotates each minute.
 const SUGGESTIONS: &[&str] = &[
@@ -910,15 +937,8 @@ impl Widget for WelcomeBanner<'_> {
 
         let mut lines: Vec<Line<'_>> = Vec::with_capacity(8);
 
-        // ── Layer 1: ASCII Art Logo ──
-        for logo_line in LOGO {
-            lines.push(Line::from(Span::styled(
-                *logo_line,
-                Style::default()
-                    .fg(theme.claude)
-                    .add_modifier(Modifier::BOLD),
-            )));
-        }
+        // ── Layer 1: Half-block pixel art logo with gradient colors ──
+        lines.extend(build_logo_lines());
 
         // Single breathing line between logo and info
         lines.push(Line::from(""));
