@@ -284,14 +284,12 @@ fn step_provider(stdout: &mut io::Stdout, providers: &[LoginProvider]) -> Option
                 } else {
                     "   ".to_string()
                 };
-                let model_hint = format!("{FG_DIM}{}{RESET}", p.default_model);
-                let padded_name = format!("{:<18}", p.name);
                 let name_display = if is_sel {
-                    format!("{FG_WHITE}{BOLD}{padded_name}{RESET}")
+                    format!("{FG_WHITE}{BOLD}{}{RESET}", p.name)
                 } else {
-                    padded_name
+                    p.name.to_string()
                 };
-                let _ = writeln!(stdout, "{marker}{name_display} {model_hint}\r");
+                let _ = writeln!(stdout, "{marker}{name_display}\r");
                 flat_pos += 1;
             }
             let _ = writeln!(stdout, "\r");
@@ -332,17 +330,12 @@ fn step_provider(stdout: &mut io::Stdout, providers: &[LoginProvider]) -> Option
                         } else {
                             "   ".to_string()
                         };
-                        let padded = format!("{:<18}", p.name);
                         let name_d = if is_sel {
-                            format!("{FG_WHITE}{BOLD}{padded}{RESET}")
+                            format!("{FG_WHITE}{BOLD}{}{RESET}", p.name)
                         } else {
-                            padded
+                            p.name.to_string()
                         };
-                        let _ = writeln!(
-                            stdout,
-                            "{marker}{name_d} {FG_DIM}{}{RESET}\r",
-                            p.default_model
-                        );
+                        let _ = writeln!(stdout, "{marker}{name_d}\r");
                     }
                     draw_hint(stdout, "type to filter  Enter select  Esc clear");
                     let _ = stdout.flush();
