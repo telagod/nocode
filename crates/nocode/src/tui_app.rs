@@ -760,7 +760,7 @@ impl TuiApp {
         // Account for top and bottom separator lines
         let sep_offset: u16 = if input_rect.height >= 3 { 1 } else { 0 };
         let content_height = input_rect.height.saturating_sub(sep_offset).saturating_sub(u16::from(input_rect.height >= 3));
-        let usable_width = input_rect.width.saturating_sub(2 + mode_prefix_width) as usize;
+        let usable_width = input_rect.width.saturating_sub(1 + mode_prefix_width) as usize;
         if usable_width > 0 {
             if char_col < self.input_view_offset {
                 self.input_view_offset = char_col;
@@ -769,7 +769,7 @@ impl TuiApp {
             }
         }
         let visible_col = char_col.saturating_sub(self.input_view_offset) as u16;
-        let cursor_col = visible_col + 2 + mode_prefix_width;
+        let cursor_col = visible_col + 1 + mode_prefix_width;
         let cursor_x = input_rect.x + cursor_col;
         if content_height > 0 {
             if cursor_line < self.input_scroll_y {

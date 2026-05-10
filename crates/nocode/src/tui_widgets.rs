@@ -672,7 +672,7 @@ impl Widget for InputBox<'_> {
                         Style::default().fg(mode_color).add_modifier(Modifier::BOLD),
                     ));
                 }
-                spans.push(Span::styled("> ", Style::default().fg(theme.text_dim)));
+                spans.push(Span::styled(" ", Style::default().fg(theme.text_dim)));
                 spans.push(Span::styled(
                     visible.to_string(),
                     Style::default().fg(theme.text),
@@ -680,7 +680,7 @@ impl Widget for InputBox<'_> {
                 lines.push(Line::from(spans));
             } else {
                 lines.push(Line::from(vec![
-                    Span::styled("  ", Style::default().fg(theme.text_dim)),
+                    Span::styled(" ", Style::default().fg(theme.text_dim)),
                     Span::styled(visible.to_string(), Style::default().fg(theme.text)),
                 ]));
             }
