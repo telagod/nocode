@@ -486,16 +486,16 @@ fn step_endpoint(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<En
             let display = if edit_buf.is_empty() {
                 format!("{FG_DIM}{base_url}{RESET}")
             } else {
-                edit_buf.clone()
+                format!("{FG_WHITE}{BOLD}{edit_buf}{RESET}")
             };
             let _ = writeln!(
                 stdout,
-                "  {FG_CYAN}{BOLD}\u{25B8} Base URL{RESET}  {display}{FG_DIM}\u{2588}{RESET}\r"
+                "  {FG_CYAN}{BOLD}\u{25B8} Base URL{RESET}  {display}{FG_CYAN}\u{2588}{RESET}\r"
             );
         } else if selected == 0 {
             let _ = writeln!(
                 stdout,
-                "  {FG_CYAN}{BOLD}\u{25B8} Base URL{RESET}  {base_url}\r"
+                "  {FG_CYAN}\u{25B8}{RESET} {FG_WHITE}{BOLD}Base URL{RESET}  {FG_CYAN}{base_url}{RESET}\r"
             );
         } else {
             let _ = writeln!(
@@ -508,13 +508,13 @@ fn step_endpoint(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<En
         if editing && selected == 1 {
             let _ = writeln!(
                 stdout,
-                "  {FG_CYAN}{BOLD}\u{25B8} Format{RESET}    {FG_DIM}\u{25C2}{RESET} {BOLD}{}{RESET} {FG_DIM}\u{25B8}{RESET}\r",
+                "  {FG_CYAN}{BOLD}\u{25B8} Format{RESET}    {FG_DIM}\u{25C2}{RESET} {FG_WHITE}{BOLD}{}{RESET} {FG_DIM}\u{25B8}{RESET}\r",
                 formats[fmt_idx]
             );
         } else if selected == 1 {
             let _ = writeln!(
                 stdout,
-                "  {FG_CYAN}{BOLD}\u{25B8} Format{RESET}    {api_format}\r"
+                "  {FG_CYAN}\u{25B8}{RESET} {FG_WHITE}{BOLD}Format{RESET}    {FG_CYAN}{api_format}{RESET}\r"
             );
         } else {
             let _ = writeln!(
