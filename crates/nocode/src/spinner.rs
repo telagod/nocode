@@ -5,7 +5,7 @@ use crossterm::style::Color;
 const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /// Seconds of silence before we consider the spinner stalled.
-const STALL_THRESHOLD_SECS: f64 = 10.0;
+const STALL_THRESHOLD_SECS: f64 = 30.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpinnerState {
@@ -317,7 +317,7 @@ mod tests {
     fn stalled_detection_via_manual_time() {
         let mut spinner = Spinner::new("Thinking");
         // Force last_output_at to 11 seconds ago
-        spinner.last_output_at = Instant::now() - std::time::Duration::from_secs(11);
+        spinner.last_output_at = Instant::now() - std::time::Duration::from_secs(31);
         spinner.check_stalled();
         assert_eq!(spinner.mode, SpinnerMode::Stalled);
     }
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn stalled_mode_shows_warning_prefix() {
         let mut spinner = Spinner::new("Thinking");
-        spinner.last_output_at = Instant::now() - std::time::Duration::from_secs(11);
+        spinner.last_output_at = Instant::now() - std::time::Duration::from_secs(31);
         let frame = spinner.tick();
         assert!(
             frame.display.contains("Stalled"),
@@ -338,7 +338,7 @@ mod tests {
     #[test]
     fn stalled_recovers_on_output() {
         let mut spinner = Spinner::new("Thinking");
-        spinner.last_output_at = Instant::now() - std::time::Duration::from_secs(11);
+        spinner.last_output_at = Instant::now() - std::time::Duration::from_secs(31);
         spinner.check_stalled();
         assert_eq!(spinner.mode, SpinnerMode::Stalled);
 
