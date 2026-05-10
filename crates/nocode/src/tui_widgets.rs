@@ -840,61 +840,95 @@ impl<'a> WelcomeBanner<'a> {
     }
 }
 
-/// Half-block pixel-art logo for "nocode" — 2 rows, rendered with per-letter gradient colors.
-/// Each letter pair: (top_row, bottom_row, color)
-const LOGO_LETTERS: &[(&str, &str, Color)] = &[
+/// Big ASCII-art logo — 6 rows per letter, gradient colors per letter.
+/// Each entry: array of 6 row strings + color.
+const LOGO_LETTERS: &[(&[&str; 6], Color)] = &[
     (
-        "\u{2590}\u{259B}\u{259C}\u{258C}",
-        "\u{2590}\u{258C}\u{259D}\u{258C}",
+        &[
+            "\u{2588}\u{2588}\u{2588}\u{2557}  \u{2588}\u{2588}\u{2557}",
+            "\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2551}",
+            "\u{2588}\u{2588}\u{2554}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2551}",
+            "\u{2588}\u{2588}\u{2551}\u{255A}\u{2588}\u{2588}\u{2588}\u{2588}\u{2551}",
+            "\u{2588}\u{2588}\u{2551} \u{255A}\u{2588}\u{2588}\u{2588}\u{2551}",
+            "\u{255A}\u{2550}\u{255D}  \u{255A}\u{2550}\u{2550}\u{255D}",
+        ],
         Color::Rgb(167, 139, 250),
     ), // n — lavender
     (
-        "\u{259F}\u{2580}\u{2599}",
-        "\u{259C}\u{2584}\u{259B}",
+        &[
+            " \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} ",
+            "\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}",
+            "\u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}",
+            "\u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}",
+            "\u{255A}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255D}",
+            " \u{255A}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D} ",
+        ],
         Color::Rgb(129, 140, 248),
     ), // o — indigo
     (
-        "\u{259F}\u{2580}\u{2580}",
-        "\u{259C}\u{2584}\u{2584}",
+        &[
+            " \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}",
+            "\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D}",
+            "\u{2588}\u{2588}\u{2551}     ",
+            "\u{2588}\u{2588}\u{2551}     ",
+            "\u{255A}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}",
+            " \u{255A}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D}",
+        ],
         Color::Rgb(99, 179, 237),
     ), // c — blue
     (
-        "\u{259F}\u{2580}\u{2599}",
-        "\u{259C}\u{2584}\u{259B}",
+        &[
+            " \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} ",
+            "\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}",
+            "\u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}",
+            "\u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}",
+            "\u{255A}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255D}",
+            " \u{255A}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D} ",
+        ],
         Color::Rgb(56, 189, 248),
     ), // o — sky
     (
-        "\u{259F}\u{2580}\u{258C}",
-        "\u{259C}\u{2584}\u{2598}",
+        &[
+            "\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} ",
+            "\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}",
+            "\u{2588}\u{2588}\u{2551}  \u{2588}\u{2588}\u{2551}",
+            "\u{2588}\u{2588}\u{2551}  \u{2588}\u{2588}\u{2551}",
+            "\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255D}",
+            "\u{255A}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D} ",
+        ],
         Color::Rgb(34, 211, 238),
     ), // d — cyan
     (
-        "\u{259F}\u{2580}\u{2580}",
-        "\u{259C}\u{2580}\u{2584}",
+        &[
+            "\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}",
+            "\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D}",
+            "\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}  ",
+            "\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{255D}  ",
+            "\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}",
+            "\u{255A}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D}",
+        ],
         Color::Rgb(94, 234, 212),
     ), // e — teal
 ];
 
-/// Build the logo as two `Line`s of colored Spans.
+/// Build the logo as six `Line`s of colored Spans.
 fn build_logo_lines() -> Vec<Line<'static>> {
-    let gap = "  ";
-    let mut top_spans: Vec<Span<'static>> = Vec::new();
-    let mut bot_spans: Vec<Span<'static>> = Vec::new();
-    for (i, &(top, bot, color)) in LOGO_LETTERS.iter().enumerate() {
-        if i > 0 {
-            top_spans.push(Span::styled(gap, Style::default()));
-            bot_spans.push(Span::styled(gap, Style::default()));
+    let gap = " ";
+    let mut result: Vec<Line<'static>> = Vec::with_capacity(6);
+    for row in 0..6 {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        for (i, &(rows, color)) in LOGO_LETTERS.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(gap, Style::default()));
+            }
+            spans.push(Span::styled(
+                rows[row],
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ));
         }
-        top_spans.push(Span::styled(
-            top,
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ));
-        bot_spans.push(Span::styled(
-            bot,
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ));
+        result.push(Line::from(spans));
     }
-    vec![Line::from(top_spans), Line::from(bot_spans)]
+    result
 }
 
 /// Prompt suggestions shown on startup — rotates each minute.
@@ -910,11 +944,11 @@ impl Widget for WelcomeBanner<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = default_theme();
 
-        if area.height < 8 || area.width < 24 {
+        if area.height < 12 || area.width < 60 {
             return;
         }
 
-        let mut lines: Vec<Line<'_>> = Vec::with_capacity(8);
+        let mut lines: Vec<Line<'_>> = Vec::with_capacity(12);
 
         // ── Layer 1: Half-block pixel art logo with gradient colors ──
         lines.extend(build_logo_lines());
