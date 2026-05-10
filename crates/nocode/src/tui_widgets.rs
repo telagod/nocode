@@ -584,38 +584,43 @@ impl Widget for InputBox<'_> {
                     .style(Style::default().fg(theme.input_border))
                     .render(sep_area, buf);
             } else {
-                // Status-embedded separator: ─── model · $cost · ctx% ───
+                // Status-embedded separator: fill background with ─ first, then overlay content
+                let sep_bg: String = "\u{2500}".repeat(area.width as usize);
+                Paragraph::new(sep_bg)
+                    .style(Style::default().fg(theme.border))
+                    .render(sep_area, buf);
+
+                // Overlay status text starting at column 2
                 let mut spans: Vec<Span<'_>> = Vec::new();
                 spans.push(Span::styled(
-                    "\u{2500}\u{2500} ",
+                    "\u{2500} ",
                     Style::default().fg(theme.border),
                 ));
-                let mut content_len: usize = 3; // "── "
                 for (i, part) in self.status_parts.iter().enumerate() {
                     if i > 0 {
                         spans.push(Span::styled(
                             " \u{00B7} ",
                             Style::default().fg(theme.border),
                         ));
-                        content_len += 3;
                     }
                     spans.push(Span::styled(
                         part.text.as_str(),
                         Style::default().fg(part.color),
                     ));
-                    content_len += part.text.len();
                 }
-                spans.push(Span::styled(" ", Style::default().fg(theme.border)));
-                content_len += 1;
-                let remaining = (area.width as usize).saturating_sub(content_len);
-                if remaining > 0 {
-                    spans.push(Span::styled(
-                        "\u{2500}".repeat(remaining),
-                        Style::default().fg(theme.border),
-                    ));
-                }
-                let line = Line::from(spans);
-                Paragraph::new(line).render(sep_area, buf);
+                spans.push(Span::styled(
+                    " \u{2500}",
+                    Style::default().fg(theme.border),
+                ));
+                let overlay_line = Line::from(spans);
+                // Render the overlay on top (overwrites the ─ background)
+                let overlay_area = Rect {
+                    x: sep_area.x + 1,
+                    y: sep_area.y,
+                    width: sep_area.width.saturating_sub(1),
+                    height: 1,
+                };
+                Paragraph::new(overlay_line).render(overlay_area, buf);
             }
 
             Rect {
