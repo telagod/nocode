@@ -183,7 +183,21 @@ fn main() {
     };
 
     let provider_type = resolve_provider(&settings);
-    let model = resolve_model(&settings, &provider_type);
+    let model = match resolve_model(&settings, &provider_type) {
+        Some(m) => m,
+        None => {
+            eprintln!("No model configured. Starting setup...\n");
+            login::run_login(&cwd);
+            let settings = Settings::load_merged(&cwd);
+            match resolve_model(&settings, &resolve_provider(&settings)) {
+                Some(m) => m,
+                None => {
+                    eprintln!("No model configured. Run `nocode --login` to set up.");
+                    return;
+                }
+            }
+        }
+    };
     let max_turns = settings.max_turns.unwrap_or(10);
     let caps = nocode_core::provider::model_caps::lookup(&model);
     let max_tokens = settings.max_tokens.unwrap_or(caps.max_output_tokens);
@@ -287,7 +301,7 @@ fn main() {
             }
             let settings = Settings::load_merged(&cwd);
             let provider_type = resolve_provider(&settings);
-            let model = resolve_model(&settings, &provider_type);
+            let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| { eprintln!("No model configured. Run `nocode --login`."); std::process::exit(1); });
             let caps = nocode_core::provider::model_caps::lookup(&model);
             let max_tokens = settings.max_tokens.unwrap_or(caps.max_output_tokens);
             let custom_sp = resolve_custom_system_prompt(&settings);
@@ -374,10 +388,10 @@ fn resolve_provider(settings: &Settings) -> ModelProvider {
     ModelProvider::Claude
 }
 
-fn resolve_model(settings: &Settings, provider: &ModelProvider) -> String {
+fn resolve_model(settings: &Settings, provider: &ModelProvider) -> Option<String> {
     // 1. Explicit global override
     if let Ok(m) = env::var("NOCODE_MODEL") {
-        return m;
+        return Some(m);
     }
     // 2. Per-provider env var
     let per_provider_var = match provider {
@@ -389,19 +403,10 @@ fn resolve_model(settings: &Settings, provider: &ModelProvider) -> String {
     if !per_provider_var.is_empty()
         && let Ok(m) = env::var(per_provider_var)
     {
-        return m;
+        return Some(m);
     }
     // 3. Settings file
-    if let Some(m) = settings.model.clone() {
-        return m;
-    }
-    // 4. Provider-appropriate default
-    match provider {
-        ModelProvider::Claude => String::from("claude-sonnet-4-20250514"),
-        ModelProvider::OpenAi => String::from("gpt-4.1"),
-        ModelProvider::Gemini => String::from("gemini-2.5-pro"),
-        ModelProvider::Custom => String::from("default"),
-    }
+    settings.model.clone()
 }
 
 fn build_provider(
@@ -728,7 +733,7 @@ fn run_ide_server() {
         .unwrap_or_else(|_| String::from("."));
     let settings = Settings::load_merged(&cwd);
     let provider_type = resolve_provider(&settings);
-    let model = resolve_model(&settings, &provider_type);
+    let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| { eprintln!("No model configured. Run `nocode --login`."); std::process::exit(1); });
     let registry = ToolRegistry::with_defaults(&cwd);
     let custom_sp = resolve_custom_system_prompt(&settings);
     let system_blocks = assembly::assemble_system_prompt(
@@ -811,7 +816,7 @@ fn run_mcp_server() {
         .unwrap_or_else(|_| String::from("."));
     let settings = Settings::load_merged(&cwd);
     let provider_type = resolve_provider(&settings);
-    let model = resolve_model(&settings, &provider_type);
+    let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| { eprintln!("No model configured. Run `nocode --login`."); std::process::exit(1); });
     let registry = ToolRegistry::with_defaults(&cwd);
     let custom_sp = resolve_custom_system_prompt(&settings);
     let system_blocks = assembly::assemble_system_prompt(
@@ -999,7 +1004,7 @@ fn run_agent_host() {
         .unwrap_or_else(|_| String::from("."));
     let settings = Settings::load_merged(&cwd);
     let provider_type = resolve_provider(&settings);
-    let model = resolve_model(&settings, &provider_type);
+    let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| { eprintln!("No model configured. Run `nocode --login`."); std::process::exit(1); });
     let registry = ToolRegistry::with_defaults(&cwd);
     let custom_sp = resolve_custom_system_prompt(&settings);
     let system_blocks = assembly::assemble_system_prompt(
@@ -1134,7 +1139,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_model_defaults_per_provider() {
+    fn resolve_model_returns_none_without_config() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let nocode_model = std::env::var("NOCODE_MODEL").ok();
         let anthropic_model = std::env::var("ANTHROPIC_MODEL").ok();
@@ -1149,10 +1154,10 @@ mod tests {
         }
 
         let settings = Settings::default();
-        assert!(resolve_model(&settings, &ModelProvider::Claude).contains("claude"));
-        assert!(resolve_model(&settings, &ModelProvider::OpenAi).contains("gpt"));
-        assert!(resolve_model(&settings, &ModelProvider::Gemini).contains("gemini"));
-        assert_eq!(resolve_model(&settings, &ModelProvider::Custom), "default");
+        assert!(resolve_model(&settings, &ModelProvider::Claude).is_none());
+        assert!(resolve_model(&settings, &ModelProvider::OpenAi).is_none());
+        assert!(resolve_model(&settings, &ModelProvider::Gemini).is_none());
+        assert!(resolve_model(&settings, &ModelProvider::Custom).is_none());
 
         unsafe {
             if let Some(value) = nocode_model {
@@ -1178,7 +1183,7 @@ mod tests {
         };
         assert_eq!(
             resolve_model(&settings, &ModelProvider::OpenAi),
-            "my-custom-model"
+            Some("my-custom-model".to_string())
         );
     }
 }
