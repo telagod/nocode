@@ -396,18 +396,19 @@ mod tests {
         let cwd = tempfile::tempdir().unwrap();
         let cwd_str = cwd.path().to_string_lossy().into_owned();
 
-        let user = Settings {
-            model: Some("user-model".to_string()),
+        // Use Project tier only — User tier writes to real $HOME which pollutes env
+        let project = Settings {
+            model: Some("project-base".to_string()),
             custom_api_format: Some("openai".to_string()),
             ..Default::default()
         };
-        user.save_tier(SettingsTier::User, &cwd_str).unwrap();
+        project.save_tier(SettingsTier::Project, &cwd_str).unwrap();
 
-        let project = Settings {
-            custom_base_url: Some("https://project.example".to_string()),
+        let local = Settings {
+            custom_base_url: Some("https://local.example".to_string()),
             ..Default::default()
         };
-        project.save_tier(SettingsTier::Project, &cwd_str).unwrap();
+        local.save_tier(SettingsTier::Local, &cwd_str).unwrap();
 
         Settings::persist_key_value(
             "model",
@@ -420,9 +421,16 @@ mod tests {
         let saved_project = Settings::load_tier(SettingsTier::Project, &cwd_str);
         assert_eq!(saved_project.model.as_deref(), Some("project-model"));
         assert_eq!(
-            saved_project.custom_base_url.as_deref(),
-            Some("https://project.example")
+            saved_project.custom_api_format.as_deref(),
+            Some("openai")
         );
-        assert!(saved_project.custom_api_format.is_none());
+
+        // Local tier should be untouched
+        let saved_local = Settings::load_tier(SettingsTier::Local, &cwd_str);
+        assert_eq!(
+            saved_local.custom_base_url.as_deref(),
+            Some("https://local.example")
+        );
+        assert!(saved_local.model.is_none());
     }
 }
