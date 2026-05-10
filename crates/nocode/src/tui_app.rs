@@ -603,7 +603,7 @@ impl TuiApp {
             // Input at bottom, banner fills the space above
             let input_lines =
                 (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).min(10);
-            let input_h = (input_lines + 1).min(content_area.height.saturating_sub(2)); // +1 for separator
+            let input_h = (input_lines + 2).min(content_area.height.saturating_sub(2)); // +2 for top/bottom separators
 
             // If there are system messages (warnings, update notices), show them between banner and input
             let system_lines: Vec<ratatui::text::Line<'_>> = self
@@ -757,9 +757,9 @@ impl TuiApp {
             0
         };
         let char_col = line_text.chars().count();
-        // Account for separator line occupying the first row
-        let sep_offset: u16 = if input_rect.height >= 2 { 1 } else { 0 };
-        let content_height = input_rect.height.saturating_sub(sep_offset);
+        // Account for top and bottom separator lines
+        let sep_offset: u16 = if input_rect.height >= 3 { 1 } else { 0 };
+        let content_height = input_rect.height.saturating_sub(sep_offset).saturating_sub(u16::from(input_rect.height >= 3));
         let usable_width = input_rect.width.saturating_sub(2 + mode_prefix_width) as usize;
         if usable_width > 0 {
             if char_col < self.input_view_offset {
@@ -797,7 +797,7 @@ impl TuiApp {
         self.ensure_height_cache(inner.width);
 
         let input_lines =
-            (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).clamp(1, 10) + 1; // +1 for separator
+            (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).clamp(1, 10) + 2; // +2 for top/bottom separators
 
         let chat_h = self.total_content_height();
         let separator_h: u16 = if chat_h > 0 { 1 } else { 0 };

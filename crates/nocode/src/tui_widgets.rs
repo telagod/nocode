@@ -622,7 +622,7 @@ impl Widget for InputBox<'_> {
                 x: area.x,
                 y: area.y + 1,
                 width: area.width,
-                height: area.height - 1,
+                height: area.height.saturating_sub(2), // top sep + bottom sep
             }
         } else {
             area
@@ -687,6 +687,21 @@ impl Widget for InputBox<'_> {
         }
         let paragraph = Paragraph::new(lines).scroll((self.scroll_y, 0));
         paragraph.render(content_area, buf);
+
+        // Bottom separator line
+        if area.height >= 3 {
+            let bottom_y = area.y + area.height - 1;
+            let bottom_area = Rect {
+                x: area.x,
+                y: bottom_y,
+                width: area.width,
+                height: 1,
+            };
+            let sep: String = "\u{2500}".repeat(area.width as usize);
+            Paragraph::new(sep)
+                .style(Style::default().fg(theme.border))
+                .render(bottom_area, buf);
+        }
     }
 }
 
