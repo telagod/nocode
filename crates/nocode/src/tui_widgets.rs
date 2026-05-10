@@ -519,11 +519,7 @@ impl ChatMessage {
             }
             return (self.lines.len() as u16).saturating_add(1).max(1);
         }
-        if matches!(self.kind, ChatMessageKind::Spinner) {
-            (self.lines.len() as u16).max(1)
-        } else {
-            (self.lines.len() as u16).saturating_add(1).max(1)
-        }
+        (self.lines.len() as u16).max(1)
     }
 }
 

@@ -566,9 +566,7 @@ impl TuiApp {
     }
 
     fn total_content_height(&self) -> u16 {
-        let msg_h: u16 = self.height_cache.iter().copied().sum();
-        let spacers = self.height_cache.len().saturating_sub(1) as u16;
-        msg_h + spacers
+        self.height_cache.iter().copied().sum()
     }
 
     // -- drawing --
@@ -829,12 +827,7 @@ impl TuiApp {
 
         for (i, msg) in self.chat_messages.iter().enumerate() {
             let h = self.height_cache.get(i).copied().unwrap_or(1);
-            let spacer: u16 = if i + 1 < self.chat_messages.len() {
-                1
-            } else {
-                0
-            };
-            let msg_end = accumulated + h + spacer;
+            let msg_end = accumulated + h;
 
             if msg_end <= scroll_from_top {
                 accumulated = msg_end;
@@ -909,11 +902,6 @@ impl TuiApp {
                 if y_offset >= visible {
                     break;
                 }
-            }
-
-            // Breathing spacer between messages (not after last)
-            if spacer > 0 && y_offset < visible && first_visible_skip == 0 {
-                y_offset += 1;
             }
 
             accumulated = msg_end;
