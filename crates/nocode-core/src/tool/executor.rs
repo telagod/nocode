@@ -402,8 +402,8 @@ impl<'a> ToolExecutor<'a> {
     fn is_read_only_tool(name: &str, input: &Value) -> bool {
         match name {
             // Always read-only
-            "FileRead" | "Glob" | "Grep" | "CronList" | "ToolSearch"
-            | "AskUserQuestion" | "EnterPlanMode" | "ExitPlanMode" => true,
+            "FileRead" | "Glob" | "Grep" | "CronList" | "ToolSearch" | "AskUserQuestion"
+            | "EnterPlanMode" | "ExitPlanMode" => true,
             // Memory: list and search are read-only
             "Memory" => {
                 let action = input["action"].as_str().unwrap_or("list");

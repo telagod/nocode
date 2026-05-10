@@ -308,7 +308,9 @@ fn cmd_resume(app: &mut TuiApp, session_id: Option<&str>, messages: &mut Vec<Mes
                     }
                 }
                 app.hud.session_id = session_id.to_string();
-                app.push_system(&format!("Resumed session '{session_id}' ({msg_count} messages)"));
+                app.push_system(&format!(
+                    "Resumed session '{session_id}' ({msg_count} messages)"
+                ));
             }
             Err(e) => {
                 app.push_error(&format!("Failed to resume: {e}"));

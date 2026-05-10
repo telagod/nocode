@@ -1,7 +1,7 @@
 //! TUI overlay rendering — only interactive overlays that need user input.
 
-use crate::tui_app::Overlay;
 use crate::status_hud::StatusHud;
+use crate::tui_app::Overlay;
 use crate::tui_theme::default_theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -25,7 +25,8 @@ pub(crate) fn draw_overlay(
                  Allow this tool call?\n\n\
                  [y] Yes  [n] No  [a] Always allow"
             );
-            let overlay_w = crate::tui_widgets::OverlayBlock::new("\u{26A0} Permission Required", &text);
+            let overlay_w =
+                crate::tui_widgets::OverlayBlock::new("\u{26A0} Permission Required", &text);
             frame.render_widget(overlay_w, area);
         }
         Overlay::Question {
@@ -104,21 +105,33 @@ fn draw_session_picker(
     let project_style = if show_all {
         Style::default().fg(theme.text_dim)
     } else {
-        Style::default().fg(theme.claude).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.claude)
+            .add_modifier(Modifier::BOLD)
     };
     let all_style = if show_all {
-        Style::default().fg(theme.claude).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.claude)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.text_dim)
     };
 
     let title_line = Line::from(vec![
-        Span::styled(" Resume Session  ", Style::default().fg(theme.claude).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " Resume Session  ",
+            Style::default()
+                .fg(theme.claude)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("│", Style::default().fg(theme.border)),
         Span::styled(" Project ", project_style),
         Span::styled("│", Style::default().fg(theme.border)),
         Span::styled(" All ", all_style),
-        Span::styled(" (Tab to switch) ", Style::default().fg(theme.text_inactive)),
+        Span::styled(
+            " (Tab to switch) ",
+            Style::default().fg(theme.text_inactive),
+        ),
     ]);
 
     let block = Block::default()
@@ -153,11 +166,19 @@ fn draw_session_picker(
     let mut lines: Vec<Line<'_>> = Vec::new();
     let now = chrono::Utc::now();
 
-    for (i, info) in sessions.iter().enumerate().skip(scroll_offset).take(visible_rows.saturating_sub(1)) {
+    for (i, info) in sessions
+        .iter()
+        .enumerate()
+        .skip(scroll_offset)
+        .take(visible_rows.saturating_sub(1))
+    {
         let is_sel = i == selected;
         let marker = if is_sel { "\u{25B8} " } else { "  " };
         let preview = info.first_user_message.as_deref().unwrap_or("(empty)");
-        let age = info.modified_at.map(|t| format_age(now, t)).unwrap_or_default();
+        let age = info
+            .modified_at
+            .map(|t| format_age(now, t))
+            .unwrap_or_default();
         let msgs = format!("{} msgs", info.message_count);
 
         // Truncate preview to fit
@@ -173,7 +194,9 @@ fn draw_session_picker(
         };
 
         let marker_style = if is_sel {
-            Style::default().fg(theme.claude).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme.claude)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.text_dim)
         };
@@ -183,7 +206,11 @@ fn draw_session_picker(
             Style::default().fg(theme.text)
         };
         let dim = Style::default().fg(theme.text_dim);
-        let age_color = if is_sel { Color::Cyan } else { theme.text_inactive };
+        let age_color = if is_sel {
+            Color::Cyan
+        } else {
+            theme.text_inactive
+        };
 
         lines.push(Line::from(vec![
             Span::styled(marker, marker_style),
@@ -196,12 +223,10 @@ fn draw_session_picker(
     }
 
     // Footer hint
-    lines.push(Line::from(vec![
-        Span::styled(
-            " Enter:select  Tab:scope  Esc:close",
-            Style::default().fg(theme.text_inactive),
-        ),
-    ]));
+    lines.push(Line::from(vec![Span::styled(
+        " Enter:select  Tab:scope  Esc:close",
+        Style::default().fg(theme.text_inactive),
+    )]));
 
     let p = Paragraph::new(lines);
     p.render(inner, frame.buffer_mut());

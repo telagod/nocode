@@ -318,7 +318,10 @@ fn main() {
             }
             let settings = Settings::load_merged(&cwd);
             let provider_type = resolve_provider(&settings);
-            let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| { eprintln!("No model configured. Run `nocode --login`."); std::process::exit(1); });
+            let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| {
+                eprintln!("No model configured. Run `nocode --login`.");
+                std::process::exit(1);
+            });
             let caps = nocode_core::provider::model_caps::lookup(&model);
             let max_tokens = settings.max_tokens.unwrap_or(caps.max_output_tokens);
             let custom_sp = resolve_custom_system_prompt(&settings);
@@ -751,7 +754,10 @@ fn run_ide_server() {
         .unwrap_or_else(|_| String::from("."));
     let settings = Settings::load_merged(&cwd);
     let provider_type = resolve_provider(&settings);
-    let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| { eprintln!("No model configured. Run `nocode --login`."); std::process::exit(1); });
+    let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| {
+        eprintln!("No model configured. Run `nocode --login`.");
+        std::process::exit(1);
+    });
     let registry = ToolRegistry::with_defaults(&cwd);
     let custom_sp = resolve_custom_system_prompt(&settings);
     let system_blocks = assembly::assemble_system_prompt(
@@ -834,7 +840,10 @@ fn run_mcp_server() {
         .unwrap_or_else(|_| String::from("."));
     let settings = Settings::load_merged(&cwd);
     let provider_type = resolve_provider(&settings);
-    let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| { eprintln!("No model configured. Run `nocode --login`."); std::process::exit(1); });
+    let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| {
+        eprintln!("No model configured. Run `nocode --login`.");
+        std::process::exit(1);
+    });
     let registry = ToolRegistry::with_defaults(&cwd);
     let custom_sp = resolve_custom_system_prompt(&settings);
     let system_blocks = assembly::assemble_system_prompt(
@@ -1022,7 +1031,10 @@ fn run_agent_host() {
         .unwrap_or_else(|_| String::from("."));
     let settings = Settings::load_merged(&cwd);
     let provider_type = resolve_provider(&settings);
-    let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| { eprintln!("No model configured. Run `nocode --login`."); std::process::exit(1); });
+    let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| {
+        eprintln!("No model configured. Run `nocode --login`.");
+        std::process::exit(1);
+    });
     let registry = ToolRegistry::with_defaults(&cwd);
     let custom_sp = resolve_custom_system_prompt(&settings);
     let system_blocks = assembly::assemble_system_prompt(

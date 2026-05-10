@@ -806,13 +806,9 @@ impl TuiApp {
         }
         if self.plan_state.is_active() {
             return match &self.plan_state {
-                PlanState::Investigating { .. } => {
-                    "PLAN:investigating | /plan cancel".to_string()
-                }
+                PlanState::Investigating { .. } => "PLAN:investigating | /plan cancel".to_string(),
                 PlanState::Drafting { .. } => "PLAN:drafting | /plan cancel".to_string(),
-                PlanState::Review { .. } => {
-                    "PLAN:review | choose below | /plan cancel".to_string()
-                }
+                PlanState::Review { .. } => "PLAN:review | choose below | /plan cancel".to_string(),
                 PlanState::Executing { .. } => "PLAN:executing | agents working...".to_string(),
                 PlanState::Off => unreachable!(),
             };
@@ -876,7 +872,11 @@ impl TuiApp {
 
         let input_lines =
             (self.input.chars().filter(|&c| c == '\n').count() as u16 + 1).clamp(1, 10) + 1; // +1 for top separator
-        let gap = if self.chat_messages.is_empty() { 0u16 } else { 1 };
+        let gap = if self.chat_messages.is_empty() {
+            0u16
+        } else {
+            1
+        };
 
         let chat_h = self.total_content_height();
         let total_h = chat_h + gap + input_lines;
@@ -2402,7 +2402,8 @@ pub(crate) fn run_app_loop(
                         match (key.code, key.modifiers) {
                             (KeyCode::Char('c'), KeyModifiers::CONTROL) => break,
                             (KeyCode::Esc, _) => {
-                                app.cancel_token.store(true, std::sync::atomic::Ordering::Relaxed);
+                                app.cancel_token
+                                    .store(true, std::sync::atomic::Ordering::Relaxed);
                                 app.push_system("Cancelling...");
                             }
                             (KeyCode::Up, _) => {
@@ -2491,7 +2492,8 @@ pub(crate) fn run_app_loop(
 
                                 app.hud.start_turn();
                                 app.thinking_spinner = Some(Spinner::new("Thinking..."));
-                                app.cancel_token.store(false, std::sync::atomic::Ordering::Relaxed);
+                                app.cancel_token
+                                    .store(false, std::sync::atomic::Ordering::Relaxed);
                                 is_busy = true;
 
                                 // Launch background thread
@@ -2538,7 +2540,11 @@ pub(crate) fn run_app_loop(
                                     let executor =
                                         ToolExecutor::new(&r).with_prompter(&perm_bridge);
                                     let mut observer = ChannelObserver { tx };
-                                    let mut budget = nocode_core::query::budget::TokenBudget::for_model(&cfg.model, Some(cfg.max_tokens));
+                                    let mut budget =
+                                        nocode_core::query::budget::TokenBudget::for_model(
+                                            &cfg.model,
+                                            Some(cfg.max_tokens),
+                                        );
                                     let result = r#loop::run_agentic_loop_with_cancel(
                                         provider.as_ref(),
                                         &executor,

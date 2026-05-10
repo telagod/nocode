@@ -123,8 +123,8 @@ impl ToolClassifier {
     pub fn classify(tool_name: &str, input: &serde_json::Value) -> ToolRiskLevel {
         match tool_name {
             // Safe: read-only tools
-            "FileRead" | "Glob" | "Grep" | "CronList" | "ToolSearch"
-            | "AskUserQuestion" | "ExitPlanMode" => ToolRiskLevel::Safe,
+            "FileRead" | "Glob" | "Grep" | "CronList" | "ToolSearch" | "AskUserQuestion"
+            | "ExitPlanMode" => ToolRiskLevel::Safe,
             // Memory: list/search are safe; save/delete are write
             "Memory" => {
                 let action = input["action"].as_str().unwrap_or("list");

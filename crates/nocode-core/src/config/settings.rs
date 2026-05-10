@@ -420,10 +420,7 @@ mod tests {
 
         let saved_project = Settings::load_tier(SettingsTier::Project, &cwd_str);
         assert_eq!(saved_project.model.as_deref(), Some("project-model"));
-        assert_eq!(
-            saved_project.custom_api_format.as_deref(),
-            Some("openai")
-        );
+        assert_eq!(saved_project.custom_api_format.as_deref(), Some("openai"));
 
         // Local tier should be untouched
         let saved_local = Settings::load_tier(SettingsTier::Local, &cwd_str);

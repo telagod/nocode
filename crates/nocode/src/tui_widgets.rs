@@ -56,7 +56,7 @@ impl ChatMessageKind {
             Self::Spinner => ("  ", theme.spinner),           // just indent
             Self::Permission => ("\u{26A0} ", theme.warning), // ⚠
             Self::Thinking => ("  ", theme.text_dim),         // just indent
-            Self::PlanChoice => ("  ", theme.claude),          // just indent
+            Self::PlanChoice => ("  ", theme.claude),         // just indent
         }
     }
 }
@@ -190,9 +190,7 @@ impl ChatMessage {
                 ),
                 Span::styled(
                     choice.header.as_str(),
-                    Style::default()
-                        .fg(theme.text)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(" \u{2500}\u{2500}", Style::default().fg(border_color)),
             ]));
@@ -204,22 +202,13 @@ impl ChatMessage {
                     .map(|o| o.label.as_str())
                     .unwrap_or("?");
                 result.push(Line::from(vec![
-                    Span::styled(
-                        "  \u{2570}\u{2500} ",
-                        Style::default().fg(border_color),
-                    ),
-                    Span::styled(
-                        "\u{2713} ",
-                        Style::default().fg(theme.success),
-                    ),
+                    Span::styled("  \u{2570}\u{2500} ", Style::default().fg(border_color)),
+                    Span::styled("\u{2713} ", Style::default().fg(theme.success)),
                     Span::styled(
                         format!("Chose: {chosen_label}"),
                         Style::default().fg(theme.text_dim),
                     ),
-                    Span::styled(
-                        " \u{2500}\u{256F}",
-                        Style::default().fg(border_color),
-                    ),
+                    Span::styled(" \u{2500}\u{256F}", Style::default().fg(border_color)),
                 ]));
             } else {
                 // Body lines (spec preview)
@@ -237,14 +226,8 @@ impl ChatMessage {
                 // Separator before options
                 if !choice.body_lines.is_empty() {
                     result.push(Line::from(vec![
-                        Span::styled(
-                            "  \u{2502} ",
-                            Style::default().fg(border_color),
-                        ),
-                        Span::styled(
-                            "\u{2504}".repeat(40),
-                            Style::default().fg(theme.border),
-                        ),
+                        Span::styled("  \u{2502} ", Style::default().fg(border_color)),
+                        Span::styled("\u{2504}".repeat(40), Style::default().fg(theme.border)),
                     ]));
                 }
 
@@ -263,29 +246,15 @@ impl ChatMessage {
                         Style::default().fg(theme.text_dim)
                     };
                     let label_style = if i == choice.selected {
-                        Style::default()
-                            .fg(theme.text)
-                            .add_modifier(Modifier::BOLD)
+                        Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(theme.text)
                     };
                     result.push(Line::from(vec![
-                        Span::styled(
-                            "  \u{2502} ",
-                            Style::default().fg(border_color),
-                        ),
-                        Span::styled(
-                            format!("{marker} "),
-                            key_style,
-                        ),
-                        Span::styled(
-                            format!("[{}] ", opt.key_hint),
-                            key_style,
-                        ),
-                        Span::styled(
-                            opt.label.as_str(),
-                            label_style,
-                        ),
+                        Span::styled("  \u{2502} ", Style::default().fg(border_color)),
+                        Span::styled(format!("{marker} "), key_style),
+                        Span::styled(format!("[{}] ", opt.key_hint), key_style),
+                        Span::styled(opt.label.as_str(), label_style),
                         Span::styled(
                             format!("  {}", opt.description),
                             Style::default().fg(theme.text_dim),
@@ -317,14 +286,8 @@ impl ChatMessage {
                 format!("{display_name} ({args_display})")
             };
             result.push(Line::from(vec![
-                Span::styled(
-                    format!("{icon} "),
-                    Style::default().fg(icon_color),
-                ),
-                Span::styled(
-                    header_label,
-                    Style::default().fg(theme.text_dim),
-                ),
+                Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
+                Span::styled(header_label, Style::default().fg(theme.text_dim)),
             ]));
 
             // Body: ⎿ output lines — collapsed shows last line + "…+N lines"
@@ -356,10 +319,8 @@ impl ChatMessage {
                 }
             } else {
                 for rendered_line in &self.lines {
-                    let mut spans: Vec<Span<'_>> = vec![Span::styled(
-                        "  \u{23BF} ",
-                        Style::default().fg(icon_color),
-                    )];
+                    let mut spans: Vec<Span<'_>> =
+                        vec![Span::styled("  \u{23BF} ", Style::default().fg(icon_color))];
                     let line_text: String = rendered_line
                         .segments
                         .iter()
@@ -605,10 +566,7 @@ impl Widget for InputBox<'_> {
 
                 // Overlay status text starting at column 2
                 let mut spans: Vec<Span<'_>> = Vec::new();
-                spans.push(Span::styled(
-                    "\u{2500} ",
-                    Style::default().fg(theme.border),
-                ));
+                spans.push(Span::styled("\u{2500} ", Style::default().fg(theme.border)));
                 for (i, part) in self.status_parts.iter().enumerate() {
                     if i > 0 {
                         spans.push(Span::styled(
@@ -621,10 +579,7 @@ impl Widget for InputBox<'_> {
                         Style::default().fg(part.color),
                     ));
                 }
-                spans.push(Span::styled(
-                    " \u{2500}",
-                    Style::default().fg(theme.border),
-                ));
+                spans.push(Span::styled(" \u{2500}", Style::default().fg(theme.border)));
                 let overlay_line = Line::from(spans);
                 // Render the overlay on top (overwrites the ─ background)
                 let overlay_area = Rect {
@@ -888,12 +843,36 @@ impl<'a> WelcomeBanner<'a> {
 /// Half-block pixel-art logo for "nocode" — 2 rows, rendered with per-letter gradient colors.
 /// Each letter pair: (top_row, bottom_row, color)
 const LOGO_LETTERS: &[(&str, &str, Color)] = &[
-    ("\u{2590}\u{259B}\u{259C}\u{258C}", "\u{2590}\u{258C}\u{259D}\u{258C}", Color::Rgb(167, 139, 250)), // n — lavender
-    ("\u{259F}\u{2580}\u{2599}", "\u{259C}\u{2584}\u{259B}", Color::Rgb(129, 140, 248)),                  // o — indigo
-    ("\u{259F}\u{2580}\u{2580}", "\u{259C}\u{2584}\u{2584}", Color::Rgb(99, 179, 237)),                   // c — blue
-    ("\u{259F}\u{2580}\u{2599}", "\u{259C}\u{2584}\u{259B}", Color::Rgb(56, 189, 248)),                   // o — sky
-    ("\u{259F}\u{2580}\u{258C}", "\u{259C}\u{2584}\u{2598}", Color::Rgb(34, 211, 238)),                   // d — cyan
-    ("\u{259F}\u{2580}\u{2580}", "\u{259C}\u{2580}\u{2584}", Color::Rgb(94, 234, 212)),                   // e — teal
+    (
+        "\u{2590}\u{259B}\u{259C}\u{258C}",
+        "\u{2590}\u{258C}\u{259D}\u{258C}",
+        Color::Rgb(167, 139, 250),
+    ), // n — lavender
+    (
+        "\u{259F}\u{2580}\u{2599}",
+        "\u{259C}\u{2584}\u{259B}",
+        Color::Rgb(129, 140, 248),
+    ), // o — indigo
+    (
+        "\u{259F}\u{2580}\u{2580}",
+        "\u{259C}\u{2584}\u{2584}",
+        Color::Rgb(99, 179, 237),
+    ), // c — blue
+    (
+        "\u{259F}\u{2580}\u{2599}",
+        "\u{259C}\u{2584}\u{259B}",
+        Color::Rgb(56, 189, 248),
+    ), // o — sky
+    (
+        "\u{259F}\u{2580}\u{258C}",
+        "\u{259C}\u{2584}\u{2598}",
+        Color::Rgb(34, 211, 238),
+    ), // d — cyan
+    (
+        "\u{259F}\u{2580}\u{2580}",
+        "\u{259C}\u{2580}\u{2584}",
+        Color::Rgb(94, 234, 212),
+    ), // e — teal
 ];
 
 /// Build the logo as two `Line`s of colored Spans.

@@ -117,7 +117,10 @@ fn draw_progress(stdout: &mut io::Stdout, current: usize) {
 }
 
 fn draw_section_title(stdout: &mut io::Stdout, title: &str) {
-    let _ = writeln!(stdout, "  {FG_DIM}\u{2500}\u{2500}\u{2500}{RESET} {BOLD}{title}{RESET} {FG_DIM}\u{2500}\u{2500}\u{2500}{RESET}\r");
+    let _ = writeln!(
+        stdout,
+        "  {FG_DIM}\u{2500}\u{2500}\u{2500}{RESET} {BOLD}{title}{RESET} {FG_DIM}\u{2500}\u{2500}\u{2500}{RESET}\r"
+    );
     let _ = writeln!(stdout, "\r");
 }
 
@@ -135,7 +138,14 @@ fn mask_key(key: &str) -> String {
         return "\u{2022}".repeat(key.len());
     }
     let prefix: String = key.chars().take(4).collect();
-    let suffix: String = key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    let suffix: String = key
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     format!("{prefix}{}\u{2026}{suffix}", "\u{2022}".repeat(4))
 }
 
@@ -217,7 +227,10 @@ fn step_provider(stdout: &mut io::Stdout, providers: &[LoginProvider]) -> Option
             p.provider_type == "custom"
                 && (p.base_url.contains("localhost")
                     || p.base_url.contains("127.0.0.1")
-                    || matches!(p.name, "Ollama" | "vLLM" | "LiteLLM" | "LocalAI" | "LM Studio"))
+                    || matches!(
+                        p.name,
+                        "Ollama" | "vLLM" | "LiteLLM" | "LocalAI" | "LM Studio"
+                    ))
         })
         .map(|(i, _)| i)
         .collect();
@@ -270,7 +283,9 @@ fn step_provider(stdout: &mut io::Stdout, providers: &[LoginProvider]) -> Option
             let visible: Vec<usize> = indices
                 .iter()
                 .copied()
-                .filter(|i| filter.is_empty() || providers[*i].name.to_lowercase().contains(&filter_lower))
+                .filter(|i| {
+                    filter.is_empty() || providers[*i].name.to_lowercase().contains(&filter_lower)
+                })
                 .collect();
             if visible.is_empty() {
                 continue;
@@ -317,10 +332,7 @@ fn step_provider(stdout: &mut io::Stdout, providers: &[LoginProvider]) -> Option
                     draw_logo(stdout);
                     draw_progress(stdout, 0);
                     draw_section_title(stdout, "Select Provider");
-                    let _ = writeln!(
-                        stdout,
-                        "  {FG_YELLOW}\u{1F50D} {filter}\u{2588}{RESET}\r"
-                    );
+                    let _ = writeln!(stdout, "  {FG_YELLOW}\u{1F50D} {filter}\u{2588}{RESET}\r");
                     let _ = writeln!(stdout, "\r");
                     for (i, &idx) in flat.iter().enumerate() {
                         let is_sel = i == selected;
@@ -414,13 +426,13 @@ fn step_api_key(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<Str
         draw_progress(stdout, 1);
         draw_section_title(stdout, "API Key");
 
-        draw_field(stdout, "Provider", &format!("{BOLD}{}{RESET}", provider.name));
-        let _ = writeln!(stdout, "\r");
-        let _ = writeln!(
+        draw_field(
             stdout,
-            "  {FG_BLUE}{ITALIC}{}{RESET}\r",
-            provider.auth_hint
+            "Provider",
+            &format!("{BOLD}{}{RESET}", provider.name),
         );
+        let _ = writeln!(stdout, "\r");
+        let _ = writeln!(stdout, "  {FG_BLUE}{ITALIC}{}{RESET}\r", provider.auth_hint);
         let _ = writeln!(stdout, "\r");
 
         let display = if key_buf.is_empty() {
@@ -471,7 +483,11 @@ fn step_endpoint(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<En
         draw_progress(stdout, 2);
         draw_section_title(stdout, "Endpoint");
 
-        draw_field(stdout, "Provider", &format!("{BOLD}{}{RESET}", provider.name));
+        draw_field(
+            stdout,
+            "Provider",
+            &format!("{BOLD}{}{RESET}", provider.name),
+        );
         let _ = writeln!(stdout, "\r");
 
         // Row 0: Base URL
@@ -491,10 +507,7 @@ fn step_endpoint(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<En
                 "  {FG_CYAN}\u{25B8}{RESET} {FG_WHITE}{BOLD}Base URL{RESET}  {FG_CYAN}{base_url}{RESET}\r"
             );
         } else {
-            let _ = writeln!(
-                stdout,
-                "  {FG_DIM}  Base URL  {base_url}{RESET}\r"
-            );
+            let _ = writeln!(stdout, "  {FG_DIM}  Base URL  {base_url}{RESET}\r");
         }
 
         // Row 1: Format
@@ -510,10 +523,7 @@ fn step_endpoint(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<En
                 "  {FG_CYAN}\u{25B8}{RESET} {FG_WHITE}{BOLD}Format{RESET}    {FG_CYAN}{api_format}{RESET}\r"
             );
         } else {
-            let _ = writeln!(
-                stdout,
-                "  {FG_DIM}  Format    {api_format}{RESET}\r"
-            );
+            let _ = writeln!(stdout, "  {FG_DIM}  Format    {api_format}{RESET}\r");
         }
 
         let _ = writeln!(stdout, "\r");
@@ -559,13 +569,19 @@ fn step_endpoint(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<En
                                 edit_buf.clear();
                                 editing = false;
                             }
-                            KeyCode::Backspace => { edit_buf.pop(); }
+                            KeyCode::Backspace => {
+                                edit_buf.pop();
+                            }
                             KeyCode::Char(c) => edit_buf.push(c),
                             _ => {}
                         },
                         1 => match key.code {
                             KeyCode::Left => {
-                                fmt_idx = if fmt_idx == 0 { formats.len() - 1 } else { fmt_idx - 1 };
+                                fmt_idx = if fmt_idx == 0 {
+                                    formats.len() - 1
+                                } else {
+                                    fmt_idx - 1
+                                };
                             }
                             KeyCode::Right => {
                                 fmt_idx = (fmt_idx + 1) % formats.len();
@@ -575,7 +591,8 @@ fn step_endpoint(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<En
                                 editing = false;
                             }
                             KeyCode::Esc => {
-                                fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
+                                fmt_idx =
+                                    formats.iter().position(|&f| f == api_format).unwrap_or(0);
                                 editing = false;
                             }
                             _ => {}
@@ -591,11 +608,15 @@ fn step_endpoint(stdout: &mut io::Stdout, provider: &LoginProvider) -> Option<En
                             if selected == 0 {
                                 edit_buf.clear();
                             } else {
-                                fmt_idx = formats.iter().position(|&f| f == api_format).unwrap_or(0);
+                                fmt_idx =
+                                    formats.iter().position(|&f| f == api_format).unwrap_or(0);
                             }
                         }
                         KeyCode::Tab | KeyCode::Char('\t') => {
-                            return Some(EndpointOverride { base_url, api_format });
+                            return Some(EndpointOverride {
+                                base_url,
+                                api_format,
+                            });
                         }
                         KeyCode::Esc => return None,
                         _ => {}
@@ -657,7 +678,10 @@ fn step_model(
             draw_logo(stdout);
             draw_progress(stdout, 3);
             draw_section_title(stdout, "Select Model");
-            let _ = writeln!(stdout, "  {FG_YELLOW}\u{26A0} No models returned by API{RESET}\r");
+            let _ = writeln!(
+                stdout,
+                "  {FG_YELLOW}\u{26A0} No models returned by API{RESET}\r"
+            );
             let _ = writeln!(stdout, "\r");
             let _ = writeln!(
                 stdout,
@@ -689,10 +713,7 @@ fn step_model(
     let max_visible = 14;
 
     // Pre-select the default model if it exists in the list
-    if let Some(pos) = filtered
-        .iter()
-        .position(|m| m == provider.default_model)
-    {
+    if let Some(pos) = filtered.iter().position(|m| m == provider.default_model) {
         selected = pos;
         if selected >= max_visible {
             scroll = selected.saturating_sub(max_visible / 2);
@@ -777,16 +798,21 @@ fn step_model(
                     draw_logo(stdout);
                     draw_progress(stdout, 3);
                     draw_section_title(stdout, "Select Model");
-                    let _ = writeln!(
-                        stdout,
-                        "  {FG_YELLOW}\u{1F50D} {filter}\u{2588}{RESET}\r"
-                    );
+                    let _ = writeln!(stdout, "  {FG_YELLOW}\u{1F50D} {filter}\u{2588}{RESET}\r");
                     let _ = writeln!(stdout, "\r");
                     let shown: Vec<_> = filtered.iter().take(max_visible).collect();
                     for (i, m) in shown.iter().enumerate() {
                         let is_sel = i == selected;
-                        let marker = if is_sel { format!("{FG_CYAN} \u{25B8} {RESET}") } else { "   ".to_string() };
-                        let s = if is_sel { format!("{FG_WHITE}{BOLD}{m}{RESET}") } else { m.to_string() };
+                        let marker = if is_sel {
+                            format!("{FG_CYAN} \u{25B8} {RESET}")
+                        } else {
+                            "   ".to_string()
+                        };
+                        let s = if is_sel {
+                            format!("{FG_WHITE}{BOLD}{m}{RESET}")
+                        } else {
+                            m.to_string()
+                        };
                         let _ = writeln!(stdout, "{marker}{s}\r");
                     }
                     draw_hint(stdout, "type to filter  Enter select  Esc clear");
@@ -902,7 +928,11 @@ fn step_confirm(
     draw_section_title(stdout, "Confirm Setup");
 
     let _ = writeln!(stdout, "\r");
-    draw_field(stdout, "Provider", &format!("{BOLD}{}{RESET}", provider.name));
+    draw_field(
+        stdout,
+        "Provider",
+        &format!("{BOLD}{}{RESET}", provider.name),
+    );
     draw_field(stdout, "Model   ", &format!("{FG_CYAN}{model}{RESET}"));
     if !api_key.is_empty() {
         draw_field(stdout, "Key     ", &mask_key(api_key));
@@ -988,12 +1018,8 @@ fn step_confirm(
                         SettingsTier::User,
                         cwd,
                     );
-                    let _ = Settings::persist_key_value(
-                        "custom_preset",
-                        None,
-                        SettingsTier::User,
-                        cwd,
-                    );
+                    let _ =
+                        Settings::persist_key_value("custom_preset", None, SettingsTier::User, cwd);
                 }
 
                 // Success screen

@@ -71,10 +71,7 @@ pub(crate) fn run_tui(
     // Print resume hint AFTER leaving alternate screen so user can see it
     match &result {
         Ok(exit_info) if exit_info.message_count > 0 => {
-            eprintln!(
-                "\n  To resume: nocode --resume {}\n",
-                exit_info.session_id
-            );
+            eprintln!("\n  To resume: nocode --resume {}\n", exit_info.session_id);
         }
         _ => {}
     }
