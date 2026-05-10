@@ -756,7 +756,7 @@ impl TuiApp {
         } else {
             0
         };
-        let char_col = line_text.chars().count();
+        let char_col = UnicodeWidthStr::width(line_text);
         // Account for top and bottom separator lines
         let sep_offset: u16 = if input_rect.height >= 3 { 1 } else { 0 };
         let content_height = input_rect.height.saturating_sub(sep_offset).saturating_sub(u16::from(input_rect.height >= 3));

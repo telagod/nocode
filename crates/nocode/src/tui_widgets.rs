@@ -648,13 +648,13 @@ impl Widget for InputBox<'_> {
             let visible = if self.view_offset > 0 && !line_text.is_empty() {
                 let mut char_idx = 0;
                 let mut col = 0usize;
-                for (idx, _ch) in line_text.char_indices() {
+                for (idx, ch) in line_text.char_indices() {
                     if col >= self.view_offset {
                         char_idx = idx;
                         break;
                     }
-                    col += 1;
-                    char_idx = idx + _ch.len_utf8();
+                    col += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                    char_idx = idx + ch.len_utf8();
                 }
                 if col < self.view_offset {
                     ""
