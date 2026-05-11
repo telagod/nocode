@@ -12,7 +12,7 @@ A terminal-native AI coding assistant built in Rust. Connects to Claude, OpenAI,
 cargo build                                     # debug build (default: full features)
 cargo build --release                           # release build
 cargo build --no-default-features -p nocode-core --features minimal  # minimal core (no MCP/plugins/telemetry/oauth)
-cargo test                                      # all tests (~785 across 7 test binaries)
+cargo test                                      # all tests (~786 across 6 test binaries)
 cargo test -p nocode-core                       # core library only
 cargo test -p nocode                            # CLI binary only
 cargo test <test_name>                          # single test by name
@@ -28,8 +28,8 @@ CI runs `fmt → clippy → test` on every push/PR to main (`.github/workflows/c
 Two-crate Cargo workspace (edition 2024, clippy all+pedantic+nursery, unsafe forbidden):
 
 ```
-crates/nocode-core/   — library (~100 modules, ~42K LOC), all core logic
-crates/nocode/        — binary, CLI/TUI shell (~22 source files)
+crates/nocode-core/   — library (~90 modules, ~28K LOC), all core logic
+crates/nocode/        — binary, CLI/TUI shell (~22 source files, ~14.5K LOC)
 ```
 
 ### Cargo Features
@@ -131,6 +131,17 @@ Explicit enum state machines rather than inferred state:
 - Slash commands registered in `command_registry.rs` with aliases/summary/argument_hint.
 - Source paths use module subdirectories: `provider/`, `tool/`, `mcp/`, `query/`, `config/`, `session/`, `storage/`, `auth/`, `agent/`, `prompt/`.
 
+## TUI Features
+
+- **Working indicator**: spinner with elapsed time + token counts (input/output), stall warning at 30s idle
+- **Stream cancel**: Escape key sets `Arc<AtomicBool>` cancel token, checked at top of each agentic loop turn
+- **Tool output folding**: tool results default collapsed (3-line preview + "…+N lines"), Ctrl+O to expand/collapse
+- **Thinking blocks**: collapsed by default on resume, expandable with Ctrl+O
+- **Message gaps**: visual separation between User/Assistant/Tool message blocks
+- **Session resume**: `--resume <id>` or `-c` restores full message history with proper tool/thinking rendering
+- **Timeouts**: effectively disabled (86400s) to support long-running agent tasks (10h+); max_turns=200
+- **Brand logo**: unified 6-row ASCII art with lavender→teal gradient, shared between TUI banner and login flow
+
 ## Environment Variables
 
 - `NOCODE_MODEL_PROVIDER` — force provider (`anthropic`, `openai`, `google`, `custom`)
@@ -149,6 +160,8 @@ Explicit enum state machines rather than inferred state:
 
 ```bash
 nocode                               # interactive TUI
+nocode --resume [session_id]         # resume a previous session
+nocode -c                            # shorthand for --resume (continue last)
 nocode --status                      # system diagnostics
 nocode --bridge-once "prompt"        # single-turn local
 nocode --bridge-remote-once "prompt" # single-turn HTTP
