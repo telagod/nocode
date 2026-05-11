@@ -608,34 +608,24 @@ impl TuiApp {
 
     fn total_content_height(&self) -> u16 {
         let mut total: u16 = 0;
-        let mut prev_kind: Option<ChatMessageKind> = None;
-        for (i, msg) in self.chat_messages.iter().enumerate() {
-            if let Some(pk) = prev_kind
-                && pk != msg.kind
-            {
+        for (i, _msg) in self.chat_messages.iter().enumerate() {
+            if i > 0 {
                 total += 1;
             }
             total += self.height_cache.get(i).copied().unwrap_or(1);
-            prev_kind = Some(msg.kind);
         }
         total
     }
 
     fn content_height_up_to(&self, idx: usize) -> u16 {
         let mut total: u16 = 0;
-        let mut prev_kind: Option<ChatMessageKind> = None;
-        for (i, msg) in self.chat_messages.iter().enumerate().take(idx) {
-            if let Some(pk) = prev_kind
-                && pk != msg.kind
-            {
+        for (i, _msg) in self.chat_messages.iter().enumerate().take(idx) {
+            if i > 0 {
                 total += 1;
             }
             total += self.height_cache.get(i).copied().unwrap_or(1);
-            prev_kind = Some(msg.kind);
         }
-        if let (Some(pk), Some(msg)) = (prev_kind, self.chat_messages.get(idx))
-            && pk != msg.kind
-        {
+        if idx > 0 && idx < self.chat_messages.len() {
             total += 1;
         }
         total
@@ -899,12 +889,8 @@ impl TuiApp {
         for (i, msg) in self.chat_messages.iter().enumerate() {
             let h = self.height_cache.get(i).copied().unwrap_or(1);
 
-            // Inter-message gap: 1 blank line between different message kinds
-            let msg_gap = if let Some(pk) = prev_kind {
-                u16::from(pk != msg.kind)
-            } else {
-                0
-            };
+            // Inter-message gap: blank line between all messages for breathing room
+            let msg_gap = if prev_kind.is_some() { 1 } else { 0 };
             let msg_end = accumulated + msg_gap + h;
 
             if msg_end <= scroll_from_top {

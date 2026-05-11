@@ -44,19 +44,19 @@ pub(crate) enum ChatMessageKind {
 }
 
 impl ChatMessageKind {
-    /// Claude Code style prefixes.
+    /// Clean, minimal prefixes — no symbols, just spacing.
     fn prefix(&self) -> (&str, Color) {
         let theme = default_theme();
         match self {
-            Self::User => ("\u{276F} ", theme.user),          // ❯
-            Self::Assistant => ("  ", theme.assistant),       // just indent
-            Self::System => ("\u{2022} ", theme.text_dim),    // • in dim
-            Self::Error => ("\u{2716} ", theme.error),        // ✖
-            Self::Tool => ("\u{25CF} ", theme.tool),          // ● (Phase 3 will change)
-            Self::Spinner => ("  ", theme.spinner),           // just indent
-            Self::Permission => ("\u{26A0} ", theme.warning), // ⚠
-            Self::Thinking => ("  ", theme.text_dim),         // just indent
-            Self::PlanChoice => ("  ", theme.claude),         // just indent
+            Self::User => ("", theme.user),
+            Self::Assistant => ("", theme.assistant),
+            Self::System => ("  ", theme.text_dim),
+            Self::Error => ("  ", theme.error),
+            Self::Tool => ("  ", theme.tool),
+            Self::Spinner => ("  ", theme.spinner),
+            Self::Permission => ("  ", theme.warning),
+            Self::Thinking => ("  ", theme.text_dim),
+            Self::PlanChoice => ("  ", theme.claude),
         }
     }
 }
@@ -271,29 +271,26 @@ impl ChatMessage {
             return result;
         }
 
-        // Tool call: compact Claude Code style — "● name (args)" + "⎿ output"
+        // Tool call: clean minimal style — "name (args)" with dim color + indented output
         if let Some(info) = &self.tool_info {
             let done = info.result_preview.is_some();
-            let icon_color = if done { theme.success } else { theme.tool };
-            let icon = if done { "\u{2713}" } else { "\u{25CF}" };
+            let header_color = if done { theme.text_dim } else { theme.tool };
             let display_name = tool_user_facing_name(&info.tool_name, &info.arguments_summary);
             let args_display = tool_args_display(&info.tool_name, &info.arguments_summary);
 
-            // Header: ● name (args)  or  ✓ name (args)
             let header_label = if args_display.is_empty() {
                 display_name
             } else {
                 format!("{display_name} ({args_display})")
             };
-            result.push(Line::from(vec![
-                Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
-                Span::styled(header_label, Style::default().fg(theme.text_dim)),
-            ]));
+            result.push(Line::from(vec![Span::styled(
+                format!("  {header_label}"),
+                Style::default().fg(header_color),
+            )]));
 
-            // Body: ⎿ output lines — collapsed shows last line + "…+N lines"
+            // Body: indented output — collapsed shows last line + "+N lines"
             let max_preview = 3;
             if info.collapsed && self.lines.len() > max_preview {
-                // Show last line as preview
                 if let Some(last) = self.lines.last() {
                     let text: String = last.segments.iter().map(|s| s.text.as_str()).collect();
                     let preview = if text.chars().count() > 60 {
@@ -304,14 +301,14 @@ impl ChatMessage {
                     };
                     let remaining = self.lines.len().saturating_sub(1);
                     result.push(Line::from(vec![
-                        Span::styled("  \u{23BF} ", Style::default().fg(icon_color)),
+                        Span::styled("    ", Style::default().fg(theme.border)),
                         Span::styled(preview, Style::default().fg(theme.text_dim)),
                     ]));
                     if remaining > 0 {
                         result.push(Line::from(vec![
                             Span::styled("    ", Style::default().fg(theme.border)),
                             Span::styled(
-                                format!("\u{2026} +{remaining} lines (ctrl+o to expand)"),
+                                format!("+{remaining} lines (ctrl+o)"),
                                 Style::default().fg(theme.text_inactive),
                             ),
                         ]));
@@ -320,7 +317,7 @@ impl ChatMessage {
             } else {
                 for rendered_line in &self.lines {
                     let mut spans: Vec<Span<'_>> =
-                        vec![Span::styled("  \u{23BF} ", Style::default().fg(icon_color))];
+                        vec![Span::styled("    ", Style::default().fg(theme.border))];
                     let line_text: String = rendered_line
                         .segments
                         .iter()
@@ -341,13 +338,11 @@ impl ChatMessage {
             return result;
         }
 
-        // Thinking block: "∴ Thinking (N lines)" — collapsible with Ctrl-O
+        // Thinking block: collapsible with Ctrl-O
         if matches!(self.kind, ChatMessageKind::Thinking) {
             let line_count = self.lines.len();
             if self.thinking_collapsed {
-                // Collapsed: show summary only
                 let summary = if line_count > 0 {
-                    // Show first non-empty line as preview
                     let first: String = self
                         .lines
                         .iter()
@@ -365,28 +360,22 @@ impl ChatMessage {
                     } else {
                         first
                     };
-                    format!("\u{25B6} Thinking ({line_count} lines): {preview}")
+                    format!("  Thinking ({line_count} lines): {preview}")
                 } else {
-                    String::from("Thinking...")
+                    String::from("  Thinking...")
                 };
-                result.push(Line::from(vec![
-                    Span::styled(prefix, Style::default().fg(prefix_color)),
-                    Span::styled(summary, Style::default().fg(theme.text_dim)),
-                ]));
+                result.push(Line::from(vec![Span::styled(
+                    summary,
+                    Style::default().fg(theme.text_dim),
+                )]));
             } else {
-                // Expanded: show all thinking content
-                result.push(Line::from(vec![
-                    Span::styled(prefix, Style::default().fg(prefix_color)),
-                    Span::styled(
-                        format!("\u{25BC} Thinking ({line_count} lines)"),
-                        Style::default().fg(theme.text_dim),
-                    ),
-                ]));
+                result.push(Line::from(vec![Span::styled(
+                    format!("  Thinking ({line_count} lines)"),
+                    Style::default().fg(theme.text_dim),
+                )]));
                 for rendered_line in &self.lines {
-                    let mut spans: Vec<Span<'_>> = vec![Span::styled(
-                        "  \u{23BF} ",
-                        Style::default().fg(theme.border),
-                    )];
+                    let mut spans: Vec<Span<'_>> =
+                        vec![Span::styled("    ", Style::default().fg(theme.border))];
                     spans.extend(rendered_line.segments.iter().map(|seg| {
                         Span::styled(seg.text.as_str(), Style::default().fg(theme.text_dim))
                     }));
@@ -412,14 +401,12 @@ impl ChatMessage {
             return result;
         }
 
-        // User: "❯ message" — first line gets prefix, rest indented
+        // User: colored text, no prefix symbol
         if matches!(self.kind, ChatMessageKind::User) {
-            for (i, rendered_line) in self.lines.iter().enumerate() {
-                let line_prefix = if i == 0 { prefix } else { "  " };
-                let mut spans: Vec<Span<'_>> =
-                    vec![Span::styled(line_prefix, Style::default().fg(prefix_color))];
+            for rendered_line in &self.lines {
+                let mut spans: Vec<Span<'_>> = Vec::new();
                 spans.extend(rendered_line.segments.iter().map(|seg| {
-                    let mut style = Style::default().fg(seg.color);
+                    let mut style = Style::default().fg(prefix_color);
                     if seg.bold {
                         style = style.add_modifier(Modifier::BOLD);
                     }
@@ -433,12 +420,10 @@ impl ChatMessage {
             return result;
         }
 
-        // Assistant/System/Error: content lines with ⎿/•/✖ on first line
-        for (i, rendered_line) in self.lines.iter().enumerate() {
-            let line_prefix = if i == 0 { prefix } else { "  " };
-            let prefix_col = if i == 0 { prefix_color } else { theme.border };
+        // Assistant/System/Error: content lines with consistent indent
+        for rendered_line in &self.lines {
             let mut spans: Vec<Span<'_>> =
-                vec![Span::styled(line_prefix, Style::default().fg(prefix_col))];
+                vec![Span::styled(prefix, Style::default().fg(theme.border))];
             spans.extend(rendered_line.segments.iter().map(|seg| {
                 let mut style = Style::default().fg(seg.color);
                 if seg.bold {
