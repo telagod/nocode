@@ -1,9 +1,11 @@
 #[allow(dead_code)]
 mod command_registry;
 #[allow(dead_code)]
-mod config_flow;
+mod config_cli;
 #[allow(dead_code)]
-mod login;
+mod config_flow;
+mod init;
+mod insight;
 #[allow(dead_code)]
 mod markdown_render;
 #[allow(dead_code, clippy::collapsible_if)]
@@ -125,7 +127,66 @@ fn main() {
         .to_string_lossy()
         .into_owned();
 
-    let settings = Settings::load_merged(&cwd);
+    let mut settings = Settings::load_merged(&cwd);
+
+    // `nocode init` / `nocode config <...>` — config scaffolding & inspection.
+    // These run BEFORE the legacy-config rejection check so the user can
+    // actually run them to recover from a broken config file.
+    if let Some(idx) = args.iter().position(|a| a == "init") {
+        let rest: Vec<String> = args.iter().skip(idx + 1).cloned().collect();
+        init::run(&rest);
+        return;
+    }
+    if let Some(idx) = args.iter().position(|a| a == "config") {
+        let rest: Vec<String> = args.iter().skip(idx + 1).cloned().collect();
+        config_cli::run(&rest);
+        return;
+    }
+
+    // Hard-reject legacy `custom_*` config fields with a single, actionable
+    // migration message. The named-providers scheme is the only supported
+    // configuration; pre-REALIGN configs must be migrated manually.
+    if let Err(msg) = settings.reject_legacy_custom() {
+        eprintln!("Error: {msg}");
+        std::process::exit(2);
+    }
+
+    // --profile <name> / NOCODE_PROFILE — apply a named profile from the
+    // settings file as a layer of overrides on top of the merged defaults.
+    // This must come before any code consumes `settings.model` /
+    // `settings.permission_mode` so the override is uniformly visible.
+    let profile_name: Option<String> = extract_arg(&args, "--profile")
+        .or_else(|| env::var("NOCODE_PROFILE").ok());
+    if let Some(name) = profile_name.as_deref() {
+        match settings.profiles.get(name).cloned() {
+            Some(profile) => {
+                if profile.model.is_some() {
+                    settings.model = profile.model;
+                }
+                if profile.permission_mode.is_some() {
+                    settings.permission_mode = profile.permission_mode;
+                }
+                if profile.reasoning_effort.is_some() {
+                    settings.reasoning_effort = profile.reasoning_effort;
+                }
+                // Provider override: profile.provider feeds resolve_named_provider
+                // through `default_provider` so all downstream call sites pick it up
+                // without needing a second flag.
+                settings.default_provider = Some(profile.provider);
+            }
+            None => {
+                eprintln!(
+                    "Unknown profile '{name}'. Available: {avail}",
+                    avail = if settings.profiles.is_empty() {
+                        "(none — define [profiles.<name>] in ~/.nocode/config.toml)".to_owned()
+                    } else {
+                        settings.profiles.keys().cloned().collect::<Vec<_>>().join(", ")
+                    }
+                );
+                std::process::exit(2);
+            }
+        }
+    }
 
     // Start async model capabilities cache fetch
     nocode_core::provider::model_caps::init_cache_async();
@@ -153,10 +214,16 @@ fn main() {
         creds.load_into_env();
     }
 
-    // --login: run interactive login flow (select provider → key → model → save)
+    // --login: removed. Point the user at the new flow.
     if args.iter().any(|a| a == "--login") {
-        login::run_login(&cwd);
-        return;
+        eprintln!(
+            "The interactive login wizard has been removed.\n\n\
+             Edit ~/.nocode/config.toml directly. To get started:\n  \
+             nocode init                  # scaffold a template\n  \
+             nocode config set <k> <v>    # tweak scalars from the CLI\n\n\
+             See docs/10_provider_config.md for the schema."
+        );
+        std::process::exit(2);
     }
 
     // --resume / -c: resume a previous session
@@ -176,43 +243,28 @@ fn main() {
         None
     };
 
-    // No API key available → auto-launch login before TUI
+    // No API key / provider available → point at `nocode init` instead of a wizard.
     let needs_onboarding =
         !has_any_api_key() && !args.iter().any(|a| a == "--status" || a == "--help");
     if needs_onboarding {
-        eprintln!("No API key found. Starting setup...\n");
-        login::run_login(&cwd);
-        // Reload credentials into env after login
-        let cred_path2 = nocode_core::storage::credentials::CredentialStore::default_path();
-        if let Ok(creds) = nocode_core::storage::credentials::CredentialStore::load(&cred_path2) {
-            creds.load_into_env();
-        }
-        if !has_any_api_key() {
-            eprintln!("No provider configured. Run `nocode --login` to set up.");
-            return;
-        }
+        eprintln!(
+            "No API key found. To get started:\n  \
+             nocode init                  # scaffold ~/.nocode/config.toml\n  \
+             export OPENAI_API_KEY=sk-... # or whichever key your provider needs\n\
+             then re-run `nocode`."
+        );
+        return;
     }
-    // Reload settings in case login changed them
-    let settings = if needs_onboarding {
-        Settings::load_merged(&cwd)
-    } else {
-        settings
-    };
 
     let provider_type = resolve_provider(&settings);
     let model = match resolve_model(&settings, &provider_type) {
         Some(m) => m,
         None => {
-            eprintln!("No model configured. Starting setup...\n");
-            login::run_login(&cwd);
-            let settings = Settings::load_merged(&cwd);
-            match resolve_model(&settings, &resolve_provider(&settings)) {
-                Some(m) => m,
-                None => {
-                    eprintln!("No model configured. Run `nocode --login` to set up.");
-                    return;
-                }
-            }
+            eprintln!(
+                "No model configured. Set `model = \"...\"` in ~/.nocode/config.toml \
+                 or `default_model` under [providers.<name>]."
+            );
+            return;
         }
     };
     let max_turns = settings.max_turns.unwrap_or(200);
@@ -247,6 +299,12 @@ fn main() {
 
     if args.iter().any(|a| a == "--status") {
         run_status(&cwd, &provider_type, &model, &settings);
+        return;
+    }
+
+    if let Some(idx) = args.iter().position(|a| a == "--insight" || a == "insight") {
+        let rest: Vec<String> = args.iter().skip(idx + 1).cloned().collect();
+        insight::run(&rest);
         return;
     }
 
@@ -309,31 +367,7 @@ fn main() {
             for w in &provider_warnings {
                 eprintln!("Warning: {w}");
             }
-            login::run_login(&cwd);
-            // Reload everything after login
-            let cred_path2 = nocode_core::storage::credentials::CredentialStore::default_path();
-            if let Ok(creds) = nocode_core::storage::credentials::CredentialStore::load(&cred_path2)
-            {
-                creds.load_into_env();
-            }
-            let settings = Settings::load_merged(&cwd);
-            let provider_type = resolve_provider(&settings);
-            let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| {
-                eprintln!("No model configured. Run `nocode --login`.");
-                std::process::exit(1);
-            });
-            let caps = nocode_core::provider::model_caps::lookup(&model);
-            let max_tokens = settings.max_tokens.unwrap_or(caps.max_output_tokens);
-            let custom_sp = resolve_custom_system_prompt(&settings);
-            let system_blocks = assembly::assemble_system_prompt(
-                &cwd,
-                &[],
-                &TruncationBudget::default(),
-                custom_sp.as_deref(),
-            );
-            let registry = ToolRegistry::with_defaults(&cwd);
-            initialize_runtime_global_registry(&cwd, &settings);
-            let (provider_box, _) = build_provider(&provider_type, &settings);
+            // No interactive re-login — the user fixes ~/.nocode/config.toml.
             (provider_box, model, max_tokens, registry, system_blocks)
         } else {
             (provider_box, model, max_tokens, registry, system_blocks)
@@ -379,42 +413,19 @@ fn has_any_api_key() -> bool {
 }
 
 fn resolve_provider(settings: &Settings) -> ModelProvider {
-    if let Ok(p) = env::var("NOCODE_MODEL_PROVIDER")
-        && let Some(provider) = ModelProvider::parse(&p)
-    {
-        return provider;
-    }
-    if let Some(provider) = settings
-        .model_provider
-        .as_deref()
-        .and_then(ModelProvider::parse)
-    {
-        return provider;
-    }
-    if settings.custom_base_url.is_some() {
-        return ModelProvider::Custom;
-    }
-    if env::var("NOCODE_CUSTOM_BASE_URL").is_ok() {
-        return ModelProvider::Custom;
-    }
-    if env::var("ANTHROPIC_API_KEY").is_ok() {
-        return ModelProvider::Claude;
-    }
-    if env::var("OPENAI_API_KEY").is_ok() {
-        return ModelProvider::OpenAi;
-    }
-    if env::var("GEMINI_API_KEY").is_ok() {
-        return ModelProvider::Gemini;
-    }
-    ModelProvider::Claude
+    // Legacy: returns just the enum for places that still need it. The full
+    // provider info (base_url, key, wire_api) now comes from
+    // `nocode_core::provider::resolve::resolve_named_provider`.
+    nocode_core::provider::resolve::resolve_named_provider(settings, None, None)
+        .map(|r| r.legacy_model_provider())
+        .unwrap_or(ModelProvider::Claude)
 }
 
 fn resolve_model(settings: &Settings, provider: &ModelProvider) -> Option<String> {
-    // 1. Explicit global override
+    // Order: NOCODE_MODEL → per-provider env → settings.model → provider.default_model
     if let Ok(m) = env::var("NOCODE_MODEL") {
         return Some(m);
     }
-    // 2. Per-provider env var
     let per_provider_var = match provider {
         ModelProvider::Claude => "ANTHROPIC_MODEL",
         ModelProvider::OpenAi => "OPENAI_MODEL",
@@ -426,68 +437,66 @@ fn resolve_model(settings: &Settings, provider: &ModelProvider) -> Option<String
     {
         return Some(m);
     }
-    // 3. Settings file
-    settings.model.clone()
+    if let Some(m) = settings.model.clone() {
+        return Some(m);
+    }
+    // Last-resort: provider table's default_model.
+    nocode_core::provider::resolve::resolve_named_provider(settings, None, None)
+        .ok()
+        .and_then(|r| r.default_model)
 }
 
 fn build_provider(
-    provider: &ModelProvider,
+    _provider: &ModelProvider,
     settings: &Settings,
 ) -> (Box<dyn Provider>, Vec<String>) {
     let mut warnings = Vec::new();
-    let resolve_key = nocode_core::provider::resolve::resolve_api_key;
-    let result: Box<dyn Provider> = match provider {
-        ModelProvider::Claude => {
-            let key = resolve_key(ModelProvider::Claude, settings);
-            let base = env::var("ANTHROPIC_BASE_URL")
-                .unwrap_or_else(|_| String::from("https://api.anthropic.com"));
-            Box::new(ClaudeProvider::with_base_url(base, key))
+    let resolved = match nocode_core::provider::resolve::resolve_named_provider(
+        settings, None, None,
+    ) {
+        Ok(r) => r,
+        Err(msg) => {
+            eprintln!("Error: {msg}");
+            std::process::exit(1);
         }
-        ModelProvider::OpenAi => {
-            let key = resolve_key(ModelProvider::OpenAi, settings);
-            let base = env::var("OPENAI_BASE_URL")
-                .unwrap_or_else(|_| String::from("https://api.openai.com"));
-            Box::new(OpenAiResponsesProvider::with_base_url(base, key))
-        }
-        ModelProvider::Gemini => {
-            let key = resolve_key(ModelProvider::Gemini, settings);
-            Box::new(GeminiProvider::new(key))
-        }
-        ModelProvider::Custom => {
-            use nocode_core::provider::resolve::{
-                resolve_custom_api_format, resolve_custom_base_url,
-            };
-            let key = resolve_key(ModelProvider::Custom, settings);
-            let base = match resolve_custom_base_url(settings) {
-                Ok(url) => url,
-                Err(msg) => {
-                    eprintln!("Error: {msg}");
-                    std::process::exit(1);
-                }
-            };
-            let format = resolve_custom_api_format(settings);
-            match format.as_str() {
-                "anthropic" => {
-                    if let Some(foundry_id) = base
-                        .strip_prefix("https://")
-                        .and_then(|s| s.strip_suffix(".foundry.anthropic.com"))
-                    {
-                        Box::new(FoundryProvider::new(foundry_id, &key))
-                    } else {
-                        Box::new(ClaudeProvider::with_base_url(base, key))
-                    }
-                }
-                "openai-responses" => Box::new(OpenAiResponsesProvider::with_base_url(base, key)),
-                "openai-chat" => Box::new(OpenAiProvider::with_base_url(base, key)),
-                "google" => Box::new(GeminiProvider::new(key)),
-                other => {
-                    warnings.push(format!(
-                        "Unknown custom_api_format '{other}', defaulting to openai-responses.\n\
-                         Valid values: openai-responses, openai-chat, anthropic, google"
-                    ));
-                    Box::new(OpenAiResponsesProvider::with_base_url(base, key))
-                }
+    };
+
+    let result: Box<dyn Provider> = match resolved.wire_api.as_str() {
+        "anthropic" => {
+            // Foundry alias: an Anthropic-compatible internal endpoint under
+            // *.foundry.anthropic.com — pulled out so users still get the right
+            // transport even if they didn't know to set the special wire flag.
+            if let Some(foundry_id) = resolved
+                .base_url
+                .strip_prefix("https://")
+                .and_then(|s| s.strip_suffix(".foundry.anthropic.com"))
+            {
+                Box::new(FoundryProvider::new(foundry_id, &resolved.api_key))
+            } else {
+                Box::new(ClaudeProvider::with_base_url(
+                    resolved.base_url,
+                    resolved.api_key,
+                ))
             }
+        }
+        "openai-responses" => Box::new(OpenAiResponsesProvider::with_base_url(
+            resolved.base_url,
+            resolved.api_key,
+        )),
+        "openai-chat" => Box::new(OpenAiProvider::with_base_url(
+            resolved.base_url,
+            resolved.api_key,
+        )),
+        "google" => Box::new(GeminiProvider::new(resolved.api_key)),
+        other => {
+            warnings.push(format!(
+                "Unknown wire_api '{other}', defaulting to openai-responses.\n\
+                 Valid values: openai-responses, openai-chat, anthropic, google"
+            ));
+            Box::new(OpenAiResponsesProvider::with_base_url(
+                resolved.base_url,
+                resolved.api_key,
+            ))
         }
     };
     (result, warnings)
@@ -536,6 +545,95 @@ fn run_status(cwd: &str, provider: &ModelProvider, model: &str, settings: &Setti
     println!("CLAUDE.md files: {}", md_files.len());
     let sessions = nocode_core::session::persistence::SessionPersistence::list_sessions(cwd);
     println!("Saved sessions: {}", sessions.len());
+
+    // File-first state: surface where the SQL volume actually lives,
+    // mirroring antcode's `.antcode/` discipline of "state is on disk and visible".
+    let data_dir = format!("{home}/.nocode/data");
+    if let Ok(store) = nocode_core::storage::sql::SqlStore::new(&data_dir) {
+        let volumes = store.list_volumes().unwrap_or_default();
+        println!();
+        println!("State directory: {data_dir}");
+        if let Some(latest) = volumes.last() {
+            println!("Active volume:   {data_dir}/nocode_{latest}.db");
+        } else {
+            println!("Active volume:   (none — no sessions persisted yet)");
+        }
+        println!("Volumes total:   {}", volumes.len());
+
+        // Top-3 tools and gates from telemetry, if any.
+        if let Ok(rows) = store.list_telemetry(2_000) {
+            use std::collections::BTreeMap;
+            let mut tool_counts: BTreeMap<String, u64> = BTreeMap::new();
+            let mut gate_counts: BTreeMap<String, u64> = BTreeMap::new();
+            for row in &rows {
+                if row.event_type != "tool_call" {
+                    continue;
+                }
+                let data = row.data.as_deref().unwrap_or("");
+                if let Some(tool) = quick_str(data, "tool") {
+                    *tool_counts.entry(tool).or_insert(0) += 1;
+                }
+                if quick_bool(data, "is_error").unwrap_or(false)
+                    && let Some(trail) = quick_str(data, "result")
+                    && let Some(gate) = parse_gate_name(&trail)
+                {
+                    *gate_counts.entry(gate).or_insert(0) += 1;
+                }
+            }
+            if !tool_counts.is_empty() {
+                let mut top: Vec<_> = tool_counts.into_iter().collect();
+                top.sort_by_key(|e| std::cmp::Reverse(e.1));
+                println!();
+                println!("Top tools:");
+                for (tool, n) in top.into_iter().take(3) {
+                    println!("  {tool:<24} {n}");
+                }
+            }
+            if !gate_counts.is_empty() {
+                let mut top: Vec<_> = gate_counts.into_iter().collect();
+                top.sort_by_key(|e| std::cmp::Reverse(e.1));
+                println!();
+                println!("Top deny gates:");
+                for (gate, n) in top.into_iter().take(3) {
+                    println!("  {gate:<24} {n}");
+                }
+            }
+        }
+        println!();
+        println!("More: nocode insight (sessions | tools | gates | cost | where)");
+    }
+}
+
+/// Cheap probes for the JSON blob in `telemetry.data`. Mirrors the helpers in
+/// `insight.rs`; kept local to avoid pulling that whole module into `main.rs`.
+fn quick_str(data: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\":");
+    let start = data.find(&needle)? + needle.len();
+    let rest = data[start..].trim_start();
+    let body = rest.strip_prefix('"')?;
+    let end = body.find('"')?;
+    Some(body[..end].to_owned())
+}
+
+fn quick_bool(data: &str, key: &str) -> Option<bool> {
+    let needle = format!("\"{key}\":");
+    let start = data.find(&needle)? + needle.len();
+    let rest = data[start..].trim_start();
+    if rest.starts_with("true") {
+        Some(true)
+    } else if rest.starts_with("false") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn parse_gate_name(trail: &str) -> Option<String> {
+    let rest = trail.strip_prefix("Denied [")?;
+    let close = rest.find(']')?;
+    let inside = &rest[..close];
+    let (gate, _) = inside.split_once(':')?;
+    Some(gate.trim().to_owned())
 }
 
 fn run_bridge_once(
@@ -755,7 +853,7 @@ fn run_ide_server() {
     let settings = Settings::load_merged(&cwd);
     let provider_type = resolve_provider(&settings);
     let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| {
-        eprintln!("No model configured. Run `nocode --login`.");
+        eprintln!("No model configured. Set `model = \"...\"` in ~/.nocode/config.toml.");
         std::process::exit(1);
     });
     let registry = ToolRegistry::with_defaults(&cwd);
@@ -841,7 +939,7 @@ fn run_mcp_server() {
     let settings = Settings::load_merged(&cwd);
     let provider_type = resolve_provider(&settings);
     let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| {
-        eprintln!("No model configured. Run `nocode --login`.");
+        eprintln!("No model configured. Set `model = \"...\"` in ~/.nocode/config.toml.");
         std::process::exit(1);
     });
     let registry = ToolRegistry::with_defaults(&cwd);
@@ -1032,7 +1130,7 @@ fn run_agent_host() {
     let settings = Settings::load_merged(&cwd);
     let provider_type = resolve_provider(&settings);
     let model = resolve_model(&settings, &provider_type).unwrap_or_else(|| {
-        eprintln!("No model configured. Run `nocode --login`.");
+        eprintln!("No model configured. Set `model = \"...\"` in ~/.nocode/config.toml.");
         std::process::exit(1);
     });
     let registry = ToolRegistry::with_defaults(&cwd);
@@ -1118,6 +1216,9 @@ fn print_help() {
          \n\
          Modes:\n\
          \x20 --status                  System diagnostics\n\
+         \x20 init                      Scaffold ~/.nocode/config.toml\n\
+         \x20 config <list|get|set>     Inspect/modify scalar settings\n\
+         \x20 insight [sub] [--json]    Observability — sessions / tools / gates / cost / where\n\
          \x20 --bridge-once \"prompt\"    Single-turn local execution\n\
          \x20 --bridge-remote-once \"p\"  Single-turn HTTP bridge\n\
          \x20 --ws-server <addr>        WebSocket bridge server\n\
@@ -1129,7 +1230,6 @@ fn print_help() {
          Options:\n\
          \x20 --version, -v             Show version\n\
          \x20 --update                  Pull latest source from GitHub and rebuild binary\n\
-         \x20 --login                   Interactive provider setup\n\
          \x20 --resume [session_id]     Resume a previous session (omit id for last session)\n\
          \x20 -c                        Shorthand for --resume (continue last session)\n\
          \x20 --help, -h                Show this help\n\
@@ -1162,12 +1262,30 @@ mod tests {
     }
 
     #[test]
-    fn resolve_provider_prefers_custom_settings() {
+    fn resolve_provider_prefers_named_provider_table() {
+        // The custom_base_url field is now a hard error; this test pins the
+        // post-REALIGN behavior — a named `[providers.foo]` table is the
+        // single source of truth.
+        let mut providers = std::collections::BTreeMap::new();
+        providers.insert(
+            "foo".to_owned(),
+            nocode_core::config::settings::ProviderDef {
+                base_url: "https://example.invalid".to_owned(),
+                wire_api: "openai-chat".to_owned(),
+                api_key_env: None,
+                default_model: None,
+            },
+        );
         let settings = Settings {
-            custom_base_url: Some("https://example.invalid".to_string()),
+            default_provider: Some("foo".to_owned()),
+            providers,
             ..Default::default()
         };
-        assert_eq!(resolve_provider(&settings), ModelProvider::Custom);
+        let r = nocode_core::provider::resolve::resolve_named_provider(&settings, None, None)
+            .expect("named provider resolves");
+        assert_eq!(r.name, "foo");
+        assert_eq!(r.wire_api, "openai-chat");
+        assert_eq!(r.legacy_model_provider(), ModelProvider::OpenAi);
     }
 
     #[test]

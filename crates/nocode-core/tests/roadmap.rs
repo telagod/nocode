@@ -114,7 +114,9 @@ fn cli_modules_exist() {
         "tui_widgets.rs",
         "tui_permission.rs",
         "command_registry.rs",
-        "login.rs",
+        "init.rs",
+        "config_cli.rs",
+        "insight.rs",
         "model_fetch.rs",
         "provider_presets.rs",
         "markdown_render.rs",
@@ -137,32 +139,33 @@ fn cli_modules_exist() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn tool_registry_has_9_tools() {
+fn tool_registry_has_canonical_core_set() {
+    // The minimal harness contract — 11 tools that cover see / write / search /
+    // execute / spawn / ask / skill. The set is fixed and checked here so any
+    // accidental shrink or sprawl forces a deliberate decision.
     let reg = nocode_core::tool::ToolRegistry::with_defaults("/tmp");
     let names = reg.names();
+    let canonical = nocode_core::tool::ToolRegistry::core_tool_names();
     assert_eq!(
         names.len(),
-        9,
-        "Expected exactly 9 tools, got {}",
+        canonical.len(),
+        "expected {} core tools, got {}: {names:?}",
+        canonical.len(),
         names.len()
     );
+    for expected in canonical {
+        assert!(
+            reg.get(expected).is_some(),
+            "core tool '{expected}' missing from default registry"
+        );
+    }
 }
 
 #[test]
 fn tool_categories_complete() {
     let reg = nocode_core::tool::ToolRegistry::with_defaults("/tmp");
-    // All 9 built-in tools
-    for name in &[
-        "Agent",
-        "Bash",
-        "FileEdit",
-        "FileRead",
-        "FileWrite",
-        "Glob",
-        "Grep",
-        "WebFetch",
-        "WebSearch",
-    ] {
+    // The 11 built-in tools (see ToolRegistry::core_tool_names).
+    for name in nocode_core::tool::ToolRegistry::core_tool_names() {
         assert!(reg.get(name).is_some(), "Missing built-in tool: {name}");
     }
 }

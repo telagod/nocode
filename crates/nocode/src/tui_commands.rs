@@ -633,13 +633,17 @@ fn cmd_skills(app: &mut TuiApp) {
     }
     lines.push(String::new());
 
-    // Discovered skill files
-    let skills = nocode_core::tool::skill::list_skills();
-    if !skills.is_empty() {
+    // Discovered skill files — load via SkillRegistry so the TUI shows the
+    // same metadata (description) the model sees in the prompt index.
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| ".".to_owned());
+    let skill_reg = nocode_core::skill::SkillRegistry::load(&cwd);
+    if !skill_reg.is_empty() {
         lines.push("User skills:".to_string());
         lines.push(String::new());
-        for (name, path) in &skills {
-            lines.push(format!("  {name:<20} {}", path.display()));
+        for (name, def) in skill_reg.iter() {
+            lines.push(format!("  {name:<20} {}", def.description));
         }
         lines.push(String::new());
     }
@@ -647,7 +651,7 @@ fn cmd_skills(app: &mut TuiApp) {
     lines.push(format!(
         "Total: {} commands, {} skills",
         registry.all_commands().len(),
-        skills.len()
+        skill_reg.len()
     ));
     app.push_system(&lines.join("\n"));
 }
@@ -938,7 +942,7 @@ fn cmd_agent_create(app: &mut TuiApp, args: Option<&str>) {
     let worker_id = id.clone();
     let prompt_owned = prompt.to_string();
     std::thread::spawn(move || {
-        nocode_core::tool::agent::run_worker_thread(&worker_id, &prompt_owned, None);
+        nocode_core::tool::agent::run_worker_thread(&worker_id, &prompt_owned, None, None);
     });
 
     app.push_system(&format!(
@@ -1565,7 +1569,7 @@ Max turns   {max_turns}
 Max tokens  {max_tokens}
 Directory   {cwd_short}
 
-/model <name> to switch  \u{2022}  nocode --login to reconfigure"
+/model <name> to switch  \u{2022}  edit ~/.nocode/config.toml to reconfigure"
     );
     app.push_system(&msg);
 }

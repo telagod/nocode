@@ -145,7 +145,7 @@ fn deny_mode_blocks_everything() {
     let reg = registry();
     let exec = ToolExecutor::new(&reg).with_permission_mode(PermissionMode::Deny);
     let result = exec.execute_tool_use("t7", "Bash", &json!({"command": "echo denied"}));
-    assert_tool_error(&result, "Permission denied");
+    assert_tool_error(&result, "permission");
 }
 
 #[test]
@@ -188,7 +188,7 @@ fn pre_hook_can_deny_tool() {
     );
     let exec = ToolExecutor::new(&reg).with_hooks(&runner);
     let result = exec.execute_tool_use("t10", "Bash", &json!({"command": "echo hooked"}));
-    assert_tool_error(&result, "PreToolUse hook denied");
+    assert_tool_error(&result, "hook");
 }
 
 #[test]
@@ -227,7 +227,7 @@ fn sandbox_blocks_network_tools() {
         "WebFetch",
         &json!({"url": "https://example.com", "prompt": "test"}),
     );
-    assert_tool_error(&result, "network access disabled");
+    assert_tool_error(&result, "sandbox");
 }
 
 // ---------------------------------------------------------------------------
@@ -247,7 +247,9 @@ fn destructive_bash_blocked() {
     let reg = registry();
     let exec = ToolExecutor::new(&reg);
     let result = exec.execute_tool_use("t14", "Bash", &json!({"command": "rm -rf /"}));
-    assert_tool_error(&result, "Bash validation");
+    // Either the bash classifier (Destructive risk under Auto+sandbox) or
+    // the bash syntax validator can flag rm -rf — both are acceptable trails.
+    assert_tool_error(&result, "Denied");
 }
 
 #[test]

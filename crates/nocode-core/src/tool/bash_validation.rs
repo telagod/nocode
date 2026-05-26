@@ -127,12 +127,27 @@ const DESTRUCTIVE_PATTERNS: &[&str] = &[
     "> /dev/null 2>&1 &",
 ];
 
+/// Patterns matched case-insensitively. Destructive content typed inside a
+/// command pipeline (e.g. `mysql -e "DROP TABLE users"` or `psql -c
+/// "TRUNCATE x"`) belongs here so the classifier flags it consistently.
+const DESTRUCTIVE_PATTERNS_CI: &[&str] = &[
+    "drop table",
+    "drop database",
+    "drop schema",
+    "truncate table",
+];
+
 /// Check if a command is destructive (requires explicit approval).
 pub fn is_destructive_command(command: &str) -> bool {
     let cmd = command.trim();
     let first_word = first_command_word(cmd);
-    DESTRUCTIVE_COMMANDS.contains(&first_word)
+    if DESTRUCTIVE_COMMANDS.contains(&first_word)
         || DESTRUCTIVE_PATTERNS.iter().any(|p| cmd.contains(p))
+    {
+        return true;
+    }
+    let lower = cmd.to_lowercase();
+    DESTRUCTIVE_PATTERNS_CI.iter().any(|p| lower.contains(p))
 }
 
 // =========================================================================

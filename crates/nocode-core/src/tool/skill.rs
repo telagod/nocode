@@ -1,69 +1,104 @@
-//! Skill tool — invoke user-defined skills from .claude/skills/ or .nocode/skills/.
+//! `Skill` tool — invoke a skill discovered by [`crate::skill::SkillRegistry`].
+//!
+//! This file is the thin tool-side wrapper. The actual skill discovery, parsing
+//! and indexing lives in [`crate::skill`], which is also wired into prompt
+//! assembly so the model can see the available skills before deciding to call
+//! this tool.
 
+use crate::skill::SkillRegistry;
 use crate::tool::{Tool, ToolOutput};
 use serde_json::{Value, json};
-use std::fs;
 use std::path::PathBuf;
 
-pub struct SkillTool;
+/// Skill tool. By default it resolves the search roots from `std::env::current_dir()`
+/// at call time. Use [`SkillTool::with_cwd`] to pin a fixed root (tests, embedded
+/// usage, multi-workspace setups).
+pub struct SkillTool {
+    cwd: Option<String>,
+}
+
+impl SkillTool {
+    /// Construct a tool that resolves cwd lazily on each call.
+    pub const fn new() -> Self {
+        Self { cwd: None }
+    }
+
+    /// Construct a tool pinned to a specific working directory.
+    pub fn with_cwd(cwd: impl Into<String>) -> Self {
+        Self {
+            cwd: Some(cwd.into()),
+        }
+    }
+
+    fn resolved_cwd(&self) -> String {
+        self.cwd.clone().unwrap_or_else(|| {
+            std::env::current_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| ".".to_owned())
+        })
+    }
+}
+
+impl Default for SkillTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Tool for SkillTool {
     fn name(&self) -> &str {
         "Skill"
     }
+
     fn description(&self) -> &str {
-        "Execute a user-invocable skill by name. Skills are defined in .claude/skills/ or .nocode/skills/ directories."
+        "Invoke a registered skill by name. Skills are discovered from .nocode/skills/ \
+         and .claude/skills/ (project + user-global). Their index is part of the system \
+         prompt; pick a name from there."
     }
+
     fn input_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
                 "skill": {
                     "type": "string",
-                    "description": "The skill name to invoke (e.g., 'commit', 'review-pr')"
+                    "description": "Skill name (e.g. 'commit', 'review-pr', 'ns:name')."
                 },
                 "args": {
                     "type": "string",
-                    "description": "Optional arguments for the skill"
+                    "description": "Optional arguments substituted into $ARGUMENTS placeholders."
                 }
             },
             "required": ["skill"]
         })
     }
+
     fn execute(&self, input: &Value) -> ToolOutput {
         let Some(skill_name) = input["skill"].as_str() else {
             return ToolOutput::error("Missing required parameter: skill");
         };
         let args = input["args"].as_str().unwrap_or("");
 
-        // Discover skill file
-        let skill_path = match discover_skill(skill_name) {
-            Some(p) => p,
-            None => {
-                return ToolOutput::error(format!(
-                    "Skill '{skill_name}' not found. Searched .claude/skills/ and .nocode/skills/"
-                ));
-            }
+        let registry = SkillRegistry::load(&self.resolved_cwd());
+
+        let Some(def) = registry.get(skill_name) else {
+            let available: Vec<&str> = registry.iter().map(|(n, _)| n.as_str()).collect();
+            let hint = if available.is_empty() {
+                "No skills discovered. Place a markdown file under .nocode/skills/ \
+                 or .claude/skills/ (project or ~/) with optional YAML frontmatter."
+                    .to_owned()
+            } else {
+                format!("Available: {}", available.join(", "))
+            };
+            return ToolOutput::error(format!("Skill '{skill_name}' not found. {hint}"));
         };
 
-        // Read skill content
-        let content = match fs::read_to_string(&skill_path) {
-            Ok(c) => c,
-            Err(e) => {
-                return ToolOutput::error(format!(
-                    "Failed to read skill '{}': {e}",
-                    skill_path.display()
-                ));
-            }
-        };
-
-        // Parse skill — extract prompt from markdown content
-        let prompt = parse_skill_prompt(&content, args);
-
+        let prompt = def.render(args);
         ToolOutput::success(
             json!({
-                "skill": skill_name,
-                "path": skill_path.to_string_lossy(),
+                "skill": def.name,
+                "path": def.path.to_string_lossy(),
+                "description": def.description,
                 "prompt": prompt,
             })
             .to_string(),
@@ -71,126 +106,87 @@ impl Tool for SkillTool {
     }
 }
 
-/// Discover a skill file by name.
+/// Backwards-compatible helper that returns `(name, path)` pairs.
 ///
-/// Search order:
-/// 1. `{cwd}/.claude/skills/{name}.md`
-/// 2. `{cwd}/.nocode/skills/{name}.md`
-/// 3. `~/.claude/skills/{name}.md`
-/// 4. `~/.nocode/skills/{name}.md`
-///
-/// Also supports fully qualified names like `namespace:skill` → `{name}.md`
-fn discover_skill(name: &str) -> Option<PathBuf> {
-    let file_name = if name.contains(':') {
-        // "namespace:skill" → look for skill.md in namespace/ subdirectory
-        let parts: Vec<&str> = name.splitn(2, ':').collect();
-        format!("{}/{}.md", parts[0], parts[1])
-    } else {
-        format!("{name}.md")
-    };
-
-    let cwd = std::env::current_dir()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|_| PathBuf::from("."));
-    let home = std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."));
-
-    let candidates = [
-        cwd.join(".claude/skills").join(&file_name),
-        cwd.join(".nocode/skills").join(&file_name),
-        home.join(".claude/skills").join(&file_name),
-        home.join(".nocode/skills").join(&file_name),
-    ];
-
-    candidates.into_iter().find(|p| p.exists())
-}
-
-/// Parse a skill markdown file and extract the prompt.
-/// Supports YAML frontmatter (delimited by ---) which is stripped.
-/// Replaces `$ARGUMENTS` placeholder with the provided args.
-fn parse_skill_prompt(content: &str, args: &str) -> String {
-    let body = strip_frontmatter(content);
-    body.replace("$ARGUMENTS", args)
-        .replace("${ARGUMENTS}", args)
-}
-
-/// Strip YAML frontmatter (--- delimited) from markdown content.
-fn strip_frontmatter(content: &str) -> &str {
-    let trimmed = content.trim_start();
-    if !trimmed.starts_with("---") {
-        return content;
-    }
-    // Find the closing ---
-    if let Some(end) = trimmed[3..].find("\n---") {
-        let after = end + 3 + 4; // skip past "\n---"
-        trimmed[after..].trim_start_matches('\n')
-    } else {
-        content
-    }
-}
-
-/// List all available skills from search directories.
+/// **Deprecated**: nothing in-tree calls this any more — the TUI and REPL
+/// now hold a [`SkillRegistry`] directly and read `def.description`
+/// alongside `def.path`. Kept for external callers (plugins, scripts) that
+/// haven't migrated yet.
+#[deprecated(
+    note = "use SkillRegistry::load(cwd).iter() — gives names plus descriptions"
+)]
 pub fn list_skills() -> Vec<(String, PathBuf)> {
     let cwd = std::env::current_dir()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|_| PathBuf::from("."));
-    let home = std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."));
-
-    let dirs = [
-        cwd.join(".claude/skills"),
-        cwd.join(".nocode/skills"),
-        home.join(".claude/skills"),
-        home.join(".nocode/skills"),
-    ];
-
-    let mut skills = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-
-    for dir in &dirs {
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == "md")
-                    && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
-                    && seen.insert(stem.to_string())
-                {
-                    skills.push((stem.to_string(), path));
-                }
-            }
-        }
-    }
-
-    skills
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| ".".to_owned());
+    SkillRegistry::load(&cwd)
+        .iter()
+        .map(|(name, def)| (name.clone(), def.path.clone()))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::env_mutex;
+    use crate::tool::Tool;
+    use std::fs;
+    use tempfile::TempDir;
 
     #[test]
-    fn strip_frontmatter_no_frontmatter() {
-        let content = "# Hello\n\nWorld";
-        assert_eq!(strip_frontmatter(content), content);
+    fn missing_skill_param_errors() {
+        let out = SkillTool::new().execute(&json!({}));
+        assert!(out.is_error);
+        assert!(out.content.contains("skill"));
     }
 
     #[test]
-    fn strip_frontmatter_with_frontmatter() {
-        let content = "---\nname: test\ntype: skill\n---\n# Hello\n\nWorld";
-        assert_eq!(strip_frontmatter(content), "# Hello\n\nWorld");
+    fn unknown_skill_lists_available_or_hints_empty() {
+        let _guard = env_mutex().lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        // Pin HOME so we don't pick up the developer's real ~/.claude/skills.
+        let saved_home = std::env::var("HOME").ok();
+        // SAFETY: env mutations serialized via env_mutex, restored below
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let tool = SkillTool::with_cwd(tmp.path().to_string_lossy().into_owned());
+        let out = tool.execute(&json!({ "skill": "__definitely_missing__" }));
+
+        match saved_home {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+
+        assert!(out.is_error);
+        assert!(out.content.contains("not found"));
     }
 
     #[test]
-    fn parse_skill_replaces_arguments() {
-        let content = "Run this: $ARGUMENTS\nAlso: ${ARGUMENTS}";
-        let result = parse_skill_prompt(content, "my-arg");
-        assert_eq!(result, "Run this: my-arg\nAlso: my-arg");
-    }
+    fn known_skill_returns_rendered_prompt() {
+        let _guard = env_mutex().lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let skills_dir = tmp.path().join(".nocode/skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+        fs::write(
+            skills_dir.join("greet.md"),
+            "---\ndescription: greet caller\n---\nHello $ARGUMENTS\n",
+        )
+        .unwrap();
 
-    #[test]
-    fn discover_skill_nonexistent() {
-        assert!(discover_skill("__nonexistent_skill_xyz__").is_none());
+        let saved_home = std::env::var("HOME").ok();
+        // SAFETY: env mutations serialized via env_mutex, restored below
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let tool = SkillTool::with_cwd(tmp.path().to_string_lossy().into_owned());
+        let out = tool.execute(&json!({ "skill": "greet", "args": "world" }));
+
+        match saved_home {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+
+        assert!(!out.is_error, "expected success, got: {}", out.content);
+        assert!(out.content.contains("Hello world"));
+        assert!(out.content.contains("greet"));
     }
 }

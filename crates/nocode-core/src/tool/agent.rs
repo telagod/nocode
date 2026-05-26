@@ -34,6 +34,12 @@ impl Tool for AgentTool {
         let name = input["name"].as_str().unwrap_or("agent");
         let run_in_background = input["run_in_background"].as_bool().unwrap_or(false);
         let model_override = input["model"].as_str();
+        // Permission mode for the sub-agent — propagated through the fractal so
+        // a parent running in Ask mode does not implicitly grant its child
+        // full Auto access. Defaults to inheriting the parent setting.
+        let mode_override = input["mode"]
+            .as_str()
+            .and_then(parse_subagent_mode);
         let prompt_owned = prompt.to_string();
         let name_owned = name.to_string();
         let model_owned = model_override.map(String::from);
@@ -53,7 +59,7 @@ impl Tool for AgentTool {
         if run_in_background {
             // Async: spawn and return immediately
             std::thread::spawn(move || {
-                run_worker_thread(&worker_id, &prompt_owned, model_owned.as_deref());
+                run_worker_thread(&worker_id, &prompt_owned, model_owned.as_deref(), mode_override);
             });
             ToolOutput::success(
                 json!({"worker_id": id, "name": name_owned, "description": description, "status": "spawned"}).to_string(),
@@ -61,7 +67,7 @@ impl Tool for AgentTool {
         } else {
             // Sync: spawn, wait for completion, return result
             let handle = std::thread::spawn(move || {
-                run_worker_thread(&worker_id, &prompt_owned, model_owned.as_deref());
+                run_worker_thread(&worker_id, &prompt_owned, model_owned.as_deref(), mode_override);
             });
             let _ = handle.join();
 
@@ -89,9 +95,31 @@ impl Tool for AgentTool {
     }
 }
 
+/// Map the AgentTool `mode` schema enum to a [`crate::tool::permission::PermissionMode`].
+///
+/// `acceptEdits` and `bypassPermissions` map to `Auto`; `dontAsk` maps to
+/// `Auto` as well (model proceeds without prompts). `default` keeps the parent
+/// mode (returns `None` so the worker uses its own settings). `plan` is
+/// orthogonal and handled by `EnterPlanMode` — we treat it as `ReadOnly` here
+/// to give a defensible read-only default.
+fn parse_subagent_mode(s: &str) -> Option<crate::tool::permission::PermissionMode> {
+    use crate::tool::permission::PermissionMode;
+    match s {
+        "acceptEdits" | "bypassPermissions" | "dontAsk" => Some(PermissionMode::Auto),
+        "plan" => Some(PermissionMode::ReadOnly),
+        "default" => None,
+        _ => None,
+    }
+}
+
 /// Execute a worker's prompt on a background thread.
 /// Builds provider, tool registry, and agentic loop from global config.
-pub fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&str>) {
+pub fn run_worker_thread(
+    worker_id: &str,
+    prompt: &str,
+    model_override: Option<&str>,
+    permission_mode_override: Option<crate::tool::permission::PermissionMode>,
+) {
     use crate::agent::worker::WorkerObserver;
     use crate::config::settings::Settings;
     use crate::message::Message;
@@ -149,7 +177,15 @@ pub fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&
             .or(settings.system_prompt.as_deref());
         let system_blocks =
             assembly::assemble_system_prompt(&cwd, &[], &TruncationBudget::default(), custom_sp);
-        let executor = ToolExecutor::new(&tool_registry);
+
+        // Build executor with the parent-supplied permission mode (if any).
+        // This is the load-bearing line for fractal safety: without it, every
+        // sub-agent silently runs in Auto regardless of how cautious the parent
+        // is configured to be.
+        let executor = match permission_mode_override {
+            Some(mode) => ToolExecutor::new(&tool_registry).with_permission_mode(mode),
+            None => ToolExecutor::new(&tool_registry),
+        };
 
         let messages = vec![Message::user_text(prompt)];
         let mut budget = TokenBudget::for_model(&model, Some(max_tokens));
@@ -219,83 +255,51 @@ pub fn run_worker_thread(worker_id: &str, prompt: &str, model_override: Option<&
 fn resolve_worker_provider(
     settings: &crate::config::settings::Settings,
 ) -> crate::provider::types::ModelProvider {
-    use crate::provider::types::ModelProvider;
-    if let Ok(p) = std::env::var("NOCODE_MODEL_PROVIDER")
-        && let Some(provider) = ModelProvider::parse(&p)
-    {
-        return provider;
-    }
-    if let Some(provider) = settings
-        .model_provider
-        .as_deref()
-        .and_then(ModelProvider::parse)
-    {
-        return provider;
-    }
-    if settings.custom_base_url.is_some() {
-        return ModelProvider::Custom;
-    }
-    if std::env::var("NOCODE_CUSTOM_BASE_URL").is_ok() {
-        return ModelProvider::Custom;
-    }
-    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-        return ModelProvider::Claude;
-    }
-    if std::env::var("OPENAI_API_KEY").is_ok() {
-        return ModelProvider::OpenAi;
-    }
-    if std::env::var("GEMINI_API_KEY").is_ok() {
-        return ModelProvider::Gemini;
-    }
-    ModelProvider::Claude
+    // Sub-agents share the parent's named-provider table — same precedence
+    // chain, no env-var probing.
+    crate::provider::resolve::resolve_named_provider(settings, None, None)
+        .map(|r| r.legacy_model_provider())
+        .unwrap_or(crate::provider::types::ModelProvider::Claude)
 }
 
 fn build_worker_provider(
-    provider: &crate::provider::types::ModelProvider,
+    _provider: &crate::provider::types::ModelProvider,
     settings: &crate::config::settings::Settings,
 ) -> Box<dyn crate::provider::Provider> {
     use crate::provider::claude::ClaudeProvider;
     use crate::provider::gemini::GeminiProvider;
+    use crate::provider::openai::OpenAiProvider;
     use crate::provider::openai_responses::OpenAiResponsesProvider;
-    use crate::provider::resolve::{
-        resolve_api_key, resolve_custom_api_format, resolve_custom_base_url,
-    };
-    use crate::provider::types::ModelProvider;
+    use crate::provider::resolve::resolve_named_provider;
 
-    match provider {
-        ModelProvider::Claude => {
-            let key = resolve_api_key(ModelProvider::Claude, settings);
-            let base = std::env::var("ANTHROPIC_BASE_URL")
-                .unwrap_or_else(|_| String::from("https://api.anthropic.com"));
-            Box::new(ClaudeProvider::with_base_url(base, key))
+    let resolved = match resolve_named_provider(settings, None, None) {
+        Ok(r) => r,
+        Err(msg) => {
+            eprintln!("Agent error: {msg}");
+            // Best-effort fallback so the worker still has *something* to call;
+            // misconfigured provider will fail at request time with a proper
+            // status code instead of a panic.
+            return Box::new(OpenAiResponsesProvider::with_base_url(
+                "https://api.openai.com".to_owned(),
+                String::new(),
+            ));
         }
-        ModelProvider::OpenAi => {
-            let key = resolve_api_key(ModelProvider::OpenAi, settings);
-            let base = std::env::var("OPENAI_BASE_URL")
-                .unwrap_or_else(|_| String::from("https://api.openai.com"));
-            Box::new(OpenAiResponsesProvider::with_base_url(base, key))
-        }
-        ModelProvider::Gemini => {
-            let key = resolve_api_key(ModelProvider::Gemini, settings);
-            Box::new(GeminiProvider::new(key))
-        }
-        ModelProvider::Custom => {
-            let key = resolve_api_key(ModelProvider::Custom, settings);
-            let base = resolve_custom_base_url(settings).unwrap_or_else(|msg| {
-                eprintln!("Agent error: {msg}");
-                String::new()
-            });
-            let format = resolve_custom_api_format(settings);
-            match format.as_str() {
-                "anthropic" => Box::new(ClaudeProvider::with_base_url(base, key)),
-                "openai-chat" => {
-                    use crate::provider::openai::OpenAiProvider;
-                    Box::new(OpenAiProvider::with_base_url(base, key))
-                }
-                "google" => Box::new(GeminiProvider::new(key)),
-                _ => Box::new(OpenAiResponsesProvider::with_base_url(base, key)),
-            }
-        }
+    };
+
+    match resolved.wire_api.as_str() {
+        "anthropic" => Box::new(ClaudeProvider::with_base_url(
+            resolved.base_url,
+            resolved.api_key,
+        )),
+        "openai-chat" => Box::new(OpenAiProvider::with_base_url(
+            resolved.base_url,
+            resolved.api_key,
+        )),
+        "google" => Box::new(GeminiProvider::new(resolved.api_key)),
+        _ => Box::new(OpenAiResponsesProvider::with_base_url(
+            resolved.base_url,
+            resolved.api_key,
+        )),
     }
 }
 
@@ -309,6 +313,20 @@ mod tests {
         let tool = AgentTool;
         let result = tool.execute(&json!({"description": "test"}));
         assert!(result.is_error);
+    }
+
+    #[test]
+    fn parse_subagent_mode_maps_strings_to_permission_modes() {
+        use crate::tool::permission::PermissionMode;
+        assert_eq!(parse_subagent_mode("acceptEdits"), Some(PermissionMode::Auto));
+        assert_eq!(
+            parse_subagent_mode("bypassPermissions"),
+            Some(PermissionMode::Auto)
+        );
+        assert_eq!(parse_subagent_mode("dontAsk"), Some(PermissionMode::Auto));
+        assert_eq!(parse_subagent_mode("plan"), Some(PermissionMode::ReadOnly));
+        assert_eq!(parse_subagent_mode("default"), None);
+        assert_eq!(parse_subagent_mode("nonsense"), None);
     }
 
     #[test]

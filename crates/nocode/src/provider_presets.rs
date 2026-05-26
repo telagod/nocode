@@ -1,4 +1,5 @@
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)] // login wizard removed — kept as data only, may go in next pass
 pub struct ProviderPreset {
     pub name: &'static str,
     pub base_url: &'static str,

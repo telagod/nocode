@@ -264,7 +264,7 @@ pub fn run_repl(
                         if config.sandbox.enabled { "on" } else { "off" }
                     );
                     println!();
-                    println!("Use `nocode --login` to change provider settings.");
+                    println!("Edit ~/.nocode/config.toml to change provider settings.");
                     println!("Or set API keys directly: export ANTHROPIC_API_KEY=sk-ant-...");
                 }
                 CommandAction::Memory => {
@@ -414,11 +414,14 @@ pub fn run_repl(
                 CommandAction::Skills => {
                     let reg = crate::command_registry::CommandRegistry::with_defaults();
                     println!("{}", reg.help_text());
-                    let skills = nocode_core::tool::skill::list_skills();
-                    if !skills.is_empty() {
+                    let cwd = std::env::current_dir()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_else(|_| ".".to_owned());
+                    let skill_reg = nocode_core::skill::SkillRegistry::load(&cwd);
+                    if !skill_reg.is_empty() {
                         println!("\nUser skills:");
-                        for (name, path) in &skills {
-                            println!("  {name:<20} {}", path.display());
+                        for (name, def) in skill_reg.iter() {
+                            println!("  {name:<20} {}", def.description);
                         }
                     }
                 }

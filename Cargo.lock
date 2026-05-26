@@ -1190,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "nocode"
-version = "0.2.54"
+version = "0.3.0"
 dependencies = [
  "arboard",
  "base64",
@@ -1204,12 +1204,13 @@ dependencies = [
  "serde_json",
  "syntect",
  "tokio",
+ "toml",
  "unicode-width 0.2.0",
 ]
 
 [[package]]
 name = "nocode-core"
-version = "0.2.54"
+version = "0.3.0"
 dependencies = [
  "base64",
  "chrono",

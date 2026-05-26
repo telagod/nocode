@@ -23,6 +23,65 @@ fn diff_line_color(line: &str, theme: &crate::tui_theme::Theme) -> Option<Color>
     }
 }
 
+/// Parsed PolicyEngine why-trail (`Denied [gate: reason] tail`).
+///
+/// The PolicyEngine in nocode-core emits structured refusals like
+/// `Denied [permission: read-only mode rejects tool classified Write]`. When
+/// such a line lands in a tool-result we want to highlight the *gate name* so
+/// the user sees at a glance whether the cause was permission, hook, sandbox,
+/// trust or plan-mode — without having to read the whole sentence.
+struct WhyTrail<'a> {
+    gate: &'a str,
+    reason: &'a str,
+    tail: &'a str,
+}
+
+fn parse_why_trail(line: &str) -> Option<WhyTrail<'_>> {
+    let rest = line.strip_prefix("Denied [")?;
+    let close = rest.find(']')?;
+    let inside = &rest[..close];
+    let tail = &rest[close + 1..];
+    let (gate, reason) = inside.split_once(": ").or_else(|| inside.split_once(':'))?;
+    Some(WhyTrail {
+        gate: gate.trim(),
+        reason: reason.trim(),
+        tail,
+    })
+}
+
+#[cfg(test)]
+mod why_trail_tests {
+    use super::parse_why_trail;
+
+    #[test]
+    fn parses_canonical_trail() {
+        let t = parse_why_trail("Denied [permission: read-only rejects Write]").unwrap();
+        assert_eq!(t.gate, "permission");
+        assert_eq!(t.reason, "read-only rejects Write");
+        assert!(t.tail.is_empty());
+    }
+
+    #[test]
+    fn parses_sandbox_trail() {
+        let t = parse_why_trail("Denied [sandbox: network disabled]").unwrap();
+        assert_eq!(t.gate, "sandbox");
+        assert_eq!(t.reason, "network disabled");
+    }
+
+    #[test]
+    fn returns_none_for_non_trail_lines() {
+        assert!(parse_why_trail("ok").is_none());
+        assert!(parse_why_trail("Permission denied").is_none());
+        assert!(parse_why_trail("Denied something").is_none());
+    }
+
+    #[test]
+    fn preserves_trailing_text() {
+        let t = parse_why_trail("Denied [permission: x] extra").unwrap();
+        assert_eq!(t.tail, " extra");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ChatMessage
 // ---------------------------------------------------------------------------
@@ -324,7 +383,38 @@ impl ChatMessage {
                         .map(|s| s.text.as_str())
                         .collect();
                     let diff_color = diff_line_color(&line_text, &theme);
-                    if let Some(color) = diff_color {
+                    if let Some(trail) = parse_why_trail(&line_text) {
+                        // Why-trail: `Denied [gate: reason]` — colorize the gate
+                        // name in warning so the user sees the cause at a glance.
+                        spans.push(Span::styled(
+                            "Denied [",
+                            Style::default().fg(theme.error),
+                        ));
+                        spans.push(Span::styled(
+                            trail.gate.to_owned(),
+                            Style::default()
+                                .fg(theme.warning)
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                        spans.push(Span::styled(
+                            ": ",
+                            Style::default().fg(theme.text_dim),
+                        ));
+                        spans.push(Span::styled(
+                            trail.reason.to_owned(),
+                            Style::default().fg(theme.text_dim),
+                        ));
+                        spans.push(Span::styled(
+                            "]",
+                            Style::default().fg(theme.error),
+                        ));
+                        if !trail.tail.is_empty() {
+                            spans.push(Span::styled(
+                                trail.tail.to_owned(),
+                                Style::default().fg(theme.text_dim),
+                            ));
+                        }
+                    } else if let Some(color) = diff_color {
                         spans.push(Span::styled(line_text, Style::default().fg(color)));
                     } else {
                         spans.extend(rendered_line.segments.iter().map(|seg| {

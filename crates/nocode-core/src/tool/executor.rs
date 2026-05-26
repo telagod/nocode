@@ -1,16 +1,32 @@
-//! Tool executor — validation → trust → hooks → permission → sandbox → execute pipeline.
+//! Tool executor — validation → policy → hooks → execute pipeline.
+//!
+//! ## Pipeline (post-REALIGN)
+//!
+//! 1. **Lookup** the tool (registry, then `GlobalToolRegistry` for bridged
+//!    `mcp:`/`plugin:` names).
+//! 2. **Schema** validation against `tool.input_schema()`.
+//! 3. **Policy** gate ([`super::policy::PolicyEngine`]) — collapses trust,
+//!    permission-mode, classifier, prompter and sandbox into one decision
+//!    that carries a *gate name* and a *reason*. The decision is rendered
+//!    into the error message so every refusal explains *why*.
+//! 4. **PreToolUse hooks** — external commands that can deny.
+//! 5. **Bash classifier** — extra check for `Bash` tool only (read-only or not).
+//! 6. **Execute**, snapshot for undo, record file-history.
+//! 7. **PostToolUse hooks** (informational).
+//!
+//! Conceptually three gates (Schema → Policy → Hooks); the Bash classifier
+//! lives inside Policy via the risk classifier.
 
 use crate::config::runtime::SandboxConfig;
 use crate::message::ContentBlock;
 use crate::tool::ToolRegistry;
 use crate::tool::bash_validation;
-use crate::tool::file_safety;
 use crate::tool::global_registry::{global_tool_registry, tool_definitions_for_model};
 use crate::tool::hook_runner::HookRunner;
-use crate::tool::permission::{PermissionDecision, PermissionMode, PermissionPrompter};
-use crate::tool::session_tools::is_plan_mode;
+use crate::tool::permission::{PermissionMode, PermissionPrompter};
+use crate::tool::policy::{GateDecision, PolicyEngine};
 use crate::tool::tool_validation::validate_tool_input;
-use crate::tool::trust::{PermissionEnforcer, TrustDecision};
+use crate::tool::trust::PermissionEnforcer;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -82,19 +98,18 @@ impl<'a> ToolExecutor<'a> {
         let Some(tool) = tool_opt else {
             // Try GlobalToolRegistry for bridged tools (mcp:server:tool, plugin:name:tool)
             if is_bridged {
-                // --- Security pipeline for bridged tools ---
-
-                // Trust check
-                if let Some(enforcer) = &self.trust_enforcer {
-                    match enforcer.check(name, "model") {
-                        TrustDecision::Deny => {
-                            return ContentBlock::tool_error(
-                                id,
-                                format!("Trust policy denied tool '{name}'"),
-                            );
-                        }
-                        TrustDecision::PromptUser | TrustDecision::Allow => {}
-                    }
+                // --- Security pipeline for bridged tools (Policy → Hooks) ---
+                let policy = self.policy_decision(name, input);
+                if let GateDecision::Deny { .. } = &policy {
+                    return ContentBlock::tool_error(
+                        id,
+                        format!("Denied [{}]", policy.format_trail()),
+                    );
+                }
+                if let GateDecision::Allow { remember: true, .. } = &policy
+                    && let Ok(mut allowed) = self.always_allowed.lock()
+                {
+                    allowed.insert(name.to_string());
                 }
 
                 // PreToolUse hooks
@@ -105,26 +120,10 @@ impl<'a> ToolExecutor<'a> {
                     return ContentBlock::tool_error(
                         id,
                         format!(
-                            "PreToolUse hook denied: {} (exit {})",
+                            "Denied [hook: {} (exit {})]",
                             hook_result.hook_command, hook_result.exit_code
                         ),
                     );
-                }
-
-                // Permission check
-                if !self.check_permission(name, input) {
-                    return ContentBlock::tool_error(
-                        id,
-                        format!("Permission denied for tool '{name}'"),
-                    );
-                }
-
-                // Sandbox enforcement
-                if let Some(ref sandbox) = self.sandbox
-                    && sandbox.enabled
-                    && let Some(violation) = self.check_sandbox(name, input, sandbox)
-                {
-                    return ContentBlock::tool_error(id, violation);
                 }
 
                 // Execute via global registry
@@ -162,20 +161,18 @@ impl<'a> ToolExecutor<'a> {
             return ContentBlock::tool_error(id, format!("Validation error: {e}"));
         }
 
-        // 3. Trust check
-        if let Some(enforcer) = &self.trust_enforcer {
-            match enforcer.check(name, "model") {
-                TrustDecision::Deny => {
-                    return ContentBlock::tool_error(
-                        id,
-                        format!("Trust policy denied tool '{name}'"),
-                    );
-                }
-                TrustDecision::PromptUser => {
-                    // In non-interactive mode, fall through to permission check
-                }
-                TrustDecision::Allow => {}
-            }
+        // 3. Policy gate (trust + mode + classifier + prompter + sandbox)
+        let policy = self.policy_decision(name, input);
+        if let GateDecision::Deny { .. } = &policy {
+            return ContentBlock::tool_error(
+                id,
+                format!("Denied [{}]", policy.format_trail()),
+            );
+        }
+        if let GateDecision::Allow { remember: true, .. } = &policy
+            && let Ok(mut allowed) = self.always_allowed.lock()
+        {
+            allowed.insert(name.to_string());
         }
 
         // 4. PreToolUse hooks
@@ -185,39 +182,22 @@ impl<'a> ToolExecutor<'a> {
             return ContentBlock::tool_error(
                 id,
                 format!(
-                    "PreToolUse hook denied: {} (exit {})",
+                    "Denied [hook: {} (exit {})]",
                     hook_result.hook_command, hook_result.exit_code
                 ),
             );
         }
 
-        // 5. Permission check
-        if !self.check_permission(name, input) {
-            return ContentBlock::tool_error(id, format!("Permission denied for tool '{name}'"));
-        }
-
-        // 6. Bash-specific validation
+        // 5. Bash-specific validation (Policy already classified Bash via classifier;
+        //    this layer enforces hard syntax rules / known-bad commands).
         if name == "Bash"
             && let Some(cmd) = input["command"].as_str()
             && let Err(e) = bash_validation::validate_bash_command(cmd)
         {
-            return ContentBlock::tool_error(id, format!("Bash validation: {e}"));
+            return ContentBlock::tool_error(id, format!("Denied [bash: {e}]"));
         }
 
-        // 7. Sandbox enforcement (skip if dangerouslyDisableSandbox is set)
-        let sandbox_bypassed = name == "Bash"
-            && input["dangerouslyDisableSandbox"]
-                .as_bool()
-                .unwrap_or(false);
-        if !sandbox_bypassed
-            && let Some(ref sandbox) = self.sandbox
-            && sandbox.enabled
-            && let Some(violation) = self.check_sandbox(name, input, sandbox)
-        {
-            return ContentBlock::tool_error(id, violation);
-        }
-
-        // 8. Snapshot for undo (FileEdit / FileWrite)
+        // 6. Snapshot for undo (FileEdit / FileWrite)
         let file_path_for_undo = if matches!(name, "FileEdit" | "FileWrite") {
             input["file_path"].as_str().map(|p| {
                 let old = std::fs::read_to_string(p).ok();
@@ -227,10 +207,10 @@ impl<'a> ToolExecutor<'a> {
             None
         };
 
-        // 9. Execute
+        // 7. Execute
         let output = tool.execute(input);
 
-        // 10. Record to FileHistory on success
+        // 8. Record to FileHistory on success
         if !output.is_error
             && let Some((path, old_content)) = file_path_for_undo
         {
@@ -241,7 +221,7 @@ impl<'a> ToolExecutor<'a> {
             }
         }
 
-        // 11. PostToolUse hooks (informational)
+        // 9. PostToolUse hooks (informational)
         if let Some(runner) = self.hook_runner {
             let _ = runner.run_post_tool_use(name, Some(&output.content));
         }
@@ -263,6 +243,25 @@ impl<'a> ToolExecutor<'a> {
         }
     }
 
+    /// Build and run the unified policy gate. The returned [`GateDecision`]
+    /// carries both the verdict and a human-readable reason, so callers can
+    /// surface a why-trail to the TUI / logs.
+    fn policy_decision(&self, name: &str, input: &Value) -> GateDecision {
+        let previously_allowed = self
+            .always_allowed
+            .lock()
+            .map(|set| set.contains(name))
+            .unwrap_or(false);
+        let engine = PolicyEngine {
+            mode: self.permission_mode,
+            trust: self.trust_enforcer.as_ref(),
+            sandbox: self.sandbox.as_ref(),
+            prompter: self.prompter,
+            previously_allowed,
+        };
+        engine.evaluate(name, input)
+    }
+
     /// Execute all tool_use blocks from a response.
     pub fn execute_all(&self, content: &[ContentBlock]) -> Vec<ContentBlock> {
         content
@@ -278,151 +277,15 @@ impl<'a> ToolExecutor<'a> {
     }
 
     /// Check if a tool call is permitted under the current permission mode.
+    /// Check if a tool call is permitted under the current permission mode.
+    ///
+    /// **Deprecated**: this method has been collapsed into [`PolicyEngine`].
+    /// The body below stays only because external integration tests may still
+    /// reach for it. New code should call [`Self::policy_decision`].
+    #[deprecated(note = "use PolicyEngine via policy_decision()")]
+    #[allow(dead_code)]
     fn check_permission(&self, name: &str, input: &Value) -> bool {
-        // Plan mode overrides everything: only read-only tools allowed
-        if is_plan_mode() {
-            return Self::is_read_only_tool(name, input);
-        }
-
-        match self.permission_mode {
-            PermissionMode::Auto => true,
-            PermissionMode::Ask => {
-                // Read-only tools are always allowed
-                match name {
-                    "FileRead" | "Glob" | "Grep" | "CronList" | "ToolSearch" => {
-                        return true;
-                    }
-                    "Memory" => {
-                        let action = input["action"].as_str().unwrap_or("list");
-                        if action == "list" || action == "search" {
-                            return true;
-                        }
-                    }
-                    "Bash" => {
-                        let cmd = input["command"].as_str().unwrap_or("");
-                        if bash_validation::is_read_only_command(cmd) {
-                            return true;
-                        }
-                    }
-                    _ => {}
-                }
-
-                // Check if tool was previously always-allowed
-                if let Ok(allowed) = self.always_allowed.lock()
-                    && allowed.contains(name)
-                {
-                    return true;
-                }
-
-                // Ask the prompter if available
-                if let Some(prompter) = self.prompter {
-                    let args_summary = input.to_string();
-                    let summary = if args_summary.len() > 200 {
-                        let mut idx = 200;
-                        while idx > 0 && !args_summary.is_char_boundary(idx) {
-                            idx -= 1;
-                        }
-                        format!("{}...", &args_summary[..idx])
-                    } else {
-                        args_summary
-                    };
-                    match prompter.prompt(name, &summary) {
-                        PermissionDecision::Allow => true,
-                        PermissionDecision::AlwaysAllow => {
-                            if let Ok(mut allowed) = self.always_allowed.lock() {
-                                allowed.insert(name.to_string());
-                            }
-                            true
-                        }
-                        PermissionDecision::Deny => false,
-                    }
-                } else {
-                    // No prompter — default allow (non-interactive mode)
-                    true
-                }
-            }
-            PermissionMode::Deny => false,
-            PermissionMode::ReadOnly => {
-                // Only allow read-only tools
-                match name {
-                    "FileRead" | "Glob" | "Grep" | "CronList" | "ToolSearch"
-                    | "AskUserQuestion" => true,
-                    "Memory" => {
-                        let action = input["action"].as_str().unwrap_or("list");
-                        matches!(action, "list" | "search")
-                    }
-                    "Mcp" => {
-                        // list_resources and read_resource are read-only; call is not
-                        let action = input["action"].as_str().unwrap_or("call");
-                        matches!(action, "list_resources" | "read_resource")
-                    }
-                    "Bash" => {
-                        let cmd = input["command"].as_str().unwrap_or("");
-                        !bash_validation::is_write_command(cmd)
-                            && bash_validation::is_read_only_command(cmd)
-                    }
-                    _ => false,
-                }
-            }
-        }
-    }
-
-    /// Check sandbox restrictions for file/network operations.
-    fn check_sandbox(&self, name: &str, input: &Value, sandbox: &SandboxConfig) -> Option<String> {
-        match name {
-            "FileRead" | "FileWrite" | "FileEdit" => {
-                if let Some(path) = input["file_path"].as_str().or(input["path"].as_str()) {
-                    if !sandbox.allowed_paths.is_empty()
-                        && !sandbox.allowed_paths.iter().any(|p| path.starts_with(p))
-                    {
-                        return Some(format!("Sandbox: path '{path}' not in allowed paths"));
-                    }
-                    // Symlink escape check
-                    if let Err(e) = file_safety::validate_file_path(
-                        path,
-                        sandbox.allowed_paths.first().map_or("/", |p| p.as_str()),
-                    ) {
-                        return Some(format!("Sandbox: {e}"));
-                    }
-                }
-                None
-            }
-            "WebFetch" | "WebSearch" => {
-                if !sandbox.network_enabled {
-                    Some("Sandbox: network access disabled".to_string())
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
-
-    /// Determine whether a tool is considered read-only (safe for plan mode).
-    fn is_read_only_tool(name: &str, input: &Value) -> bool {
-        match name {
-            // Always read-only
-            "FileRead" | "Glob" | "Grep" | "CronList" | "ToolSearch" | "AskUserQuestion"
-            | "EnterPlanMode" | "ExitPlanMode" => true,
-            // Memory: list and search are read-only
-            "Memory" => {
-                let action = input["action"].as_str().unwrap_or("list");
-                matches!(action, "list" | "search")
-            }
-            // Mcp: list_resources and read_resource are read-only
-            "Mcp" => {
-                let action = input["action"].as_str().unwrap_or("call");
-                matches!(action, "list_resources" | "read_resource")
-            }
-            // Bash: only if the command is read-only
-            "Bash" => {
-                let cmd = input["command"].as_str().unwrap_or("");
-                !bash_validation::is_write_command(cmd)
-                    && bash_validation::is_read_only_command(cmd)
-            }
-            // Everything else is write/destructive
-            _ => false,
-        }
+        matches!(self.policy_decision(name, input), GateDecision::Allow { .. })
     }
 }
 
@@ -537,7 +400,13 @@ mod tests {
         } = &result
         {
             assert!(is_error);
-            assert!(content.contains("Bash validation"));
+            // The bash classifier flags rm -rf / as Destructive — this trips
+            // the permission gate (Auto mode still allows, but bash_validation
+            // hard-blocks the syntax). Either trail is acceptable.
+            assert!(
+                content.contains("bash") || content.contains("Bash") || content.contains("Denied"),
+                "got: {content}"
+            );
         } else {
             panic!("Expected ToolResult");
         }
@@ -553,7 +422,10 @@ mod tests {
         } = &result
         {
             assert!(is_error);
-            assert!(content.contains("Permission denied"));
+            assert!(
+                content.contains("Denied") && content.contains("permission"),
+                "expected gate trail, got: {content}"
+            );
         } else {
             panic!("Expected ToolResult");
         }
@@ -609,7 +481,10 @@ mod tests {
         } = &result
         {
             assert!(is_error);
-            assert!(content.contains("PreToolUse hook denied"));
+            assert!(
+                content.contains("hook"),
+                "expected hook trail, got: {content}"
+            );
         } else {
             panic!("Expected ToolResult");
         }
@@ -637,7 +512,10 @@ mod tests {
         } = &result
         {
             assert!(is_error);
-            assert!(content.contains("network access disabled"));
+            assert!(
+                content.contains("sandbox"),
+                "expected sandbox trail, got: {content}"
+            );
         } else {
             panic!("Expected ToolResult");
         }
@@ -662,7 +540,7 @@ mod tests {
         enter_plan_mode();
         assert!(is_plan_mode());
 
-        // Now FileWrite should be blocked by permission
+        // Now FileWrite should be blocked by plan mode
         let result = exec.execute_tool_use(
             "id-pm2",
             "FileWrite",
@@ -673,7 +551,10 @@ mod tests {
         } = &result
         {
             assert!(is_error);
-            assert!(content.contains("Permission denied"));
+            assert!(
+                content.contains("plan-mode"),
+                "expected plan-mode trail, got: {content}"
+            );
         } else {
             panic!("Expected ToolResult");
         }

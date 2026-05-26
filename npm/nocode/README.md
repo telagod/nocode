@@ -1,6 +1,8 @@
 # @telagod/nocode
 
-Terminal-native AI coding assistant built in Rust. Connects to Claude, OpenAI, Gemini, or any compatible endpoint.
+Terminal-native AI coding agent in Rust. 11 atomic tools, three explainable gates, skills as first-class prompt material, fractal sub-agents. Connects to Claude, OpenAI, Gemini, or any compatible endpoint.
+
+> **v0.3.0 — breaking release.** The `custom_*` config fields and `--login` wizard have been removed. Configure via `[providers.<name>]` tables in `~/.nocode/config.toml`; run `nocode init` for a template.
 
 ## Install
 
@@ -10,48 +12,78 @@ npm install -g @telagod/nocode
 
 ## Features
 
-- Interactive TUI
-- 25 built-in tools (Read, Edit, Write, Bash, Glob, Grep, WebFetch, Agent, Tasks, Teams, MCP, LSP, Memory...)
-- Multi-provider support: Claude, OpenAI, Gemini, or custom endpoints
+- Interactive TUI with structured `Denied [<gate>: <reason>]` why-trail
+- 11 atomic core tools (Read, Write, Edit, Glob, Grep, Bash, WebFetch, WebSearch, Agent, AskUserQuestion, Skill) + 18 opt-in extension tools
+- Multi-provider support via named `[providers.<name>]` tables (Claude, OpenAI, Gemini, or any compatible endpoint)
+- Profiles for one-flag config swapping (`--profile work`)
+- First-class skill system: `*.md` files in `.nocode/skills/` are indexed into the prompt
+- `nocode insight` observability CLI: sessions, tools, gates, cost — no dashboard sprawl
 - Session compaction with structured summaries
-- SQL-backed storage with date-based volume partitioning
-- Persistent memory system with auto-detection signals
 - MCP client (JSON-RPC over stdio) for tool extensibility
-- Plugin system with lifecycle management
+
+## Setup
+
+```bash
+nocode init                          # scaffold ~/.nocode/config.toml
+export OPENAI_API_KEY=sk-...         # or whichever api_key_env you pick
+nocode                               # launch the TUI
+```
+
+The fastest single-key path uses a builtin alias — no config file needed:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+nocode --provider claude
+```
 
 ## Usage
 
 ```bash
-nocode                 # interactive TUI (default)
-nocode --status        # system diagnostics
+nocode                               # interactive TUI (default)
+nocode init                          # scaffold config template
+nocode config list                   # show current settings
+nocode --status                      # system diagnostics
+nocode insight                       # sessions / tools / gates / cost
+nocode --provider <name>             # one-shot provider override
+nocode --profile <name>              # one-shot profile
 ```
 
 ## Configuration
 
-Set your provider API key:
+```toml
+# ~/.nocode/config.toml
+default_provider = "openai"
+model = "gpt-5.5"
 
-```bash
-export ANTHROPIC_API_KEY=sk-...    # Claude
-export OPENAI_API_KEY=sk-...       # OpenAI
-export GEMINI_API_KEY=...          # Gemini
+[providers.openai]
+base_url    = "https://api.openai.com"
+wire_api    = "openai-responses"     # anthropic | openai-responses | openai-chat | google
+api_key_env = "OPENAI_API_KEY"
 ```
 
-Override provider or model:
+Full schema: see [docs/10_provider_config.md](https://github.com/telagod/nocode/blob/main/docs/10_provider_config.md).
 
-```bash
-export NOCODE_MODEL_PROVIDER=anthropic   # anthropic|openai|google|custom
-export NOCODE_MODEL=claude-opus-4-6
-```
+## Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `NOCODE_PROVIDER` | Name of a provider from `[providers.<name>]` (or builtin `claude` / `openai` / `gemini`) |
+| `NOCODE_PROFILE` | Name of a profile from `[profiles.<name>]` |
+| `NOCODE_MODEL` | Override model name |
+| `NOCODE_SYSTEM_PROMPT` | Override system prompt |
 
 ## Supported Platforms
 
 | Platform | Package |
 |----------|---------|
 | Linux x64 | `@telagod/nocode-linux-x64` |
+| Linux ARM64 | `@telagod/nocode-linux-arm64` |
 | macOS x64 | `@telagod/nocode-darwin-x64` |
 | macOS ARM64 | `@telagod/nocode-darwin-arm64` |
 | Windows x64 | `@telagod/nocode-win32-x64` |
+| Windows ARM64 | `@telagod/nocode-win32-arm64` |
 
 ## License
 
 MIT
+

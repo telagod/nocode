@@ -1,19 +1,24 @@
 # nocode DESIGN
 
-> Last updated: 2026-04-22 (TUI-only interactive interface)
+> Last updated: 2026-05-26 — repositioned per `REALIGN.md`. Parity-with-Claude-Code retired.
 
 ## Design Goals
 
-- Rust reimplementation of Claude Code's execution kernel.
-- 21 tools strict parity with Claude Code sdk-tools.d.ts.
-- Free, open, provider-agnostic AI coding assistant — no vendor lock-in.
-- Compilable, testable, observable from day one.
+- **Reference implementation of harness engineering bionics** for fractal code agents — terminal-native, Rust.
+- **Skill-first, minimal-tools, minimal-gates.** Skills are first-class (loaded into prompt assembly); the tool surface is small and orthogonal; hard gates are layered conservatively (schema → policy → hooks).
+- **Provider-agnostic, no vendor lock-in.** Claude / OpenAI / Gemini / Custom share the same `Provider` trait dispatch.
+- **Compilable, testable, observable from day one.** Every layer earns its keep; explanation > magic.
 
 ## Non-Goals
 
-- Pixel-perfect parity with Claude Code's Ink/React UI.
+- Strict tool-name parity with any other agent (Claude Code, codex, etc.). We borrow good ideas, not surface area.
+- Pixel-perfect parity with Claude Code's Ink/React UI. nocode TUI is its own thing (Pi-inspired, see `crates/nocode/src/tui_widgets.rs`).
 - Embedded proxy / `/free` route.
 - Plugin marketplace, voice (deferred).
+
+## Positioning (one line)
+
+> nocode = the smallest harness that lets a fractal code agent stay explainable: bones (atomic tools), flesh (skills loaded as prompt), skin (thin gates).
 
 ## Current Architecture
 
@@ -34,9 +39,10 @@ nocode-core (library — crates/nocode-core, 70+ modules)
   query/loop.rs     — agentic loop (stop_reason driven, auto-compaction, recovery)
   query/budget.rs   — token budget, diminishing returns
   query/events.rs   — ModelStreamEvent for TUI and other stream consumers
-  tool/             — 21 tools (Claude Code parity) + extra modules
-  tool/executor.rs  — 9-stage pipeline (validate→trust→hooks→permission→sandbox→execute)
-  tool/bash_validation.rs — 6 submodules (read_only, destructive, mode, sed, path, semantics)
+  skill/            — first-class skill registry, loaded into prompt assembly
+  tool/             — atomic tools (target: ~12, see REALIGN.md Phase 1.1)
+  tool/executor.rs  — pipeline (target: schema→policy→hooks→execute, see REALIGN.md Phase 1.2)
+  tool/bash_validation.rs — bash classifier (target: single classifier, see REALIGN.md Phase 1.2)
   session/          — JSONL persistence, compaction, fork/branch/resume
   config/           — 3-tier settings merge (user→project→local) + env overrides
   prompt/           — system prompt assembly, CLAUDE.md discovery, FNV dedup

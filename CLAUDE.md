@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is nocode
 
-A terminal-native AI coding assistant built in Rust. Connects to Claude, OpenAI, Gemini, or any compatible endpoint via Custom provider. The interface is a TUI plus interactive login/bootstrap flows.
+A terminal-native AI coding agent in Rust positioned as **a reference implementation of harness engineering bionics for fractal code agents**. The value lives in the harness — minimal tools, three explainable gates, skills as first-class prompt material, sub-agents that share the parent's loop+registry+gates by construction.
+
+For the philosophy, read `docs/00_vision.md`. For the alignment trail (what changed and why), read `docs/01_realign.md`. The full index is in `docs/README.md`.
+
+Connects to Claude, OpenAI, Gemini, or any compatible endpoint via Custom provider. The interface is a TUI plus interactive login/bootstrap flows.
 
 ## Build & Test Commands
 
@@ -58,7 +62,7 @@ User Input → main.rs (mode dispatch) → QueryEngine (9-state loop)
 
 **API format** is string-based (not an enum): 4 canonical values `openai-responses`, `openai-chat`, `anthropic`, `google`. Legacy values auto-normalized via `normalize_api_format()` in `config/settings.rs`. Used only for Custom provider routing.
 
-**Provider auto-detection** priority (in `main.rs:resolve_provider`): `NOCODE_MODEL_PROVIDER` env → settings `model_provider` → Custom (if `custom_base_url` set) → `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` → `GEMINI_API_KEY` → fallback Claude.
+**Provider resolution** (in `main.rs:resolve_provider`, see also `docs/10_provider_config.md`): `--provider <name>` flag → `NOCODE_PROVIDER` env → active profile's `provider` → `settings.default_provider` → `settings.model_provider` interpreted as a builtin alias (`claude` / `openai` / `gemini`). The chosen name is then looked up in `[providers.<name>]` (or a builtin alias) for `base_url` / `wire_api` / `api_key_env`. The legacy `custom_*` scheme is rejected at load time.
 
 **Default models**: Claude → `claude-sonnet-4-20250514`, OpenAI → `gpt-4.1`, Gemini → `gemini-2.5-pro`.
 
@@ -72,9 +76,21 @@ User Input → main.rs (mode dispatch) → QueryEngine (9-state loop)
 
 ### Tool Execution Pipeline
 
-Every tool call flows through: JSON Schema validation (`tool/tool_validation.rs`) → permission check against `PermissionMode` (ReadOnly/WorkspaceWrite/DangerFullAccess) → `PermissionPrompter` → hook runner (PreToolUse can deny) → sandbox enforcement → execution → PostToolUse hooks. `tool/executor.rs` orchestrates this chain.
+Every tool call flows through three explainable gates: **Schema** (`tool/tool_validation.rs`) → **Policy** (`tool/policy.rs`, the unified `PolicyEngine` covering trust + permission-mode + risk classifier + sandbox + plan-mode, returning a `GateDecision { gate, reason }`) → **Hooks** (`tool/hook_runner.rs` PreToolUse, can deny). PostToolUse hooks run after execution. Every refusal in the TUI carries a `Denied [gate: reason]` why-trail — there are no silent gates.
 
-Bash commands get extra validation through 6 submodules in `tool/bash_validation.rs` (read_only, destructive, mode, sed, path, semantics). File operations go through `tool/file_safety.rs` (symlink escape prevention, binary detection, 10MB limit).
+`tool/executor.rs` orchestrates Lookup → Schema → Policy → Hooks → Bash-classifier → Execute → snapshot/file-history → PostHooks → render `ContentBlock::ToolResult`. Bash command syntax-level checks live in `tool/bash_validation.rs` (read-only / destructive / mode / sed / path / semantics) and surface through the bash classifier inside the Policy gate. File operations also go through `tool/file_safety.rs` (symlink escape, binary detection, 10MB limit).
+
+### Skill System (first-class)
+
+Skills are markdown files under `.nocode/skills/` and `.claude/skills/` (project + user-global). The `SkillRegistry` (`crates/nocode-core/src/skill/registry.rs`) discovers them at session start, parses optional YAML frontmatter (`name` / `description` / `triggers`), and renders an *index block* (name + description only) that gets injected into the system prompt alongside `CLAUDE.md` and `AGENTS.md` via `prompt/assembly.rs`. The model sees what's available before it decides to call the `Skill` tool — only the chosen skill's body is materialized. The index is adaptively trimmed to fit `TruncationBudget::max_skill_index_chars` (default 4 KB), keeping the densest entries first.
+
+### Default Tool Surface (11 atomic tools)
+
+`ToolRegistry::with_defaults(cwd)` registers the canonical 11: `FileRead, FileWrite, FileEdit, Glob, Grep, Bash, WebFetch, WebSearch, Agent, AskUserQuestion, Skill`. The set is asserted by `tests/roadmap.rs::tool_registry_has_canonical_core_set` so any accidental shrink/sprawl forces a deliberate decision. Optional tools (`Memory`, `TodoWrite`, `Task`, `Mcp`, `Cron*`, `Team*`, `EnterPlanMode`/`ExitPlanMode`, `EnterWorktree`/`ExitWorktree`, `Config`, `NotebookEdit`, `ToolSearch`, `Lsp`, `SendMessage`) live in their own modules and are registered explicitly when the host wants them — most are session-state primitives the TUI surfaces as slash commands.
+
+### Fractal Sub-agents
+
+`AgentTool` spawns a sub-agent that runs `run_worker_thread` — a recursive instance of the same harness: same `Provider` trait, same `ToolRegistry::with_defaults` (so the 11 core tools and skill index propagate), same `assemble_system_prompt`. As of REALIGN the sub-agent **inherits the parent's permission_mode** when the `mode` argument is provided (`acceptEdits`/`bypassPermissions`/`dontAsk` → `Auto`, `plan` → `ReadOnly`, `default` → inherit). Without this, every spawn silently jumped to `Auto` regardless of how cautious the parent was configured.
 
 ### Configuration (3-tier hierarchy)
 
@@ -144,10 +160,9 @@ Explicit enum state machines rather than inferred state:
 
 ## Environment Variables
 
-- `NOCODE_MODEL_PROVIDER` — force provider (`anthropic`, `openai`, `google`, `custom`)
+- `NOCODE_PROVIDER` — name of a provider defined in `[providers.<name>]` (or builtin alias `claude` / `openai` / `gemini`)
+- `NOCODE_PROFILE` — name of a profile defined in `[profiles.<name>]`
 - `NOCODE_MODEL` — override model name
-- `NOCODE_CUSTOM_BASE_URL` — Custom provider base URL (required for `custom` provider)
-- `NOCODE_CUSTOM_API_FORMAT` — Custom provider API format (`openai-responses`, `openai-chat`, `anthropic`, `google`)
 - `NOCODE_SYSTEM_PROMPT` — override system prompt
 - `NOCODE_MODEL_REASONING_EFFORT` — `low`, `medium`, `high`
 - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` — provider API keys

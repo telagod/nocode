@@ -58,8 +58,6 @@ pub struct RuntimeConfig {
     pub max_turns: u32,
     pub max_tokens: u32,
     pub system_prompt: Option<String>,
-    pub custom_base_url: Option<String>,
-    pub custom_api_format: Option<String>,
     pub reasoning_effort: Option<String>,
     pub mcp_servers: HashMap<String, McpServerConfig>,
     pub hooks: HookConfig,
@@ -81,8 +79,6 @@ impl RuntimeConfig {
             max_turns: settings.max_turns.unwrap_or(10),
             max_tokens: settings.max_tokens.unwrap_or(16384),
             system_prompt: settings.system_prompt.clone(),
-            custom_base_url: settings.custom_base_url.clone(),
-            custom_api_format: settings.custom_api_format.clone(),
             reasoning_effort: settings.reasoning_effort.clone(),
             mcp_servers: settings.mcp_servers.clone(),
             hooks: settings.hooks.clone().unwrap_or_default(),
@@ -92,12 +88,6 @@ impl RuntimeConfig {
         // Environment variable overrides
         if let Ok(m) = env::var("NOCODE_MODEL") {
             config.model = m;
-        }
-        if let Ok(u) = env::var("NOCODE_CUSTOM_BASE_URL") {
-            config.custom_base_url = Some(u);
-        }
-        if let Ok(f) = env::var("NOCODE_CUSTOM_API_FORMAT") {
-            config.custom_api_format = Some(f);
         }
         if let Ok(p) = env::var("NOCODE_SYSTEM_PROMPT") {
             config.system_prompt = Some(p);

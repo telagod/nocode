@@ -148,6 +148,8 @@ mod tests {
 
     #[test]
     fn team_create_and_delete_roundtrip() {
+        // Reads $HOME — must serialize with other env-mutating tests.
+        let _guard = crate::test_support::env_mutex().lock().unwrap();
         let create = TeamCreateTool;
         let delete = TeamDeleteTool;
 

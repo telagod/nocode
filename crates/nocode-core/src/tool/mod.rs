@@ -17,6 +17,7 @@ pub mod mcp_tools;
 pub mod memory_tools;
 pub mod permission;
 pub mod plugin_registry;
+pub mod policy;
 pub mod read;
 pub mod send_message;
 pub mod session_tools;
@@ -143,22 +144,74 @@ impl ToolRegistry {
         self.tools.keys().map(String::as_str).collect()
     }
 
-    /// Create a registry with the core built-in tools (Pi-inspired minimal set).
+    /// Create a registry with the **core minimal toolset**.
+    ///
+    /// This is the harness contract: a small, orthogonal set that covers
+    /// "see / write / search / execute / spawn / talk to the world" with no
+    /// overlap. Every other tool in this crate is opt-in — callers register
+    /// what they need on top.
+    ///
+    /// ## The 11 core tools
+    ///
+    /// | Tool         | Purpose                                          |
+    /// |--------------|--------------------------------------------------|
+    /// | FileRead     | observe a single file                            |
+    /// | FileWrite    | create / replace a file                          |
+    /// | FileEdit     | structured in-place edits                        |
+    /// | Glob         | path search                                      |
+    /// | Grep         | content search                                   |
+    /// | Bash         | execute shell commands                           |
+    /// | WebFetch     | retrieve URL content                             |
+    /// | WebSearch    | search the web                                   |
+    /// | Agent        | spawn a fractal sub-agent (recursive harness)    |
+    /// | AskUserQuestion | request structured human input               |
+    /// | Skill        | invoke a registered skill (see [`crate::skill`]) |
+    ///
+    /// Optional tools live in their own modules and are registered explicitly
+    /// when the host wants them: `Memory`, `TodoWrite`, `Task`, `Mcp`,
+    /// `Cron{Create,List,Delete}`, `Team{Create,Delete}`, `SendMessage`,
+    /// `EnterPlanMode`/`ExitPlanMode`, `EnterWorktree`/`ExitWorktree`,
+    /// `Config`, `NotebookEdit`, `ToolSearch`, `Lsp`. Most of these are
+    /// session-state primitives that the TUI surfaces as slash commands; the
+    /// model rarely needs to call them directly.
     pub fn with_defaults(cwd: impl Into<String>) -> Self {
         let cwd = cwd.into();
         let mut registry = Self::new();
-        // Core: read, write, search, execute
-        registry.register(Box::new(agent::AgentTool));
-        registry.register(Box::new(bash::BashTool::new(&cwd)));
-        registry.register(Box::new(edit::EditTool));
+        // Files
         registry.register(Box::new(read::ReadTool));
         registry.register(Box::new(write::WriteTool));
+        registry.register(Box::new(edit::EditTool));
+        // Search
         registry.register(Box::new(glob::GlobTool));
         registry.register(Box::new(grep::GrepTool));
-        // Extended: web access
+        // Execute
+        registry.register(Box::new(bash::BashTool::new(&cwd)));
+        // World
         registry.register(Box::new(web::WebFetchTool));
         registry.register(Box::new(web::WebSearchTool));
+        // Fractal + dialogue + skill (the harness-bionics trio)
+        registry.register(Box::new(agent::AgentTool));
+        registry.register(Box::new(interactive_tools::AskUserQuestionTool::new()));
+        registry.register(Box::new(skill::SkillTool::new()));
         registry
+    }
+
+    /// Returns the canonical list of core tool names. Useful for tests and
+    /// documentation that wants to assert the minimal contract.
+    pub fn core_tool_names() -> &'static [&'static str] {
+        &[
+            "FileRead",
+            "FileWrite",
+            "FileEdit",
+            "Glob",
+            "Grep",
+            "Bash",
+            "WebFetch",
+            "WebSearch",
+            "Agent",
+            "AskUserQuestion",
+            "Skill",
+        ]
     }
 }
 

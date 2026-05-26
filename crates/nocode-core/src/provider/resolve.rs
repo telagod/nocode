@@ -1,91 +1,160 @@
-use crate::config::settings::{Settings, normalize_api_format};
+use crate::config::settings::{ProviderDef, Settings, normalize_api_format};
 use crate::provider::types::ModelProvider;
 use std::env;
 
+/// Resolved connection info for a single provider invocation. The product of
+/// running the precedence chain (`--provider <name>` → `NOCODE_PROVIDER` →
+/// active profile → `default_provider` → builtin alias) and looking up the
+/// chosen entry in `[providers.<name>]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedProvider {
+    /// Logical name (e.g. "subfox", "anthropic", "local-vllm").
+    pub name: String,
+    /// HTTP base URL.
+    pub base_url: String,
+    /// Wire format. One of `anthropic`, `openai-responses`, `openai-chat`, `google`.
+    pub wire_api: String,
+    /// API key — already looked up via `api_key_env` or builtin fallback.
+    pub api_key: String,
+    /// The default model declared by this provider (if any).
+    pub default_model: Option<String>,
+}
+
+impl ResolvedProvider {
+    /// Coarse mapping from `wire_api` to the existing `ModelProvider` enum.
+    pub fn legacy_model_provider(&self) -> ModelProvider {
+        match self.wire_api.as_str() {
+            "anthropic" => ModelProvider::Claude,
+            "google" => ModelProvider::Gemini,
+            _ => ModelProvider::OpenAi,
+        }
+    }
+}
+
+/// Builtin provider aliases — present even when the user has no
+/// `[providers.*]` table. Lets `nocode --provider claude` work out of the box
+/// from a single `ANTHROPIC_API_KEY`.
+fn builtin_alias(name: &str) -> Option<ProviderDef> {
+    match name {
+        "anthropic" | "claude" => Some(ProviderDef {
+            base_url: env::var("ANTHROPIC_BASE_URL")
+                .unwrap_or_else(|_| "https://api.anthropic.com".to_owned()),
+            wire_api: "anthropic".to_owned(),
+            api_key_env: Some("ANTHROPIC_API_KEY".to_owned()),
+            default_model: None,
+        }),
+        "openai" => Some(ProviderDef {
+            base_url: env::var("OPENAI_BASE_URL")
+                .unwrap_or_else(|_| "https://api.openai.com".to_owned()),
+            wire_api: "openai-responses".to_owned(),
+            api_key_env: Some("OPENAI_API_KEY".to_owned()),
+            default_model: None,
+        }),
+        "gemini" | "google" => Some(ProviderDef {
+            base_url: "https://generativelanguage.googleapis.com".to_owned(),
+            wire_api: "google".to_owned(),
+            api_key_env: Some("GEMINI_API_KEY".to_owned()),
+            default_model: None,
+        }),
+        _ => None,
+    }
+}
+
+/// The single, sanctioned provider resolver.
+///
+/// Precedence:
+/// 1. `cli_provider` (`--provider <name>` from argv)
+/// 2. `NOCODE_PROVIDER` env var
+/// 3. The active profile's `provider` field (if `profile_name` is set)
+/// 4. `settings.default_provider`
+/// 5. `settings.model_provider` interpreted as a builtin alias
+pub fn resolve_named_provider(
+    settings: &Settings,
+    cli_provider: Option<&str>,
+    profile_name: Option<&str>,
+) -> Result<ResolvedProvider, String> {
+    let active_profile_provider = profile_name
+        .and_then(|p| settings.profiles.get(p))
+        .map(|p| p.provider.clone());
+
+    let chosen_name = cli_provider
+        .map(str::to_owned)
+        .or_else(|| env::var("NOCODE_PROVIDER").ok())
+        .or(active_profile_provider)
+        .or_else(|| settings.default_provider.clone())
+        .or_else(|| settings.model_provider.clone())
+        .ok_or_else(|| {
+            "No provider configured. Run `nocode init` to scaffold ~/.nocode/config.toml."
+                .to_owned()
+        })?;
+
+    let def = settings
+        .providers
+        .get(&chosen_name)
+        .cloned()
+        .or_else(|| builtin_alias(&chosen_name))
+        .ok_or_else(|| {
+            format!(
+                "Unknown provider '{chosen_name}'. \
+                 Available: {available}. \
+                 Define a [providers.{chosen_name}] table or use claude / openai / gemini.",
+                available = available_names(settings).join(", "),
+            )
+        })?;
+
+    let wire_api = normalize_api_format(&def.wire_api).to_owned();
+    if !is_known_wire_api(&wire_api) {
+        return Err(format!(
+            "Provider '{chosen_name}' has wire_api='{}'. Valid: anthropic, openai-responses, openai-chat, google.",
+            def.wire_api
+        ));
+    }
+
+    let api_key = match &def.api_key_env {
+        Some(env_name) => env::var(env_name).unwrap_or_default(),
+        None => match wire_api.as_str() {
+            "anthropic" => env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
+            "google" => env::var("GEMINI_API_KEY").unwrap_or_default(),
+            _ => env::var("OPENAI_API_KEY").unwrap_or_default(),
+        },
+    };
+
+    Ok(ResolvedProvider {
+        name: chosen_name,
+        base_url: def.base_url,
+        wire_api,
+        api_key,
+        default_model: def.default_model,
+    })
+}
+
+fn is_known_wire_api(s: &str) -> bool {
+    matches!(s, "anthropic" | "openai-responses" | "openai-chat" | "google")
+}
+
+fn available_names(settings: &Settings) -> Vec<String> {
+    let mut v: Vec<String> = settings.providers.keys().cloned().collect();
+    for builtin in ["claude", "openai", "gemini"] {
+        if !v.iter().any(|n| n == builtin) {
+            v.push(builtin.to_owned());
+        }
+    }
+    v
+}
+
 /// Unified API key resolution for all providers.
 ///
-/// For Claude/OpenAI/Gemini: returns the corresponding env var.
-/// For Custom: resolves via preset env key (if `custom_preset` matches a known
-/// preset name), otherwise maps by `custom_api_format` to the appropriate
-/// provider key. `NOCODE_CUSTOM_API_KEY` is intentionally NOT consulted.
-pub fn resolve_api_key(provider: ModelProvider, settings: &Settings) -> String {
+/// **Deprecated**: prefer [`resolve_named_provider`] which returns the full
+/// `ResolvedProvider`. Kept while the four-variant `ModelProvider` enum still
+/// exists in the call graph.
+#[deprecated(note = "use resolve_named_provider() instead")]
+pub fn resolve_api_key(provider: ModelProvider, _settings: &Settings) -> String {
     match provider {
         ModelProvider::Claude => env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
         ModelProvider::OpenAi => env::var("OPENAI_API_KEY").unwrap_or_default(),
         ModelProvider::Gemini => env::var("GEMINI_API_KEY").unwrap_or_default(),
-        ModelProvider::Custom => resolve_custom_api_key(settings),
+        ModelProvider::Custom => env::var("OPENAI_API_KEY").unwrap_or_default(),
     }
-}
-
-/// Resolve the base URL for Custom provider.
-/// Returns `Ok(url)` or `Err(message)` when no URL is configured.
-pub fn resolve_custom_base_url(settings: &Settings) -> Result<String, String> {
-    settings
-        .custom_base_url
-        .clone()
-        .or_else(|| env::var("NOCODE_CUSTOM_BASE_URL").ok())
-        .ok_or_else(|| {
-            "Custom provider requires a base URL. \
-             Set NOCODE_CUSTOM_BASE_URL or custom_base_url in settings."
-                .to_string()
-        })
-}
-
-/// Resolve and normalize the API format for Custom provider.
-pub fn resolve_custom_api_format(settings: &Settings) -> String {
-    let raw = settings
-        .custom_api_format
-        .clone()
-        .or_else(|| env::var("NOCODE_CUSTOM_API_FORMAT").ok())
-        .unwrap_or_else(|| String::from("openai-responses"));
-    normalize_api_format(&raw).to_string()
-}
-
-fn resolve_custom_api_key(settings: &Settings) -> String {
-    // 1. If a preset is configured, use its dedicated env var
-    if let Some(preset_name) = settings.custom_preset.as_deref()
-        && let Some(env_key) = lookup_preset_env_key(preset_name)
-    {
-        if env_key.is_empty() {
-            return String::new(); // preset needs no key (e.g. Ollama)
-        }
-        if let Ok(val) = env::var(env_key) {
-            return val;
-        }
-    }
-    // 2. Fall back to api_format-based mapping
-    let format = resolve_custom_api_format(settings);
-    match format.as_str() {
-        "anthropic" => env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
-        "google" => env::var("GEMINI_API_KEY").unwrap_or_default(),
-        _ => env::var("OPENAI_API_KEY").unwrap_or_default(),
-    }
-}
-
-/// Known preset env key names. This is the single source of truth for
-/// preset → env var mapping, shared by all call sites.
-const PRESET_ENV_KEYS: &[(&str, &str)] = &[
-    ("Anthropic", "ANTHROPIC_API_KEY"),
-    ("OpenAI", "OPENAI_API_KEY"),
-    ("Gemini", "GEMINI_API_KEY"),
-    ("OpenRouter", "OPENROUTER_API_KEY"),
-    ("Together", "TOGETHER_API_KEY"),
-    ("Groq", "GROQ_API_KEY"),
-    ("Fireworks", "FIREWORKS_API_KEY"),
-    ("DeepSeek", "DEEPSEEK_API_KEY"),
-    ("Mistral", "MISTRAL_API_KEY"),
-    ("Ollama", ""),
-    ("vLLM", "VLLM_API_KEY"),
-    ("LiteLLM", "LITELLM_API_KEY"),
-    ("LocalAI", ""),
-    ("LM Studio", ""),
-];
-
-fn lookup_preset_env_key(preset_name: &str) -> Option<&'static str> {
-    PRESET_ENV_KEYS
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(preset_name))
-        .map(|(_, key)| *key)
 }
 
 /// Check if any usable API key is available (for onboarding gate).
@@ -99,66 +168,104 @@ pub fn has_any_api_key() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::settings::ProfileDef;
 
-    #[test]
-    fn resolve_key_claude() {
-        let settings = Settings::default();
-        // Without env var set, returns empty
-        let key = resolve_api_key(ModelProvider::Claude, &settings);
-        // Just verify it doesn't panic; actual value depends on env
-        let _ = key;
+    fn settings_with_default(name: &str) -> Settings {
+        Settings {
+            default_provider: Some(name.to_owned()),
+            ..Default::default()
+        }
     }
 
     #[test]
-    fn resolve_custom_format_default() {
-        let settings = Settings::default();
-        assert_eq!(resolve_custom_api_format(&settings), "openai-responses");
+    fn resolve_named_unknown_returns_err() {
+        let s = settings_with_default("does_not_exist");
+        let r = resolve_named_provider(&s, None, None);
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("Unknown provider"));
     }
 
     #[test]
-    fn resolve_custom_format_legacy_normalization() {
-        let settings = Settings {
-            custom_api_format: Some("openai".to_string()),
+    fn resolve_named_with_no_config_returns_err() {
+        // SAFETY: clearing inherited env so the test is hermetic.
+        unsafe {
+            env::remove_var("NOCODE_PROVIDER");
+        }
+        let s = Settings::default();
+        assert!(resolve_named_provider(&s, None, None).is_err());
+    }
+
+    #[test]
+    fn resolve_named_uses_builtin_alias() {
+        unsafe {
+            env::remove_var("NOCODE_PROVIDER");
+        }
+        let s = settings_with_default("claude");
+        let r = resolve_named_provider(&s, None, None).expect("claude alias resolves");
+        assert_eq!(r.name, "claude");
+        assert_eq!(r.wire_api, "anthropic");
+        assert!(!r.base_url.is_empty());
+    }
+
+    #[test]
+    fn resolve_named_cli_arg_overrides_default() {
+        unsafe {
+            env::remove_var("NOCODE_PROVIDER");
+        }
+        let s = settings_with_default("claude");
+        let r = resolve_named_provider(&s, Some("openai"), None).expect("ok");
+        assert_eq!(r.name, "openai");
+        assert_eq!(r.wire_api, "openai-responses");
+    }
+
+    #[test]
+    fn resolve_named_rejects_invalid_wire_api() {
+        let mut providers = std::collections::BTreeMap::new();
+        providers.insert(
+            "weird".to_owned(),
+            ProviderDef {
+                base_url: "http://x".to_owned(),
+                wire_api: "some-bogus-format".to_owned(),
+                api_key_env: None,
+                default_model: None,
+            },
+        );
+        let s = Settings {
+            default_provider: Some("weird".to_owned()),
+            providers,
             ..Default::default()
         };
-        assert_eq!(resolve_custom_api_format(&settings), "openai-responses");
+        let r = resolve_named_provider(&s, None, None);
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("wire_api"));
     }
 
     #[test]
-    fn resolve_custom_base_url_missing_is_err() {
-        let settings = Settings::default();
-        assert!(resolve_custom_base_url(&settings).is_err());
-    }
-
-    #[test]
-    fn resolve_custom_base_url_from_settings() {
-        let settings = Settings {
-            custom_base_url: Some("https://example.com".to_string()),
+    fn resolve_named_profile_overrides_default() {
+        unsafe {
+            env::remove_var("NOCODE_PROVIDER");
+        }
+        let mut profiles = std::collections::BTreeMap::new();
+        profiles.insert(
+            "work".to_owned(),
+            ProfileDef {
+                provider: "openai".to_owned(),
+                model: None,
+                permission_mode: None,
+                reasoning_effort: None,
+            },
+        );
+        let s = Settings {
+            default_provider: Some("claude".to_owned()),
+            profiles,
             ..Default::default()
         };
-        assert_eq!(
-            resolve_custom_base_url(&settings).unwrap(),
-            "https://example.com"
-        );
+        let r = resolve_named_provider(&s, None, Some("work")).expect("ok");
+        assert_eq!(r.name, "openai");
     }
 
     #[test]
-    fn lookup_preset_known() {
-        assert_eq!(
-            lookup_preset_env_key("openrouter"),
-            Some("OPENROUTER_API_KEY")
-        );
-        assert_eq!(lookup_preset_env_key("Ollama"), Some(""));
-    }
-
-    #[test]
-    fn lookup_preset_unknown() {
-        assert_eq!(lookup_preset_env_key("nonexistent"), None);
-    }
-
-    #[test]
-    fn has_any_api_key_without_env() {
-        // This test just verifies the function runs; actual result depends on env
+    fn has_any_api_key_runs() {
         let _ = has_any_api_key();
     }
 }

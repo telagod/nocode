@@ -1,8 +1,10 @@
 # nocode
 
-[中文文档](README_CN.md) | [Development Guide](docs/DEVELOPMENT.md)
+[中文文档](README_CN.md) | [Architecture](docs/02_architecture.md) | [Provider Config](docs/10_provider_config.md) | [CHANGELOG](CHANGELOG.md)
 
-A terminal-native AI coding assistant built in Rust. 90 modules, 21 tools, 476 tests.
+A terminal-native AI coding agent in Rust. Harness-engineering-bionics philosophy: 11 atomic tools, three explainable gates, skills as first-class prompt material, fractal sub-agents.
+
+> **v0.3.0 — breaking release.** The legacy `custom_*` config scheme and `--login` wizard have been removed in favor of codex-style named providers + `nocode init` / `nocode config`. Upgrading from 0.2.x? See the migration block in [CHANGELOG](CHANGELOG.md#030---2026-05-26--realign-release) or just run `nocode` — the startup error message walks you through it.
 
 ## Install
 
@@ -20,52 +22,71 @@ cp target/release/nocode ~/.local/bin/
 
 ## Setup
 
-Set one API key and go:
+```bash
+nocode init                           # scaffold ~/.nocode/config.toml
+export OPENAI_API_KEY="sk-..."        # or whichever api_key_env you pick
+nocode                                # launch the TUI
+```
+
+The fastest single-key path uses one of three builtin aliases — no config file needed:
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."   # Claude (default)
-# or
-export OPENAI_API_KEY="sk-..."          # OpenAI
-# or
-export GEMINI_API_KEY="..."             # Gemini
+export ANTHROPIC_API_KEY=sk-ant-...   && nocode --provider claude
+export OPENAI_API_KEY=sk-...          && nocode --provider openai
+export GEMINI_API_KEY=...             && nocode --provider gemini
 ```
 
 ## Usage
 
 ```bash
-nocode                               # 4-pane terminal UI (default)
-nocode --status                      # system diagnostics
-nocode --bridge-once "prompt"        # single-turn local execution
-nocode --bridge-remote-once "prompt" # single-turn remote execution
+nocode                               # interactive TUI (default)
+nocode init                          # scaffold config template
+nocode config list                   # show current settings
+nocode --status                      # system diagnostics + active sqlite volume
+nocode insight                       # observability summary (sessions, tools, gates, cost)
+nocode --provider <name>             # one-shot provider override
+nocode --profile <name>              # one-shot profile (provider + model + mode)
+nocode --bridge-once "prompt"        # single-turn non-interactive
 ```
 
 ## Providers
 
-Auto-detected from environment variables. Priority: explicit override > Google > OpenAI > Anthropic > Mock.
+Configured in `~/.nocode/config.toml` under `[providers.<name>]`. Multiple
+endpoints coexist; switch with `--provider` / `--profile` / `NOCODE_PROVIDER`.
 
-| Provider | API Key | Default Model |
-|----------|---------|---------------|
-| Anthropic (Claude) | `ANTHROPIC_API_KEY` | `claude-opus-4-6` |
-| OpenAI (GPT) | `OPENAI_API_KEY` | `gpt-5.4` |
-| Google (Gemini) | `GEMINI_API_KEY` | `gemini-3.1-pro` |
-| Custom | `NOCODE_CUSTOM_BASE_URL` | user-specified |
-| Mock | (none, fallback) | `sonnet` |
+```toml
+default_provider = "subfox"
+model = "gpt-5.5"
 
-Override provider or model:
+[providers.subfox]
+base_url    = "https://sub.foxnio.com/v1"
+wire_api    = "openai-responses"      # anthropic | openai-responses | openai-chat | google
+api_key_env = "OPENAI_API_KEY"
+default_model = "gpt-5.5"
 
-```bash
-export NOCODE_MODEL_PROVIDER=anthropic
-export NOCODE_MODEL=gpt-5.4
+[providers.local-vllm]
+base_url    = "http://localhost:8000/v1"
+wire_api    = "openai-chat"
+api_key_env = "VLLM_API_KEY"
+default_model = "Qwen2.5-Coder-32B-Instruct"
+
+[profiles.work]
+provider = "subfox"
+
+[profiles.home]
+provider = "local-vllm"
+permission_mode = "auto"
 ```
 
-Use any OpenAI/Claude-compatible endpoint (Ollama, vLLM, LiteLLM, etc.):
+Three **builtin aliases** work without a `[providers.*]` table — useful for "I just have one key":
 
-```bash
-export NOCODE_MODEL_PROVIDER=custom
-export NOCODE_CUSTOM_BASE_URL=http://localhost:11434/v1
-export NOCODE_CUSTOM_API_FORMAT=openai-responses   # anthropic | openai-chat | openai-responses | google
-export NOCODE_MODEL=llama3
-```
+| Alias | Wire | Key env |
+|---|---|---|
+| `claude` / `anthropic` | `anthropic` | `ANTHROPIC_API_KEY` |
+| `openai` | `openai-responses` | `OPENAI_API_KEY` |
+| `gemini` / `google` | `google` | `GEMINI_API_KEY` |
+
+Full schema and precedence chain in [`docs/10_provider_config.md`](docs/10_provider_config.md).
 
 ## Commands
 
@@ -135,7 +156,7 @@ export NOCODE_MODEL=llama3
 
 ## TUI
 
-`nocode` runs as a TUI-first interface. Use `nocode --login` to change provider settings interactively.
+`nocode` runs as a TUI-first interface. To reconfigure: edit `~/.nocode/config.toml` directly, or use `nocode config set <key> <value>`.
 
 | Key | Action |
 |-----|--------|
@@ -152,10 +173,9 @@ export NOCODE_MODEL=llama3
 
 | Variable | Purpose |
 |----------|---------|
-| `NOCODE_MODEL_PROVIDER` | Force provider: `anthropic`, `openai`, `google`, `custom`, `mock` |
+| `NOCODE_PROVIDER` | Name of a provider from `[providers.<name>]` (or builtin alias `claude` / `openai` / `gemini`) |
+| `NOCODE_PROFILE` | Name of a profile from `[profiles.<name>]` |
 | `NOCODE_MODEL` | Override model name |
-| `NOCODE_CUSTOM_BASE_URL` | Base URL for Custom provider |
-| `NOCODE_CUSTOM_API_FORMAT` | API wire format: `anthropic`, `openai-chat`, `openai-responses`, `google` |
 | `NOCODE_SYSTEM_PROMPT` | Override system prompt |
 | `NOCODE_MODEL_REASONING_EFFORT` | `low`, `medium`, `high` |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | Provider API keys |

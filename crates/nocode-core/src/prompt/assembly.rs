@@ -116,6 +116,8 @@ pub struct TruncationBudget {
     pub max_base_prompt_chars: usize,
     /// Max characters for tool definitions section.
     pub max_tool_defs_chars: usize,
+    /// Max characters for the skill index block (just the index, not bodies).
+    pub max_skill_index_chars: usize,
 }
 
 impl Default for TruncationBudget {
@@ -124,6 +126,7 @@ impl Default for TruncationBudget {
             max_claude_md_chars: 80_000,
             max_base_prompt_chars: 20_000,
             max_tool_defs_chars: 40_000,
+            max_skill_index_chars: 4_000,
         }
     }
 }
@@ -199,7 +202,17 @@ pub fn assemble_system_prompt(
         blocks.push(SystemBlock::text(truncated));
     }
 
-    // 4. Extra blocks (tool defs, context, etc.)
+    // 4. Skill index — first-class skill block (name + description only;
+    //    bodies are materialized lazily via the Skill tool). Adaptive trim
+    //    keeps the densest entries when the budget is tight.
+    let skill_registry = crate::skill::SkillRegistry::load(cwd);
+    if let Some(index) = skill_registry.prompt_index_with_budget(Some(budget.max_skill_index_chars))
+    {
+        // The registry already respects the budget, so no extra truncation marker needed.
+        blocks.push(SystemBlock::text(index));
+    }
+
+    // 5. Extra blocks (tool defs, context, etc.)
     for extra in extra_blocks {
         if !extra.is_empty() {
             blocks.push(SystemBlock::text(*extra));
@@ -289,6 +302,7 @@ mod tests {
             max_claude_md_chars: 50,
             max_base_prompt_chars: 20_000,
             max_tool_defs_chars: 40_000,
+            max_skill_index_chars: 4_000,
         };
         // Even with no real CLAUDE.md files, the assembly should work
         let blocks = assemble_system_prompt("/tmp/nonexistent", &[], &budget, None);
@@ -305,5 +319,62 @@ mod tests {
         );
         assert!(blocks[0].text.contains("pirate"));
         assert!(!blocks[0].text.contains("nocode"));
+    }
+
+    #[test]
+    fn skill_index_appears_when_skills_exist() {
+        use tempfile::TempDir;
+        let _guard = crate::test_support::env_mutex().lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let skills_dir = tmp.path().join(".nocode/skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+        fs::write(
+            skills_dir.join("hello.md"),
+            "---\ndescription: Say hello\n---\nHi!\n",
+        )
+        .unwrap();
+
+        // Point HOME away so we don't pick up unrelated user skills.
+        let saved_home = std::env::var("HOME").ok();
+        // SAFETY: env mutations restored below, serialized via env_mutex
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let cwd = tmp.path().to_string_lossy().into_owned();
+        let blocks = assemble_system_prompt(&cwd, &[], &TruncationBudget::default(), None);
+
+        match saved_home {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+
+        assert!(
+            blocks
+                .iter()
+                .any(|b| b.text.contains("Available Skills") && b.text.contains("hello")),
+            "skill index block missing"
+        );
+    }
+
+    #[test]
+    fn skill_index_absent_when_no_skills() {
+        use tempfile::TempDir;
+        let _guard = crate::test_support::env_mutex().lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let saved_home = std::env::var("HOME").ok();
+        // SAFETY: env mutations restored below, serialized via env_mutex
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let cwd = tmp.path().to_string_lossy().into_owned();
+        let blocks = assemble_system_prompt(&cwd, &[], &TruncationBudget::default(), None);
+
+        match saved_home {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+
+        assert!(
+            !blocks.iter().any(|b| b.text.contains("Available Skills")),
+            "skill block should be omitted when no skills are discovered"
+        );
     }
 }

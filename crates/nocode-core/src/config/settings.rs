@@ -1,6 +1,6 @@
 use crate::config::runtime::{HookConfig, McpServerConfig, SandboxConfig};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -32,11 +32,60 @@ impl SettingsTier {
     }
 }
 
+/// A named provider definition — the codex-style replacement for the old
+/// `custom_base_url` + `custom_api_format` single-slot scheme.
+///
+/// Stored under `[providers.<name>]` in `~/.nocode/config.toml`. Multiple
+/// providers can coexist; `default_provider` (or `--provider <name>` /
+/// `NOCODE_PROVIDER`) selects one at run time.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ProviderDef {
+    /// HTTP base URL (e.g. `https://api.anthropic.com`, `http://localhost:8000/v1`).
+    pub base_url: String,
+    /// Wire format the endpoint speaks. One of `anthropic`, `openai-responses`,
+    /// `openai-chat`, `google`. No silent fallback — typos error loudly.
+    pub wire_api: String,
+    /// Name of the env var holding the API key (e.g. `OPENAI_API_KEY`,
+    /// `TOGETHER_API_KEY`). Explicit > implicit fallback chain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_env: Option<String>,
+    /// Default model for this provider when no `model` is given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+}
+
+/// A profile groups (provider, model, optional permission_mode) under a name
+/// for one-flag switching: `nocode --profile work`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ProfileDef {
+    /// Name of a provider defined under `[providers.<name>]`.
+    pub provider: String,
+    /// Model override for this profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Permission mode override (`auto`, `ask`, `deny`, `read-only`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+    /// Optional reasoning effort override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+}
+
 /// Runtime configuration merged from 3 tiers.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Settings {
+    /// **Preferred**: name of a provider under `[providers.<name>]`. When
+    /// present, supersedes the older `model_provider` enum entirely.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_provider: Option<String>,
+
+    /// **Legacy alias** — still recognised as a builtin name (`claude` /
+    /// `openai` / `gemini`). Setting it to `"custom"` (or providing any of
+    /// the `custom_*` legacy fields below) is now a hard error; see
+    /// [`Settings::reject_legacy_custom`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -45,16 +94,33 @@ pub struct Settings {
     pub max_turns: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+
+    // ----- LEGACY (rejected at load time, retained only for detection) -----
+    /// **Deprecated, rejected on load** — use `[providers.<name>].base_url`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_base_url: Option<String>,
+    /// **Deprecated, rejected on load** — use `[providers.<name>].wire_api`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_api_format: Option<String>,
+    /// **Deprecated, rejected on load** — replaced by named providers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_preset: Option<String>,
+    // -----------------------------------------------------------------------
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custom_preset: Option<String>,
+
+    /// Named providers — merged key-by-key across tiers.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub providers: BTreeMap<String, ProviderDef>,
+
+    /// Named profiles — merged key-by-key across tiers. Select with
+    /// `--profile <name>` or `NOCODE_PROFILE`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub profiles: BTreeMap<String, ProfileDef>,
+
     /// MCP servers — merged key-by-key across tiers.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub mcp_servers: HashMap<String, McpServerConfig>,
@@ -68,6 +134,48 @@ pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telemetry_enabled: Option<bool>,
 }
+
+impl Settings {
+    /// Returns `Err` if the config still contains the deprecated `custom_*`
+    /// fields. Surfaces a single, actionable migration message.
+    pub fn reject_legacy_custom(&self) -> Result<(), String> {
+        let legacy = self.custom_base_url.is_some()
+            || self.custom_api_format.is_some()
+            || self.custom_preset.is_some()
+            || self.model_provider.as_deref() == Some("custom");
+        if !legacy {
+            return Ok(());
+        }
+        Err(LEGACY_CUSTOM_ERROR.to_owned())
+    }
+}
+
+/// Hard-error message printed when legacy `custom_*` fields are encountered.
+/// Lives next to the schema so the migration text and the field names cannot
+/// drift apart.
+pub const LEGACY_CUSTOM_ERROR: &str = "\
+Your ~/.nocode/config.toml uses the deprecated `custom_*` scheme \
+(custom_base_url / custom_api_format / custom_preset / model_provider = \"custom\"). \
+That scheme has been replaced by named provider tables.
+
+Migrate by replacing those keys with a [providers.<name>] table:
+
+  # before:
+  model_provider     = \"custom\"
+  custom_base_url    = \"https://sub.foxnio.com\"
+  custom_api_format  = \"openai-responses\"
+  model              = \"gpt-5.5\"
+
+  # after:
+  default_provider = \"subfox\"
+  model            = \"gpt-5.5\"
+
+  [providers.subfox]
+  base_url    = \"https://sub.foxnio.com/v1\"
+  wire_api    = \"openai-responses\"
+  api_key_env = \"OPENAI_API_KEY\"        # or your provider-specific var
+
+Then re-run `nocode`. See docs/10_provider_config.md for the full schema.";
 
 /// Normalize legacy API format values to the 4 canonical formats.
 ///
@@ -124,6 +232,7 @@ impl Settings {
     /// maps merged key-by-key, vecs replaced wholesale).
     pub fn merge(mut self, other: Self) -> Self {
         // Scalars: last wins
+        self.default_provider = other.default_provider.or(self.default_provider);
         self.model_provider = other.model_provider.or(self.model_provider);
         self.model = other.model.or(self.model);
         self.permission_mode = other.permission_mode.or(self.permission_mode);
@@ -138,6 +247,12 @@ impl Settings {
         // Maps: merged key-by-key
         for (k, v) in other.mcp_servers {
             self.mcp_servers.insert(k, v);
+        }
+        for (k, v) in other.providers {
+            self.providers.insert(k, v);
+        }
+        for (k, v) in other.profiles {
+            self.profiles.insert(k, v);
         }
 
         // Structs: replaced wholesale if present

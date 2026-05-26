@@ -192,35 +192,14 @@ impl ToolClassifier {
         if cmd.is_empty() {
             return ToolRiskLevel::Write;
         }
-
-        // Destructive patterns
-        let destructive_patterns = [
-            "rm -rf",
-            "rm -r",
-            "mkfs",
-            "dd if=",
-            "shutdown",
-            "reboot",
-            "kill -9",
-            "pkill",
-            "DROP TABLE",
-            "DROP DATABASE",
-            "truncate",
-            "format",
-            "> /dev/",
-        ];
-        let cmd_lower = cmd.to_lowercase();
-        for pattern in &destructive_patterns {
-            if cmd_lower.contains(&pattern.to_lowercase()) {
-                return ToolRiskLevel::Destructive;
-            }
+        // Authoritative destructive-pattern source lives in bash_validation;
+        // this used to maintain a duplicate table here.
+        if crate::tool::bash_validation::is_destructive_command(cmd) {
+            return ToolRiskLevel::Destructive;
         }
-
-        // Read-only check
         if crate::tool::bash_validation::is_read_only_command(cmd) {
             return ToolRiskLevel::Safe;
         }
-
         ToolRiskLevel::Write
     }
 }
