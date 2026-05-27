@@ -164,10 +164,7 @@ impl<'a> ToolExecutor<'a> {
         // 3. Policy gate (trust + mode + classifier + prompter + sandbox)
         let policy = self.policy_decision(name, input);
         if let GateDecision::Deny { .. } = &policy {
-            return ContentBlock::tool_error(
-                id,
-                format!("Denied [{}]", policy.format_trail()),
-            );
+            return ContentBlock::tool_error(id, format!("Denied [{}]", policy.format_trail()));
         }
         if let GateDecision::Allow { remember: true, .. } = &policy
             && let Ok(mut allowed) = self.always_allowed.lock()
@@ -285,7 +282,10 @@ impl<'a> ToolExecutor<'a> {
     #[deprecated(note = "use PolicyEngine via policy_decision()")]
     #[allow(dead_code)]
     fn check_permission(&self, name: &str, input: &Value) -> bool {
-        matches!(self.policy_decision(name, input), GateDecision::Allow { .. })
+        matches!(
+            self.policy_decision(name, input),
+            GateDecision::Allow { .. }
+        )
     }
 }
 

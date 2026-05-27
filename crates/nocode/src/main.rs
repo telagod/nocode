@@ -155,8 +155,8 @@ fn main() {
     // settings file as a layer of overrides on top of the merged defaults.
     // This must come before any code consumes `settings.model` /
     // `settings.permission_mode` so the override is uniformly visible.
-    let profile_name: Option<String> = extract_arg(&args, "--profile")
-        .or_else(|| env::var("NOCODE_PROFILE").ok());
+    let profile_name: Option<String> =
+        extract_arg(&args, "--profile").or_else(|| env::var("NOCODE_PROFILE").ok());
     if let Some(name) = profile_name.as_deref() {
         match settings.profiles.get(name).cloned() {
             Some(profile) => {
@@ -180,7 +180,12 @@ fn main() {
                     avail = if settings.profiles.is_empty() {
                         "(none — define [profiles.<name>] in ~/.nocode/config.toml)".to_owned()
                     } else {
-                        settings.profiles.keys().cloned().collect::<Vec<_>>().join(", ")
+                        settings
+                            .profiles
+                            .keys()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     }
                 );
                 std::process::exit(2);
@@ -361,17 +366,16 @@ fn main() {
 
     if is_tui_mode {
         // Provider not usable → run login flow first, then re-resolve
-        let (provider_box, model, max_tokens, registry, system_blocks) = if !provider_warnings
-            .is_empty()
-        {
-            for w in &provider_warnings {
-                eprintln!("Warning: {w}");
-            }
-            // No interactive re-login — the user fixes ~/.nocode/config.toml.
-            (provider_box, model, max_tokens, registry, system_blocks)
-        } else {
-            (provider_box, model, max_tokens, registry, system_blocks)
-        };
+        let (provider_box, model, max_tokens, registry, system_blocks) =
+            if !provider_warnings.is_empty() {
+                for w in &provider_warnings {
+                    eprintln!("Warning: {w}");
+                }
+                // No interactive re-login — the user fixes ~/.nocode/config.toml.
+                (provider_box, model, max_tokens, registry, system_blocks)
+            } else {
+                (provider_box, model, max_tokens, registry, system_blocks)
+            };
 
         if let Err(e) = tui::run_tui(
             provider_box,
@@ -451,15 +455,14 @@ fn build_provider(
     settings: &Settings,
 ) -> (Box<dyn Provider>, Vec<String>) {
     let mut warnings = Vec::new();
-    let resolved = match nocode_core::provider::resolve::resolve_named_provider(
-        settings, None, None,
-    ) {
-        Ok(r) => r,
-        Err(msg) => {
-            eprintln!("Error: {msg}");
-            std::process::exit(1);
-        }
-    };
+    let resolved =
+        match nocode_core::provider::resolve::resolve_named_provider(settings, None, None) {
+            Ok(r) => r,
+            Err(msg) => {
+                eprintln!("Error: {msg}");
+                std::process::exit(1);
+            }
+        };
 
     let result: Box<dyn Provider> = match resolved.wire_api.as_str() {
         "anthropic" => {

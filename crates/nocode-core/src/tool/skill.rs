@@ -112,9 +112,7 @@ impl Tool for SkillTool {
 /// now hold a [`SkillRegistry`] directly and read `def.description`
 /// alongside `def.path`. Kept for external callers (plugins, scripts) that
 /// haven't migrated yet.
-#[deprecated(
-    note = "use SkillRegistry::load(cwd).iter() — gives names plus descriptions"
-)]
+#[deprecated(note = "use SkillRegistry::load(cwd).iter() — gives names plus descriptions")]
 pub fn list_skills() -> Vec<(String, PathBuf)> {
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().into_owned())

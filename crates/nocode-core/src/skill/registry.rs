@@ -186,12 +186,7 @@ impl SkillRegistry {
     }
 }
 
-fn collect_skills(
-    root: &Path,
-    dir: &Path,
-    seen: &mut HashSet<String>,
-    reg: &mut SkillRegistry,
-) {
+fn collect_skills(root: &Path, dir: &Path, seen: &mut HashSet<String>, reg: &mut SkillRegistry) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -280,7 +275,10 @@ fn parse_frontmatter(content: &str) -> (SkillFrontmatter, String) {
             current_list_key = None;
             continue;
         }
-        if let Some(item) = line.strip_prefix("  - ").or_else(|| line.strip_prefix("- ")) {
+        if let Some(item) = line
+            .strip_prefix("  - ")
+            .or_else(|| line.strip_prefix("- "))
+        {
             if let Some(key) = current_list_key {
                 push_list_item(&mut fm, key, item.trim().trim_matches('"'));
             }
@@ -363,7 +361,10 @@ mod tests {
     fn parses_inline_triggers_list() {
         let raw = "---\ntriggers: [\"a\", \"b\", \"c\"]\n---\nbody";
         let (fm, _) = parse_frontmatter(raw);
-        assert_eq!(fm.triggers, vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]);
+        assert_eq!(
+            fm.triggers,
+            vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]
+        );
     }
 
     #[test]
@@ -399,9 +400,16 @@ mod tests {
     fn namespaced_subdir_becomes_ns_colon_name() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().to_path_buf();
-        write_skill(&root, "git/commit.md", "---\ndescription: Commit.\n---\nbody");
+        write_skill(
+            &root,
+            "git/commit.md",
+            "---\ndescription: Commit.\n---\nbody",
+        );
         let reg = SkillRegistry::load_from_dirs(&[root]);
-        assert!(reg.get("git:commit").is_some(), "namespaced skill not found");
+        assert!(
+            reg.get("git:commit").is_some(),
+            "namespaced skill not found"
+        );
     }
 
     #[test]

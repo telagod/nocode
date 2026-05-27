@@ -143,7 +143,10 @@ fn cmd_sessions(json: bool) {
         println!("(no sessions yet)");
         return;
     }
-    println!("{:<32} {:<20} {:<32} {:>5} STATUS", "ID", "CREATED", "MODEL", "MSGS");
+    println!(
+        "{:<32} {:<20} {:<32} {:>5} STATUS",
+        "ID", "CREATED", "MODEL", "MSGS"
+    );
     for r in rows {
         println!(
             "{:<32} {:<20} {:<32} {:>5} {}",
@@ -190,9 +193,7 @@ fn cmd_tools(json: bool) {
     if json {
         println!("[");
         for (i, (tool, (calls, errs))) in entries.iter().enumerate() {
-            print!(
-                "  {{\"tool\":\"{tool}\",\"calls\":{calls},\"errors\":{errs}}}"
-            );
+            print!("  {{\"tool\":\"{tool}\",\"calls\":{calls},\"errors\":{errs}}}");
             if i + 1 < entries.len() {
                 print!(",");
             }
@@ -319,7 +320,10 @@ fn cmd_cost(json: bool) {
         println!("(no token_usage telemetry — provider may not have reported it yet)");
         return;
     }
-    println!("{:<32} {:>12} {:>12} {:>14}", "MODEL", "INPUT", "OUTPUT", "TOTAL");
+    println!(
+        "{:<32} {:>12} {:>12} {:>14}",
+        "MODEL", "INPUT", "OUTPUT", "TOTAL"
+    );
     for (model, (input, output)) in &entries {
         println!(
             "{model:<32} {input:>12} {output:>12} {total:>14}",
@@ -344,13 +348,14 @@ fn cmd_summary(json: bool) {
     let telemetry = store.list_telemetry(2_000).unwrap_or_default();
     let volumes = store.list_volumes().unwrap_or_default();
 
-    let tool_calls = telemetry.iter().filter(|r| r.event_type == "tool_call").count();
+    let tool_calls = telemetry
+        .iter()
+        .filter(|r| r.event_type == "tool_call")
+        .count();
     let denies = telemetry
         .iter()
         .filter(|r| r.event_type == "tool_call")
-        .filter(|r| {
-            json_bool_field(r.data.as_deref().unwrap_or(""), "is_error").unwrap_or(false)
-        })
+        .filter(|r| json_bool_field(r.data.as_deref().unwrap_or(""), "is_error").unwrap_or(false))
         .count();
 
     if json {
@@ -418,8 +423,14 @@ mod tests {
 
     #[test]
     fn parse_gate_extracts_canonical_name() {
-        assert_eq!(parse_gate("Denied [permission: x]").as_deref(), Some("permission"));
-        assert_eq!(parse_gate("Denied [sandbox: net off]").as_deref(), Some("sandbox"));
+        assert_eq!(
+            parse_gate("Denied [permission: x]").as_deref(),
+            Some("permission")
+        );
+        assert_eq!(
+            parse_gate("Denied [sandbox: net off]").as_deref(),
+            Some("sandbox")
+        );
     }
 
     #[test]

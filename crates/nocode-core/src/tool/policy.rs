@@ -258,10 +258,9 @@ impl<'a> PolicyEngine<'a> {
                         GateName::Prompter,
                         format!("user chose AlwaysAllow for {tool_name}"),
                     ),
-                    PermissionDecision::Deny => GateDecision::deny(
-                        GateName::Prompter,
-                        format!("user denied {tool_name}"),
-                    ),
+                    PermissionDecision::Deny => {
+                        GateDecision::deny(GateName::Prompter, format!("user denied {tool_name}"))
+                    }
                 }
             }
         }
@@ -316,20 +315,14 @@ fn is_read_only_for_plan(tool_name: &str, input: &Value) -> bool {
             )
 }
 
-fn sandbox_violation(
-    tool_name: &str,
-    input: &Value,
-    sandbox: &SandboxConfig,
-) -> Option<String> {
+fn sandbox_violation(tool_name: &str, input: &Value, sandbox: &SandboxConfig) -> Option<String> {
     match tool_name {
         "FileRead" | "FileWrite" | "FileEdit" => {
             let path = input["file_path"].as_str().or(input["path"].as_str())?;
             if !sandbox.allowed_paths.is_empty()
                 && !sandbox.allowed_paths.iter().any(|p| path.starts_with(p))
             {
-                return Some(format!(
-                    "path '{path}' is outside sandbox.allowed_paths"
-                ));
+                return Some(format!("path '{path}' is outside sandbox.allowed_paths"));
             }
             if let Err(e) = file_safety::validate_file_path(
                 path,
@@ -399,7 +392,11 @@ mod tests {
     #[test]
     fn ask_mode_auto_approves_safe() {
         let engine = engine_with(PermissionMode::Ask);
-        assert!(engine.evaluate("FileRead", &json!({"file_path": "/tmp"})).is_allow());
+        assert!(
+            engine
+                .evaluate("FileRead", &json!({"file_path": "/tmp"}))
+                .is_allow()
+        );
     }
 
     #[test]
@@ -463,7 +460,10 @@ mod tests {
             prompter: None,
             previously_allowed: false,
         };
-        let d = engine.evaluate("FileWrite", &json!({"file_path": "/etc/shadow", "content": "x"}));
+        let d = engine.evaluate(
+            "FileWrite",
+            &json!({"file_path": "/etc/shadow", "content": "x"}),
+        );
         assert!(!d.is_allow());
         assert_eq!(d.gate(), GateName::Sandbox);
     }

@@ -53,7 +53,10 @@ fn config_path() -> PathBuf {
 fn cmd_list(json: bool) {
     let path = config_path();
     if !path.exists() {
-        eprintln!("No config at {}. Run `nocode init` to scaffold one.", path.display());
+        eprintln!(
+            "No config at {}. Run `nocode init` to scaffold one.",
+            path.display()
+        );
         return;
     }
     let raw = fs::read_to_string(&path).unwrap_or_default();

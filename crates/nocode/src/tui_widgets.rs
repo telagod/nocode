@@ -386,28 +386,19 @@ impl ChatMessage {
                     if let Some(trail) = parse_why_trail(&line_text) {
                         // Why-trail: `Denied [gate: reason]` — colorize the gate
                         // name in warning so the user sees the cause at a glance.
-                        spans.push(Span::styled(
-                            "Denied [",
-                            Style::default().fg(theme.error),
-                        ));
+                        spans.push(Span::styled("Denied [", Style::default().fg(theme.error)));
                         spans.push(Span::styled(
                             trail.gate.to_owned(),
                             Style::default()
                                 .fg(theme.warning)
                                 .add_modifier(Modifier::BOLD),
                         ));
-                        spans.push(Span::styled(
-                            ": ",
-                            Style::default().fg(theme.text_dim),
-                        ));
+                        spans.push(Span::styled(": ", Style::default().fg(theme.text_dim)));
                         spans.push(Span::styled(
                             trail.reason.to_owned(),
                             Style::default().fg(theme.text_dim),
                         ));
-                        spans.push(Span::styled(
-                            "]",
-                            Style::default().fg(theme.error),
-                        ));
+                        spans.push(Span::styled("]", Style::default().fg(theme.error)));
                         if !trail.tail.is_empty() {
                             spans.push(Span::styled(
                                 trail.tail.to_owned(),

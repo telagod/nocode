@@ -129,7 +129,10 @@ pub fn resolve_named_provider(
 }
 
 fn is_known_wire_api(s: &str) -> bool {
-    matches!(s, "anthropic" | "openai-responses" | "openai-chat" | "google")
+    matches!(
+        s,
+        "anthropic" | "openai-responses" | "openai-chat" | "google"
+    )
 }
 
 fn available_names(settings: &Settings) -> Vec<String> {

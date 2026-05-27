@@ -37,9 +37,7 @@ impl Tool for AgentTool {
         // Permission mode for the sub-agent — propagated through the fractal so
         // a parent running in Ask mode does not implicitly grant its child
         // full Auto access. Defaults to inheriting the parent setting.
-        let mode_override = input["mode"]
-            .as_str()
-            .and_then(parse_subagent_mode);
+        let mode_override = input["mode"].as_str().and_then(parse_subagent_mode);
         let prompt_owned = prompt.to_string();
         let name_owned = name.to_string();
         let model_owned = model_override.map(String::from);
@@ -59,7 +57,12 @@ impl Tool for AgentTool {
         if run_in_background {
             // Async: spawn and return immediately
             std::thread::spawn(move || {
-                run_worker_thread(&worker_id, &prompt_owned, model_owned.as_deref(), mode_override);
+                run_worker_thread(
+                    &worker_id,
+                    &prompt_owned,
+                    model_owned.as_deref(),
+                    mode_override,
+                );
             });
             ToolOutput::success(
                 json!({"worker_id": id, "name": name_owned, "description": description, "status": "spawned"}).to_string(),
@@ -67,7 +70,12 @@ impl Tool for AgentTool {
         } else {
             // Sync: spawn, wait for completion, return result
             let handle = std::thread::spawn(move || {
-                run_worker_thread(&worker_id, &prompt_owned, model_owned.as_deref(), mode_override);
+                run_worker_thread(
+                    &worker_id,
+                    &prompt_owned,
+                    model_owned.as_deref(),
+                    mode_override,
+                );
             });
             let _ = handle.join();
 
@@ -318,7 +326,10 @@ mod tests {
     #[test]
     fn parse_subagent_mode_maps_strings_to_permission_modes() {
         use crate::tool::permission::PermissionMode;
-        assert_eq!(parse_subagent_mode("acceptEdits"), Some(PermissionMode::Auto));
+        assert_eq!(
+            parse_subagent_mode("acceptEdits"),
+            Some(PermissionMode::Auto)
+        );
         assert_eq!(
             parse_subagent_mode("bypassPermissions"),
             Some(PermissionMode::Auto)
