@@ -1,164 +1,247 @@
-# nocode DESIGN
+# 02 · Architecture
 
-> Last updated: 2026-05-26 — repositioned per `REALIGN.md`. Parity-with-Claude-Code retired.
+> Last updated: 2026-05-27 · Owner: harness · Read with [00_vision](./00_vision.md), [04_policy_gates](./04_policy_gates.md)
 
-## Design Goals
+The module map for nocode v0.3.0. This file describes **what is** — the goals, the decisions, and the reasons live in [00_vision](./00_vision.md). The forward-looking backlog lives in [08_roadmap](./08_roadmap.md).
 
-- **Reference implementation of harness engineering bionics** for fractal code agents — terminal-native, Rust.
-- **Skill-first, minimal-tools, minimal-gates.** Skills are first-class (loaded into prompt assembly); the tool surface is small and orthogonal; hard gates are layered conservatively (schema → policy → hooks).
-- **Provider-agnostic, no vendor lock-in.** Claude / OpenAI / Gemini / Custom share the same `Provider` trait dispatch.
-- **Compilable, testable, observable from day one.** Every layer earns its keep; explanation > magic.
+## Workspace
 
-## Non-Goals
+A two-crate Cargo workspace. Edition 2024. `clippy::all + pedantic + nursery = warn`. `unsafe = forbid` outside the test-support env-mutex helper.
 
-- Strict tool-name parity with any other agent (Claude Code, codex, etc.). We borrow good ideas, not surface area.
-- Pixel-perfect parity with Claude Code's Ink/React UI. nocode TUI is its own thing (Pi-inspired, see `crates/nocode/src/tui_widgets.rs`).
-- Embedded proxy / `/free` route.
-- Plugin marketplace, voice (deferred).
-
-## Positioning (one line)
-
-> nocode = the smallest harness that lets a fractal code agent stay explainable: bones (atomic tools), flesh (skills loaded as prompt), skin (thin gates).
-
-## Current Architecture
-
-```
-nocode (terminal shell — crates/nocode)
-  main.rs           — entry point, run mode dispatch, provider detection
-  tui.rs            — TUI entry point
-  tui_app.rs        — 4-pane TUI, streaming, overlays
-  login.rs          — interactive provider/bootstrap flow
-  provider_presets.rs — shared custom provider catalog
-  command_registry.rs — slash commands with aliases
-  tool_render.rs    — Claude Code visual tool display
-  markdown_render.rs — Markdown rendering with syntect
-
-nocode-core (library — crates/nocode-core, 70+ modules)
-  provider/         — Claude (2024-06-01) / OpenAI / Gemini / Custom / Mock
-  provider/transport.rs — HTTP client, SSE, fast retry, status codes
-  query/loop.rs     — agentic loop (stop_reason driven, auto-compaction, recovery)
-  query/budget.rs   — token budget, diminishing returns
-  query/events.rs   — ModelStreamEvent for TUI and other stream consumers
-  skill/            — first-class skill registry, loaded into prompt assembly
-  tool/             — atomic tools (target: ~12, see REALIGN.md Phase 1.1)
-  tool/executor.rs  — pipeline (target: schema→policy→hooks→execute, see REALIGN.md Phase 1.2)
-  tool/bash_validation.rs — bash classifier (target: single classifier, see REALIGN.md Phase 1.2)
-  session/          — JSONL persistence, compaction, fork/branch/resume
-  config/           — 3-tier settings merge (user→project→local) + env overrides
-  prompt/           — system prompt assembly, CLAUDE.md discovery, FNV dedup
-  agent/            — WorkerRegistry, TaskCoordinator, background execution
-  mcp/              — McpClient (JSON-RPC stdio), McpManager (11-phase lifecycle)
-  recovery.rs       — 7 failure scenarios → RecoveryRecipe
-  storage/          — rusqlite + memory CRUD
+```text
+crates/
+├── nocode-core/      # library (~28K LOC) — every piece of behaviour
+│   └── src/
+│       ├── agent/    # WorkerRegistry, TaskCoordinator, background hosts
+│       ├── auth/     # OAuth flows (feature-gated)
+│       ├── config/   # 3-tier settings merge + RuntimeConfig + reject_legacy_custom
+│       ├── mcp/      # MCP client (JSON-RPC over stdio), 11-phase lifecycle
+│       ├── prompt/   # System prompt assembly — base + CLAUDE.md + AGENTS.md + skill index
+│       ├── provider/ # Claude / OpenAI / Gemini / Foundry providers + resolve_named_provider
+│       ├── query/    # Agentic loop, token budget, dependency injection seam
+│       ├── recovery/ # 7 failure scenarios → RecoveryRecipe (one attempt before escalation)
+│       ├── session/  # JSONL persistence, RichCompactor, fork/branch/resume
+│       ├── skill/    # SkillRegistry — first-class, loaded into prompt assembly
+│       ├── storage/  # rusqlite (date-partitioned volumes) + memory CRUD + credentials
+│       ├── tool/     # 11 atomic + 18 optional tools, executor, policy, hooks
+│       ├── bridge.rs # Local + remote single-turn transport
+│       ├── ide_server.rs   # JSON-RPC IDE server mode
+│       ├── ws_bridge.rs    # WebSocket server mode
+│       └── lib.rs
+│
+└── nocode/           # binary (~14.5K LOC) — TUI + CLI shell
+    └── src/
+        ├── main.rs           # entry, mode dispatch, provider resolution
+        ├── tui.rs / tui_app.rs / tui_widgets.rs  # the TUI
+        ├── tui_overlays.rs / tui_permission.rs / tui_theme.rs
+        ├── tui_commands.rs   # slash-command handlers
+        ├── command_registry.rs                   # slash registry
+        ├── init.rs           # `nocode init` — config scaffold
+        ├── config_cli.rs     # `nocode config <list|get|set|unset>`
+        ├── insight.rs        # `nocode insight where|sessions|tools|gates|cost`
+        ├── markdown_render.rs / markdown_stream.rs
+        ├── tool_render.rs    # tool result rendering for the TUI
+        └── …                 # spinner, status_hud, tool_truncate, model_fetch, etc.
 ```
 
-## Provider Architecture (post v0.2)
+## Core data flow
+
+```text
+User input
+   │
+   ▼
+main.rs (mode dispatch)
+   │
+   ▼
+QueryEngine ──▶ Provider trait ──▶ SSE stream
+   │                                   │
+   │  ◀── tool call ──┐                ▼
+   │                  │           streamed deltas
+   ▼                  │
+ToolExecutor ─── policy(why-trail) ─── hooks ─── execute
+   │
+   └──▶ result back to QueryEngine loop
+```
+
+The agentic loop in [`query/loop.rs`](../crates/nocode-core/src/query/loop.rs) is the heart. Each iteration:
+
+1. Send `messages + tools + system` to the model via `provider/transport.rs` (SSE).
+2. Parse the streamed response.
+3. Extract any tool calls and run them through `ToolExecutor`.
+4. Feed tool results back as user-role `tool_result` blocks.
+5. Loop until the model stops requesting tools, hits a `stop_reason`, or the budget is exhausted.
+
+## Provider system
+
+Trait-based dispatch — `provider/mod.rs` defines:
+
+```rust
+pub trait Provider: Send + Sync {
+    fn create_message(...);
+    fn create_message_stream(...);
+    fn create_message_stream_with_cancel(...);
+    fn verify_key(...);
+}
+```
+
+Concrete implementations live next to the trait: `ClaudeProvider`, `OpenAiResponsesProvider`, `OpenAiProvider` (chat-completions), `GeminiProvider`, `FoundryProvider` (Anthropic-format proxy).
+
+`ProviderBox` wraps `Arc<dyn Provider>` for owned trait objects. The construction goes through the **single sanctioned resolver** [`provider::resolve::resolve_named_provider`](../crates/nocode-core/src/provider/resolve.rs):
+
+```text
+cli flag --provider <name>
+  └─→ NOCODE_PROVIDER env var
+        └─→ active profile.provider
+              └─→ settings.default_provider
+                    └─→ settings.model_provider (legacy alias)
+```
+
+The chosen name is then looked up in `[providers.<name>]` (or one of the builtin aliases `claude`/`openai`/`gemini`) for `base_url`, `wire_api`, `api_key_env`, `default_model`. Schema details: [10_provider_config.md](./10_provider_config.md).
+
+The pre-REALIGN `ModelProvider::Custom` variant and `custom_*` Settings fields are **rejected at load time** with an actionable migration message — see `Settings::reject_legacy_custom` in `config/settings.rs`.
+
+### Wire formats
+
+A simple string with four canonical values: `anthropic`, `openai-responses`, `openai-chat`, `google`. Anything else is a hard error in the resolver. Legacy values (`claude` / `openai` / `gemini`) are normalised to one of the four via `normalize_api_format()`.
+
+| Wire | Endpoint shape |
+|---|---|
+| `anthropic` | `POST {base_url}/v1/messages` |
+| `openai-responses` | `POST {base_url}/v1/responses` |
+| `openai-chat` | `POST {base_url}/v1/chat/completions` |
+| `google` | `POST {base_url}/v1beta/models/{model}:generateContent` |
+
+## Tool execution pipeline (three gates)
+
+`tool/executor.rs` runs every tool call through:
+
+1. **Lookup** — `ToolRegistry::get(name)`, then `GlobalToolRegistry` for bridged `mcp:*` / `plugin:*` names.
+2. **Schema** — JSON-schema validation in `tool/tool_validation.rs`.
+3. **Policy** — the unified gate in [`tool/policy.rs`](../crates/nocode-core/src/tool/policy.rs). One `PolicyEngine::evaluate()` call collapses what used to be five inline checks (trust + plan-mode + permission-mode + classifier + sandbox) and returns a `GateDecision { gate, reason, remember }`. The why-trail is the design contract — see [04_policy_gates](./04_policy_gates.md).
+4. **PreToolUse hooks** — external commands; non-zero exit denies.
+5. **Bash classifier** — extra syntax-level guards via `bash_validation::is_destructive_command`.
+6. **Execute** — `tool.execute(input)`.
+7. **Snapshot for undo** — `FileEdit` / `FileWrite` snapshot old + new content into the file-history store.
+8. **PostToolUse hooks** — informational; cannot deny.
+9. **Render** as a `ContentBlock::ToolResult` (with `is_error` and optional `structured_content`).
+
+### Tool surface
+
+Default: 11 atomic tools (the harness contract):
 
 ```
-ModelProvider enum (Copy):  Mock | Claude | OpenAi | Gemini | Custom
-ApiFormat enum (Copy):      Claude | OpenAi | Gemini
+FileRead  FileWrite  FileEdit       # files
+Glob      Grep                       # search
+Bash                                 # execute
+WebFetch  WebSearch                  # world
+Agent     AskUserQuestion  Skill     # fractal + dialogue + skill
 ```
 
-Design decisions:
-- **Bedrock/Vertex removed as first-class providers.** They are Claude Messages format + different endpoint/auth. Use `Custom` with `NOCODE_CUSTOM_BASE_URL` and `NOCODE_CUSTOM_API_FORMAT=claude`.
-- **OpenAI Chat + Responses merged** into single `OpenAi` variant (defaults to Responses format).
-- **Gemini added** as first-class provider with native `generateContent` format.
-- **Custom provider** is a unit variant (keeps `ModelProvider` Copy-compatible). String config lives in `CustomProviderConfig { name, base_url, format: ApiFormat }`.
-- **ApiFormat** routes Custom providers to the correct request body builder and response parser.
+Asserted by `tests/roadmap.rs::tool_registry_has_canonical_core_set`. Add or remove and that test fails.
 
-Request paths:
-| Provider | Endpoint |
-|----------|----------|
-| Claude / Custom | `/v1/messages` |
-| OpenAI | `/v1/responses` |
-| Gemini | `/v1beta/models/{model}:generateContent` |
+Optional (registered explicitly when the host wants them): `Memory`, `TodoWrite`, `Task`, `Mcp`, `Cron{Create,List,Delete}`, `Team{Create,Delete}`, `EnterPlanMode`/`ExitPlanMode`, `EnterWorktree`/`ExitWorktree`, `Config`, `NotebookEdit`, `ToolSearch`, `Lsp`, `SendMessage`.
 
-## Tool Call Flow
+## Configuration (3 tiers)
 
-After model response, `runtime.rs` extracts tool calls via `extract_tool_calls()`:
-- Claude: `tool_use` content blocks → `ToolCallRequest { name, id, arguments }`
-- OpenAI: `function_call` in response output → `ToolCallRequest`
-- Gemini: `functionCall` in parts → `ToolCallRequest`
+Loaded by `Settings::load_merged(cwd)`, in this order, with later layers winning for scalars and merging key-by-key for maps:
 
-Each tool call becomes a `ToolCallInput` (via `with_arguments_map()`), gets dispatched through `execute_tool_call()`, results fed back via `QueryLoopAction::ResolveTool`, then `FlushToolBatch` before completion.
+```text
+~/.nocode/config.toml                 # user (global)
+{cwd}/.nocode/config.toml             # project
+{cwd}/.nocode/config.local.toml       # local (gitignored)
+```
 
-## Naming Decisions
+Then `RuntimeConfig::from_settings` applies env-var overrides on top.
 
-Session-level structured output uses canonical result term:
-- Display name: `response-result`
-- Rust / wire field: `response_result`
-- Task panel aggregation: `result`
+## State machines (explicit, not inferred)
 
-Legacy `structured_output` retained only in provider JSON schema request name and bridge backward-compatible decode alias.
+Every long-running lifecycle is an explicit enum with logged transitions. Infer-state-from-fields is forbidden.
 
-## Comparison with redcode
+| Subject | Phases |
+|---|---|
+| `WorkerState` | `Spawning → TrustRequired → ReadyForPrompt → Running → Finished/Failed` |
+| `McpLifecyclePhase` | 11 phases (`Registered → … → Shutdown`), with `Degraded`/`Reconnecting` branches |
+| `PluginState` | `Unconfigured → Validated → Healthy/Degraded/Failed` |
+| `SessionControl` | `Idle → Active → Paused → Resuming → Draining → Terminated` |
 
-| Dimension | redcode baseline | nocode current | Status |
-|-----------|-----------------|----------------|--------|
-| Query kernel | TS QueryEngine + query.ts | Rust query_engine / query_loop | Done — submit, tool batch, budget, stop hook, persistence |
-| Providers | 6 (Claude, OpenAI×2, Bedrock, Vertex, Mock) | 5 (Claude, OpenAI, Gemini, Custom, Mock) | Done — simplified, Gemini added |
-| Tool runtime | 42 tools, deep UI coupling | 10 tools + MCP, independent | Core tools done, 32 tools deferred |
-| Tool call loop | Model → tool → result → model | Same pattern in runtime.rs | Done — all 3 provider formats |
-| Task runtime | Shell/agent/dream/daemon | Same 4 hosts + supervisor | Done — lacks persistence/resume |
-| Bridge | Deep remote + session system | Runner + HTTP transport demo | Functional, not production |
-| Interface | Ink REPL, 349 TSX components | 4-pane crossterm TUI | intentionally terminal-native |
-| MCP | Full client + auth + resources | JSON-RPC client, tool exec | Core done, lacks auth/resources |
-| Release | install.sh, variants, flags, doctor | CI + install.sh | Minimal |
+## Global singletons
 
-## Remaining Work (prioritized)
+The `OnceLock<Arc<Mutex<T>>>` pattern, accessed via `global_*()` functions in their owning modules:
 
-### P1. Provider Production Readiness
-- [ ] Live chunk streaming transport (not just full SSE body parse)
-- [ ] Stream event state machine: delta, tool call, turn finish, abort
-- [ ] Finer error classification: auth, quota, rate limit, timeout, decode
-- [ ] Provider integration tests with real API shapes
+```
+TaskCoordinator     WorkerRegistry        McpManager
+HookRunner          CronRegistry          PluginRegistry
+SqlStore            GlobalToolRegistry    LspRegistry
+```
 
-### P2. Task Runtime Hardening
-- [ ] Cross-session task persistence table
-- [ ] Task resume/reconnect after restart
-- [ ] Cancellation / cleanup / kill escalation / timeout policy
-- [ ] Task audit trail: spawn, permission, retry, restart, kill, final status
+Tests that touch any of these (or `$HOME` / `cwd`) serialize through `crate::test_support::env_mutex()` to avoid races.
 
-### P3. Bridge / Session
-- [ ] Concrete bridge service (not just demo transport)
-- [ ] Session registry, remote session pointer, resume
-- [ ] WebSocket or equivalent long-connection transport
-- [ ] Reconnect, heartbeat, timeout, auth refresh
+## Storage
 
-### P4. TUI Completeness
-- [ ] Permission prompt full lifecycle
-- [ ] Transcript renderer: assistant/tool/progress/error typed rendering
-- [ ] Input editor: selection, richer keybindings
-- [ ] Error panel, diagnostics panel, richer footer
-- [ ] Task panel: action keys, batch operations, auto-refresh
+| Store | Path | Purpose |
+|---|---|---|
+| **SQL** | `~/.nocode/data/nocode_YYYY-MM-DD.db` | sessions, messages, telemetry, commands, memories. Date-partitioned volumes — never one giant file. |
+| **Memory** | `~/.nocode/memory/` (file-system) | Markdown + YAML frontmatter, `MEMORY.md` index. CRUD via `storage/memory.rs`. |
+| **Sessions** | `~/.nocode/data/nocode_YYYY-MM-DD.db` (sessions table) + `.nocode/last_session` marker | JSONL transcript / history / task persistence with auto-persist on submission. |
+| **Credentials** | `~/.nocode/credentials.json` | Encrypted API key storage (used when keys come from non-env sources). |
 
-### P5. Platform / Release
-- [ ] Doctor / compat / resume UX
-- [ ] Packaging: binary releases, platform installers
-- [ ] CI matrix: smoke tests, integration tests
-- [ ] Configuration migration and rollback strategy
+## Session control
 
-## Launch Criteria
+`session/compaction.rs` (`RichCompactor`) produces structured summaries when context grows too large.
 
-Before `nocode` can replace `redcode`:
+`session/persistence.rs` writes a **transcript-shaped JSONL** plus per-session metadata to SQL. Resume flows: `session/control.rs` supports fork / branch / resume / suspend / complete with `parent_id` tracking.
 
-1. Provider has live streaming, capability matrix, clear error surface
-2. Tasks have persistence, resume, cancel, daemon/service paths
-3. Bridge has real remote transport, resume, reconnect
-4. TUI can independently complete query/task/permission/bridge workflows
-5. Release has packaging, install, doctor, smoke, rollback
+Token budget tracked in `query/budget.rs` with diminishing-returns logic — once the model's output is shrinking faster than its input, the loop breaks.
 
-Until all 5 are met, `nocode` remains internal preview.
+## Recovery
 
-## Change Log
+`recovery.rs` maps **7 failure scenarios** to a `RecoveryRecipe { steps, max_attempts, escalation }`. The hard rule: **one attempt before escalation, never silently retry indefinitely.**
 
-### 2026-04-06
-- Full document rewrite to reflect post-v0.2 state
-- Updated provider architecture: 5 providers with ApiFormat routing
-- Added tool call flow documentation
-- Updated comparison table with current coverage
-- Reorganized remaining work as P1-P5
+| Scenario | Recipe |
+|---|---|
+| ProviderAuthFailure | refresh creds → retry once → escalate |
+| ProviderRateLimited | back off → retry once → defer |
+| ProviderTimeout | retry once → escalate |
+| ToolCallMalformed | reject with structured error → no retry |
+| BashCommandFailed | informational only — model decides |
+| HookDenied | bubble up the trail to the user → no retry |
+| StreamDecodeError | retry once with reduced context → escalate |
 
-### 2026-04-04
-- Initial DESIGN.md with P1-P6 TODO structure
-- Naming convention: `response-result` / `response_result`
+## Testing strategy
+
+- **Unit tests** — inline `#[cfg(test)] mod tests` next to the code they cover.
+- **Integration tests** — `crates/nocode-core/tests/` (4 binaries):
+  - `mock_service.rs` — `MockAnthropicService` parity, `CapturedRequest` recording.
+  - `tool_roundtrip.rs` — full executor pipeline, gate trails, hooks, sandbox.
+  - `trust_mcp.rs` — trust/permission/MCP health.
+  - `roadmap.rs` — module-presence and core-tool-set contracts.
+- **Hermetic env mutation** — every test that writes `$HOME`, `cwd`, or `NOCODE_*` env vars holds a process-wide `Mutex` from `test_support::env_mutex()`.
+
+Total: **825 tests** as of v0.3.0. `cargo clippy --all-targets --no-deps -- -D warnings` is clean across both crates.
+
+## Run modes
+
+```bash
+nocode                                 # interactive TUI (default)
+nocode init [--force]                  # scaffold config
+nocode config <list|get|set|unset>     # CLI config mutator
+nocode insight [<sub>] [--json]        # observability subcommands
+nocode --status                        # diagnostics + active sqlite volume
+nocode --resume [<id>]                 # resume a previous session (-c shorthand)
+nocode --bridge-once "prompt"          # single-turn local execution
+nocode --bridge-remote-once "prompt"   # single-turn HTTP
+nocode --ws-server <bind>              # WebSocket server
+nocode --ide-server                    # IDE server (JSON-RPC)
+nocode --mcp-server                    # MCP server
+nocode --process-agent-daemon          # background daemon (internal)
+nocode --process-agent-host            # agent host (internal)
+```
+
+## Key conventions
+
+- **`ModelProvider`** is a Copy enum (`Claude | OpenAi | Gemini | Custom`). Used only for legacy paths; new code uses `ResolvedProvider`.
+- **API format** is a string with 4 canonical values, not a Rust enum (deliberate — string is forgiving across versions).
+- **System prompt assembly** is dynamic — `prompt/assembly.rs` discovers `CLAUDE.md` / `AGENTS.md` variants, deduplicates by FNV hash, applies truncation budgets.
+- **Slash commands** registered in `command_registry.rs` with aliases / summary / argument hints.
+- **Source paths** use module subdirectories: `provider/`, `tool/`, `mcp/`, `query/`, `config/`, `session/`, `storage/`, `auth/`, `agent/`, `prompt/`, `skill/`.
+- **Structured typed events** for observability — never scrape prose.

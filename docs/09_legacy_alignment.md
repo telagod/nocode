@@ -1,3 +1,17 @@
+# 09 · Legacy alignment audit
+
+> ⚠ **Archived — frozen at v0.2.16 (2026-04-11).**
+>
+> This document is a parity-with-Claude-Code audit from the pre-REALIGN era.
+> nocode v0.3.0 retired the parity goal in favor of "harness engineering bionics"
+> ([01_realign.md](./01_realign.md), [00_vision.md](./00_vision.md)).
+>
+> Kept as historical context for what nocode used to measure itself by.
+> Do **not** treat the gaps in this file as live backlog — see
+> [08_roadmap.md](./08_roadmap.md) for what's actually pending.
+
+---
+
 # nocode vs Claude Code 功能对齐清单
 
 > 更新时间：2026-04-11（v0.2.16 — MCP tool dispatch, WebSocket server, 741+ tests）
