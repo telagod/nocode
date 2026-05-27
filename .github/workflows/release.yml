@@ -169,10 +169,25 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          # Fail loud on auth/network/404 errors. Only swallow the specific
+          # "version already published" case (E409 / EPUBLISHCONFLICT) so a
+          # tag re-push can be a no-op for already-published platform
+          # packages while still surfacing genuine breakage.
+          set -e
           for pkg_dir in npm-packages/npm-nocode-*/; do
             echo "Publishing from $pkg_dir..."
             cd "$pkg_dir"
-            npm publish --access public --provenance || echo "Skipped (already published or error)"
+            if ! out="$(npm publish --access public --provenance 2>&1)"; then
+              echo "$out"
+              if echo "$out" | grep -qE 'E(PUBLISHCONFLICT|409)|cannot publish over'; then
+                echo "Already published — skipping."
+              else
+                echo "::error::npm publish failed for $pkg_dir (not a 409)"
+                exit 1
+              fi
+            else
+              echo "$out"
+            fi
             cd "$GITHUB_WORKSPACE"
           done
 
@@ -192,5 +207,16 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          set -e
           cd npm/nocode
-          npm publish --access public --provenance || echo "Skipped (already published or error)"
+          if ! out="$(npm publish --access public --provenance 2>&1)"; then
+            echo "$out"
+            if echo "$out" | grep -qE 'E(PUBLISHCONFLICT|409)|cannot publish over'; then
+              echo "Already published — skipping."
+            else
+              echo "::error::npm publish failed for main package (not a 409)"
+              exit 1
+            fi
+          else
+            echo "$out"
+          fi
