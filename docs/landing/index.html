@@ -1,0 +1,1149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>nocode — harness engineering bionics for fractal code agents</title>
+<meta name="description" content="A terminal-native AI coding agent in Rust. 11 atomic tools, three explainable gates, skills as first-class prompt material, fractal sub-agents.">
+<meta property="og:title" content="nocode — the smallest harness for a fractal code agent">
+<meta property="og:description" content="11 atomic tools · 3 explainable gates · skills as first-class prompt · fractal sub-agents. Edit one TOML file, no wizard.">
+<meta property="og:url" content="https://telagod.github.io/nocode/">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2308090b'/%3E%3Cpath d='M14 44 L14 20 L26 20 L40 38 L40 20 L50 20 L50 44 L40 44 L26 26 L26 44 Z' fill='%23a78bfa'/%3E%3C/svg%3E">
+<style>
+  /* ============================================================
+     Design tokens
+     ============================================================ */
+  :root {
+    /* palette — same as nocode TUI theme */
+    --bg-0:        #08090b;
+    --bg-1:        #0e1014;
+    --bg-2:        #14171c;
+    --bg-3:        #1a1e25;
+    --line:        #1f242b;
+    --line-soft:   #161a20;
+
+    --text-0:      #e9e6f5;
+    --text-1:      #b8b2c8;
+    --text-2:      #6e6a7d;
+    --text-dim:    #4a4754;
+
+    --accent:      #a78bfa;     /* lavender */
+    --accent-2:    #5eead4;     /* teal */
+    --warn:        #fbbf24;     /* amber */
+    --error:       #f87171;
+    --success:     #86efac;
+
+    --mono: 'JetBrains Mono', 'SF Mono', 'IBM Plex Mono', Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Inter', 'PingFang SC', 'Hiragino Sans GB',
+            'Microsoft YaHei', system-ui, sans-serif;
+
+    /* layout — wide canvas */
+    --container: 1200px;
+    --gutter: clamp(20px, 4vw, 56px);
+    --section-y: clamp(56px, 8vw, 96px);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg-0);
+    color: var(--text-0);
+    font: 16px/1.6 var(--sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background:
+      radial-gradient(ellipse at 15% -10%, rgba(167, 139, 250, 0.10), transparent 50%),
+      radial-gradient(ellipse at 85% 110%, rgba(94, 234, 212, 0.06), transparent 50%);
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  a { color: var(--accent); text-decoration: none; transition: color 120ms; }
+  a:hover { color: var(--accent-2); }
+
+  code, pre { font-family: var(--mono); font-size: 0.92em; }
+  code {
+    color: var(--accent-2);
+    background: var(--bg-2);
+    padding: 0.1em 0.4em;
+    border-radius: 3px;
+  }
+  pre code { background: transparent; padding: 0; }
+  ::selection { background: rgba(167, 139, 250, 0.3); color: var(--text-0); }
+
+  /* ============================================================
+     Container
+     ============================================================ */
+  .wrap {
+    max-width: var(--container);
+    margin-inline: auto;
+    padding-inline: var(--gutter);
+  }
+
+  /* ============================================================
+     Header / nav
+     ============================================================ */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(8, 9, 11, 0.78);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid transparent;
+    transition: border-color 200ms;
+  }
+  header.scrolled { border-bottom-color: var(--line-soft); }
+  header .wrap {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-block: 18px;
+  }
+  .brand {
+    font-family: var(--mono);
+    font-size: 18px;
+    letter-spacing: 0.01em;
+    color: var(--text-0);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .brand-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    box-shadow: 0 0 10px rgba(167, 139, 250, 0.6);
+  }
+  .nav { display: flex; gap: 28px; font-size: 14px; color: var(--text-2); align-items: center; }
+  .nav a { color: var(--text-2); }
+  .nav a:hover { color: var(--text-0); }
+  .lang-toggle {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 6px 12px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--text-1);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 120ms;
+    letter-spacing: 0.04em;
+  }
+  .lang-toggle:hover { border-color: var(--accent); color: var(--accent); }
+  .lang-toggle .sep { color: var(--text-2); padding: 0 4px; }
+  .lang-toggle .active { color: var(--accent); }
+
+  /* mobile nav: collapse middle links, keep brand + lang + github */
+  @media (max-width: 720px) {
+    .nav { gap: 14px; }
+    .nav .nav-link { display: none; }
+  }
+
+  /* ============================================================
+     Hero — split layout, wide
+     ============================================================ */
+  .hero {
+    padding-block: clamp(60px, 9vw, 120px) clamp(40px, 6vw, 80px);
+  }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: clamp(32px, 5vw, 72px);
+    align-items: center;
+  }
+  .hero-text .eyebrow {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    margin-bottom: 20px;
+    display: inline-flex; align-items: center; gap: 10px;
+  }
+  .hero-text .eyebrow::before {
+    content: ''; width: 28px; height: 1px; background: var(--accent); opacity: 0.55;
+  }
+  .hero-text h1 {
+    font-size: clamp(38px, 5.5vw, 64px);
+    font-weight: 500;
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+    margin: 0 0 22px;
+    background: linear-gradient(135deg, var(--text-0) 30%, var(--accent) 70%, var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .hero-text .lede {
+    font-size: clamp(16px, 1.5vw, 19px);
+    color: var(--text-1);
+    line-height: 1.55;
+    max-width: 580px;
+    margin: 0 0 32px;
+  }
+  .hero-text .lede em {
+    font-style: normal;
+    color: var(--accent-2);
+    border-bottom: 1px dashed rgba(94, 234, 212, 0.3);
+  }
+  .cta-row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .btn {
+    font-family: var(--mono);
+    font-size: 14px;
+    padding: 12px 22px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--text-0);
+    cursor: pointer;
+    transition: all 150ms;
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); transform: translateY(-1px); }
+  .btn.primary {
+    background: var(--accent);
+    color: var(--bg-0);
+    border-color: var(--accent);
+    font-weight: 500;
+  }
+  .btn.primary:hover {
+    background: var(--accent-2);
+    border-color: var(--accent-2);
+    color: var(--bg-0);
+  }
+  .quick-install {
+    margin-top: 24px;
+    font-family: var(--mono); font-size: 13px;
+    color: var(--text-2);
+  }
+  .quick-install code {
+    color: var(--text-0);
+    background: var(--bg-1);
+    padding: 9px 14px;
+    border-radius: 4px;
+    border: 1px solid var(--line-soft);
+    user-select: all;
+    cursor: copy;
+  }
+
+  /* Hero terminal demo (right column) */
+  .terminal-window {
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.5),
+                0 0 40px -10px rgba(167, 139, 250, 0.15);
+    overflow: hidden;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  .terminal-titlebar {
+    display: flex; align-items: center;
+    padding: 10px 16px;
+    background: var(--bg-2);
+    border-bottom: 1px solid var(--line);
+    gap: 8px;
+  }
+  .tb-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--line); }
+  .tb-dot.r { background: #e25c4d; }
+  .tb-dot.y { background: #ddb13f; }
+  .tb-dot.g { background: #5dca5d; }
+  .terminal-titlebar .tb-title {
+    flex: 1; text-align: center; font-size: 12px;
+    color: var(--text-2); letter-spacing: 0.04em;
+  }
+  .terminal-body {
+    padding: 22px 22px 26px;
+    line-height: 1.7;
+    color: var(--text-1);
+  }
+  .terminal-body .prompt { color: var(--text-2); }
+  .terminal-body .cmd { color: var(--text-0); }
+  .terminal-body .comment { color: var(--text-dim); }
+  .terminal-body .out { color: var(--text-1); }
+  .terminal-body .out-strong { color: var(--text-0); }
+  .terminal-body .deny    { color: var(--error); }
+  .terminal-body .gate    { color: var(--warn); font-weight: 600; }
+  .terminal-body .reason  { color: var(--text-2); }
+  .terminal-body .ok      { color: var(--success); }
+  .terminal-body .accent  { color: var(--accent); }
+  .terminal-body .teal    { color: var(--accent-2); }
+
+  @media (max-width: 880px) {
+    .hero-grid { grid-template-columns: 1fr; }
+    .terminal-window { max-width: 580px; }
+  }
+
+  /* ============================================================
+     Section
+     ============================================================ */
+  section { padding-block: var(--section-y); border-bottom: 1px solid var(--line-soft); }
+  section:last-of-type { border-bottom: none; }
+
+  h2 {
+    font-size: clamp(28px, 3.4vw, 40px);
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    margin: 0 0 12px;
+    line-height: 1.15;
+  }
+  h2 .accent { color: var(--accent); }
+  h3 {
+    font-size: 17px; color: var(--text-1);
+    margin: 1.5em 0 0.5em; font-weight: 500;
+  }
+  .section-lede {
+    font-size: clamp(15px, 1.4vw, 17px);
+    color: var(--text-1);
+    max-width: 720px;
+    margin: 0 0 36px;
+  }
+
+  /* ============================================================
+     Invariants — 4-card grid
+     ============================================================ */
+  .invariants {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--line-soft);
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .invariant {
+    background: var(--bg-1);
+    padding: 28px 24px;
+    transition: background 200ms;
+  }
+  .invariant:hover { background: var(--bg-2); }
+  .invariant .num {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+    margin-bottom: 14px;
+  }
+  .invariant h3 {
+    margin: 0 0 10px;
+    color: var(--text-0);
+    font-size: 17px;
+  }
+  .invariant p { margin: 0; color: var(--text-1); font-size: 14px; line-height: 1.55; }
+  @media (max-width: 1000px) { .invariants { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 540px)  { .invariants { grid-template-columns: 1fr; } }
+
+  /* ============================================================
+     Diagram (closed loop)
+     ============================================================ */
+  .diagram-wrap {
+    margin: 40px 0 8px;
+    padding: clamp(20px, 4vw, 40px);
+    background: var(--bg-1);
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    overflow-x: auto;
+  }
+  .diagram { display: block; max-width: 100%; height: auto; min-width: 560px; }
+  .diagram .box-fill { fill: var(--bg-2); }
+  .diagram .box-stroke { stroke: var(--line); }
+  .diagram .label-primary { fill: var(--text-0); font: 500 13px var(--mono); }
+  .diagram .label-secondary { fill: var(--text-1); font: 11px var(--mono); }
+  .diagram .label-accent { fill: var(--accent); font: 600 13px var(--mono); }
+  .diagram .label-teal { fill: var(--accent-2); font: 600 13px var(--mono); }
+  .diagram .arrow-stroke { stroke: var(--text-2); fill: none; }
+  .diagram .arrow-recursive { stroke: var(--accent); stroke-dasharray: 4 4; fill: none; }
+
+  /* ============================================================
+     Tools grid
+     ============================================================ */
+  .tools-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+    margin: 28px 0 12px;
+  }
+  .tool-chip {
+    font-family: var(--mono);
+    font-size: 13.5px;
+    padding: 14px 16px;
+    background: var(--bg-1);
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+    color: var(--text-0);
+    transition: all 150ms;
+  }
+  .tool-chip:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px -8px rgba(167, 139, 250, 0.25);
+  }
+  .tool-chip .role {
+    display: block;
+    font-size: 11px;
+    color: var(--text-2);
+    margin-top: 4px;
+    letter-spacing: 0.04em;
+  }
+  .tool-foot { font-size: 14px; color: var(--text-2); margin-top: 16px; }
+
+  /* ============================================================
+     Install / config / observe — two-col layouts
+     ============================================================ */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: clamp(24px, 4vw, 56px);
+    align-items: start;
+  }
+  @media (max-width: 880px) { .two-col { grid-template-columns: 1fr; } }
+
+  pre {
+    margin: 14px 0 22px;
+    padding: 18px 22px;
+    background: var(--bg-1);
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+    overflow-x: auto;
+    line-height: 1.65;
+    font-size: 13.5px;
+  }
+  pre.terminal-block::before {
+    content: '$ ';
+    color: var(--text-2);
+  }
+  pre.toml { color: var(--text-1); }
+  pre.toml .key { color: var(--accent); }
+  pre.toml .str { color: var(--accent-2); }
+  pre.toml .table { color: var(--warn); }
+  pre.toml .comment { color: var(--text-2); font-style: italic; }
+
+  /* ============================================================
+     Command table
+     ============================================================ */
+  .cmd-table {
+    margin: 16px 0;
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-1);
+  }
+  .cmd-row {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.8fr) 2fr;
+    gap: 18px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--line-soft);
+    align-items: baseline;
+  }
+  .cmd-row:last-child { border-bottom: none; }
+  .cmd-row code { background: transparent; color: var(--accent); padding: 0; }
+  .cmd-row .desc { color: var(--text-1); font-size: 14px; }
+  @media (max-width: 600px) {
+    .cmd-row { grid-template-columns: 1fr; gap: 6px; }
+  }
+
+  /* ============================================================
+     Before / after
+     ============================================================ */
+  .compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--line-soft);
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 28px 0 12px;
+  }
+  .compare > div { background: var(--bg-1); padding: 24px; }
+  .compare .label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-2);
+    letter-spacing: 0.06em;
+    margin-bottom: 14px;
+  }
+  .compare .before .label { color: var(--text-2); }
+  .compare .after  .label { color: var(--accent); }
+  .compare pre { margin: 0; padding: 0; background: transparent; border: none; font-size: 12.5px; }
+  @media (max-width: 720px) { .compare { grid-template-columns: 1fr; } }
+
+  /* ============================================================
+     Stats
+     ============================================================ */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--line-soft);
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 28px 0 12px;
+  }
+  .stat {
+    background: var(--bg-1);
+    padding: 28px 20px;
+    text-align: center;
+  }
+  .stat .num {
+    font-family: var(--mono);
+    font-size: clamp(28px, 3.5vw, 36px);
+    color: var(--accent);
+    font-weight: 500;
+    letter-spacing: -0.02em;
+  }
+  .stat .label {
+    font-size: 12px;
+    color: var(--text-2);
+    margin-top: 8px;
+    letter-spacing: 0.04em;
+  }
+  @media (max-width: 760px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+
+  /* ============================================================
+     Callout
+     ============================================================ */
+  .callout {
+    background: linear-gradient(180deg, rgba(251, 191, 36, 0.06), rgba(251, 191, 36, 0.02));
+    border: 1px solid rgba(251, 191, 36, 0.2);
+    border-radius: 10px;
+    padding: 22px 26px;
+    margin-block: 28px;
+  }
+  .callout-title {
+    color: var(--warn);
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    margin-bottom: 10px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .callout-title::before { content: '⚠'; font-size: 14px; }
+  .callout p { margin: 0; color: var(--text-1); font-size: 14.5px; }
+
+  /* ============================================================
+     Philosophy paragraphs
+     ============================================================ */
+  .philosophy { max-width: 760px; }
+  .philosophy p { font-size: 16px; line-height: 1.75; color: var(--text-1); margin: 0 0 18px; }
+  .philosophy p em { color: var(--accent-2); font-style: normal; }
+  .philosophy p strong { color: var(--text-0); font-weight: 500; }
+
+  /* ============================================================
+     Footer
+     ============================================================ */
+  footer {
+    border-top: 1px solid var(--line-soft);
+    padding-block: 50px;
+    margin-top: 40px;
+    text-align: center;
+    color: var(--text-2);
+    font-size: 13px;
+  }
+  footer .links {
+    display: flex; gap: 28px; justify-content: center;
+    margin-bottom: 18px; flex-wrap: wrap;
+  }
+  footer .links a { color: var(--text-1); }
+  footer .meta { font-family: var(--mono); font-size: 12px; opacity: 0.6; }
+
+  /* ============================================================
+     i18n — hide whichever language is not active
+     ============================================================ */
+  body[data-lang="en"] [data-zh] { display: none; }
+  body[data-lang="zh"] [data-en] { display: none; }
+  /* For block-level swaps that need to preserve their flex/grid behavior */
+  body[data-lang="en"] [data-zh-block] { display: none; }
+  body[data-lang="zh"] [data-en-block] { display: none; }
+</style>
+</head>
+<body data-lang="en">
+
+<header id="header">
+  <div class="wrap">
+    <a class="brand" href="#">
+      <span class="brand-dot"></span>
+      <span>nocode</span>
+    </a>
+    <nav class="nav">
+      <a class="nav-link" href="#design">
+        <span data-en>design</span><span data-zh>设计</span>
+      </a>
+      <a class="nav-link" href="#install">
+        <span data-en>install</span><span data-zh>安装</span>
+      </a>
+      <a class="nav-link" href="#config">
+        <span data-en>config</span><span data-zh>配置</span>
+      </a>
+      <a class="nav-link" href="https://github.com/telagod/nocode">github</a>
+      <button class="lang-toggle" id="langToggle" type="button" aria-label="toggle language">
+        <span class="en">EN</span><span class="sep">·</span><span class="zh">中</span>
+      </button>
+    </nav>
+  </div>
+</header>
+
+<!-- ============== HERO ============== -->
+<section class="hero">
+  <div class="wrap">
+    <div class="hero-grid">
+
+      <div class="hero-text">
+        <div class="eyebrow">v0.3.0 · REALIGN</div>
+
+        <h1>
+          <span data-en>The smallest harness<br>for a fractal code agent.</span>
+          <span data-zh>分形 code agent<br>最小化的 harness。</span>
+        </h1>
+
+        <p class="lede" data-en>
+          A terminal-native AI coding agent in Rust. <em>11 atomic tools</em>,
+          <em>three explainable gates</em>, skills as first-class prompt material,
+          sub-agents that share the parent's harness by construction. No magic,
+          no wizard — just one TOML file you can read top to bottom.
+        </p>
+        <p class="lede" data-zh>
+          基于 Rust 的终端 AI 编程代理。<em>11 个原子工具</em>，<em>3 道可解释门禁</em>，
+          技能作为一等公民的 prompt 资源，子 agent 与父 agent 共享同一 harness。
+          没有魔法，没有向导 —— 一个 TOML 文件，从头读到尾。
+        </p>
+
+        <div class="cta-row">
+          <a class="btn primary" href="#install">
+            <span data-en>Install →</span><span data-zh>安装 →</span>
+          </a>
+          <a class="btn" href="https://github.com/telagod/nocode">
+            <span data-en>Source</span><span data-zh>源码</span>
+          </a>
+          <a class="btn" href="https://github.com/telagod/nocode/blob/main/CHANGELOG.md">
+            <span data-en>v0.3.0 notes</span><span data-zh>v0.3.0 变更</span>
+          </a>
+        </div>
+
+        <div class="quick-install">
+          <code>npm install -g @telagod/nocode</code>
+        </div>
+      </div>
+
+      <!-- Hero terminal demo -->
+      <div class="hero-demo">
+        <div class="terminal-window">
+          <div class="terminal-titlebar">
+            <span class="tb-dot r"></span>
+            <span class="tb-dot y"></span>
+            <span class="tb-dot g"></span>
+            <span class="tb-title">~/project · nocode</span>
+          </div>
+          <div class="terminal-body">
+            <div><span class="prompt">$ </span><span class="cmd">nocode --provider claude</span></div>
+            <div class="comment"># 11 tools loaded · skill index injected · policy gate up</div>
+            <br>
+            <div><span class="accent">▸</span> <span class="out-strong">refactor the auth module to use jwt</span></div>
+            <br>
+            <div><span class="teal">Skill</span> · <span class="out">commit-and-push</span></div>
+            <div><span class="teal">Read</span> · <span class="out">src/auth/session.rs</span></div>
+            <div><span class="teal">Edit</span> · <span class="out">src/auth/mod.rs</span> <span class="ok">✓</span></div>
+            <div><span class="teal">Bash</span> · <span class="out">rm -rf /etc/shadow</span></div>
+            <div>&nbsp;&nbsp;<span class="deny">Denied [</span><span class="gate">policy</span><span class="reason">: bash classifier flagged destructive pattern</span><span class="deny">]</span></div>
+            <br>
+            <div><span class="prompt">$ </span><span class="cmd">nocode insight gates</span></div>
+            <div><span class="out-strong">GATE</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="out-strong">DENIALS</span></div>
+            <div><span class="warn" style="color:var(--warn)">policy</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="accent">12</span></div>
+            <div><span class="warn" style="color:var(--warn)">sandbox</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="accent">3</span></div>
+            <div><span class="warn" style="color:var(--warn)">hook</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="accent">1</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============== INVARIANTS ============== -->
+<section id="design">
+  <div class="wrap">
+    <h2>
+      <span data-en>Four <span class="accent">invariants</span></span>
+      <span data-zh>四条<span class="accent">不变量</span></span>
+    </h2>
+    <p class="section-lede">
+      <span data-en>The whole product is these four. Everything else is consequence.</span>
+      <span data-zh>整个产品就这四条。其余一切都是推论。</span>
+    </p>
+
+    <div class="invariants">
+      <div class="invariant">
+        <div class="num">01</div>
+        <h3 data-en>Skill is first-class</h3>
+        <h3 data-zh>技能一等公民</h3>
+        <p data-en>Markdown files in <code>.nocode/skills/</code> are loaded into prompt assembly with the same priority as <code>CLAUDE.md</code>. The model sees the index <em>before</em> it acts. Bodies materialize lazily.</p>
+        <p data-zh><code>.nocode/skills/</code> 下的 markdown 文件与 <code>CLAUDE.md</code> 同级注入 prompt。模型在动作<em>之前</em>就看到全部索引。skill 正文按需加载。</p>
+      </div>
+      <div class="invariant">
+        <div class="num">02</div>
+        <h3 data-en>11 atomic tools</h3>
+        <h3 data-zh>11 个原子工具</h3>
+        <p data-en>One job per tool, no overlap. The default registry is fixed and asserted by an integration test — no quiet sprawl. Everything else is opt-in.</p>
+        <p data-zh>一工具一职，零重叠。默认注册表由集成测试锁死 —— 不会悄悄膨胀。其余工具按需启用。</p>
+      </div>
+      <div class="invariant">
+        <div class="num">03</div>
+        <h3 data-en>Three explainable gates</h3>
+        <h3 data-zh>三道可解释门禁</h3>
+        <p data-en><code>Schema → Policy → Hooks</code>. Every refusal carries a structured why-trail: <code>Denied [&lt;gate&gt;: &lt;reason&gt;]</code>. No silent denies, no opaque "Permission denied".</p>
+        <p data-zh><code>Schema → Policy → Hooks</code>。每次拒绝都带结构化的 why-trail：<code>Denied [&lt;门&gt;: &lt;原因&gt;]</code>。零静默拒绝，零含糊"权限不足"。</p>
+      </div>
+      <div class="invariant">
+        <div class="num">04</div>
+        <h3 data-en>Fractal sub-agents</h3>
+        <h3 data-zh>分形子 agent</h3>
+        <p data-en>An <code>Agent</code> spawn runs the <em>same</em> harness as its parent — same registry, same skill index, same permission mode. Recursion inherits both capability and constraint.</p>
+        <p data-zh><code>Agent</code> 派生出来的子 agent 运行<em>同一份</em> harness —— 同样的工具表、技能索引、权限模式。递归同时继承能力和约束。</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 56px;">
+      <span data-en>The closed loop</span><span data-zh>闭环</span>
+    </h3>
+    <p style="color: var(--text-1); font-size: 15px;">
+      <span data-en>One picture, one product:</span>
+      <span data-zh>一张图就是整个产品：</span>
+    </p>
+
+    <div class="diagram-wrap">
+      <svg class="diagram" viewBox="0 0 760 460" role="img"
+           aria-label="nocode closed loop: skill registry feeds prompt assembly, prompt feeds query engine, engine calls atomic tools through schema/policy/hooks; sub-agents recursively re-enter the same loop">
+        <text x="380" y="28" text-anchor="middle" class="label-primary">User Prompt</text>
+        <line x1="380" y1="38" x2="380" y2="58" class="arrow-stroke"/>
+        <rect x="30"  y="70" width="180" height="60" rx="8" class="box-fill" stroke-width="1"/>
+        <rect x="30"  y="70" width="180" height="60" rx="8" fill="none" class="box-stroke" stroke-width="1"/>
+        <text x="120" y="98" text-anchor="middle" class="label-teal">SkillRegistry</text>
+        <text x="120" y="116" text-anchor="middle" class="label-secondary">.nocode + .claude</text>
+        <rect x="280" y="70" width="200" height="60" rx="8" class="box-fill" stroke-width="1"/>
+        <rect x="280" y="70" width="200" height="60" rx="8" fill="none" class="box-stroke" stroke-width="1"/>
+        <text x="380" y="92"  text-anchor="middle" class="label-primary">Prompt Assembly</text>
+        <text x="380" y="110" text-anchor="middle" class="label-secondary">base · CLAUDE.md</text>
+        <text x="380" y="124" text-anchor="middle" class="label-secondary">AGENTS.md · skill-index</text>
+        <line x1="210" y1="100" x2="280" y2="100" class="arrow-stroke" marker-end="url(#tri)"/>
+        <line x1="380" y1="130" x2="380" y2="170" class="arrow-stroke" marker-end="url(#tri)"/>
+        <rect x="280" y="170" width="200" height="44" rx="8" class="box-fill" stroke-width="1"/>
+        <rect x="280" y="170" width="200" height="44" rx="8" fill="none" class="box-stroke" stroke-width="1"/>
+        <text x="380" y="197" text-anchor="middle" class="label-primary">QueryEngine</text>
+        <line x1="380" y1="214" x2="380" y2="244" class="arrow-stroke" marker-end="url(#tri)"/>
+        <rect x="180" y="244" width="400" height="56" rx="8" fill="rgba(167,139,250,0.04)" stroke="rgba(167,139,250,0.4)" stroke-width="1"/>
+        <text x="240" y="270" class="label-accent">Schema</text>
+        <text x="358" y="270" class="label-accent">Policy</text>
+        <text x="480" y="270" class="label-accent">Hooks</text>
+        <text x="240" y="288" class="label-secondary">JSON</text>
+        <text x="350" y="288" class="label-secondary">why-trail</text>
+        <text x="473" y="288" class="label-secondary">PreToolUse</text>
+        <line x1="380" y1="300" x2="380" y2="328" class="arrow-stroke" marker-end="url(#tri)"/>
+        <rect x="280" y="328" width="200" height="44" rx="8" class="box-fill" stroke-width="1"/>
+        <rect x="280" y="328" width="200" height="44" rx="8" fill="none" class="box-stroke" stroke-width="1"/>
+        <text x="380" y="355" text-anchor="middle" class="label-primary">ToolExecutor</text>
+        <line x1="320" y1="372" x2="180" y2="402" class="arrow-stroke" marker-end="url(#tri)"/>
+        <line x1="440" y1="372" x2="580" y2="402" class="arrow-stroke" marker-end="url(#tri)"/>
+        <rect x="60"  y="402" width="220" height="44" rx="8" class="box-fill" stroke-width="1"/>
+        <rect x="60"  y="402" width="220" height="44" rx="8" fill="none" class="box-stroke" stroke-width="1"/>
+        <text x="170" y="423" text-anchor="middle" class="label-primary">One of 11 atomic tools</text>
+        <text x="170" y="438" text-anchor="middle" class="label-secondary">Read · Bash · Skill · …</text>
+        <rect x="480" y="402" width="220" height="44" rx="8" fill="rgba(167,139,250,0.06)" stroke="rgba(167,139,250,0.5)" stroke-width="1"/>
+        <text x="590" y="423" text-anchor="middle" class="label-accent">Sub-agent (Agent tool)</text>
+        <text x="590" y="438" text-anchor="middle" class="label-secondary">inherits registry+skill+mode</text>
+        <path d="M 700 424 Q 750 280 580 272" class="arrow-recursive" marker-end="url(#triA)"/>
+        <text x="722" y="292" class="label-accent" font-size="11">recursive</text>
+        <defs>
+          <marker id="tri" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 Z" fill="#6e6a7d"/>
+          </marker>
+          <marker id="triA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 Z" fill="#a78bfa"/>
+          </marker>
+        </defs>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<!-- ============== TOOLS ============== -->
+<section>
+  <div class="wrap">
+    <h2>
+      <span data-en>The <span class="accent">eleven</span></span>
+      <span data-zh>十一<span class="accent">原子工具</span></span>
+    </h2>
+    <p class="section-lede">
+      <span data-en>Every tool earns its keep. Adding a new one means deleting two from the optional pool first.</span>
+      <span data-zh>每个工具必须有理由留下。要加新工具，先从可选池里删两个。</span>
+    </p>
+
+    <div class="tools-grid">
+      <div class="tool-chip">FileRead<span class="role" data-en>observe</span><span class="role" data-zh>读取</span></div>
+      <div class="tool-chip">FileWrite<span class="role" data-en>create</span><span class="role" data-zh>新建</span></div>
+      <div class="tool-chip">FileEdit<span class="role" data-en>mutate</span><span class="role" data-zh>编辑</span></div>
+      <div class="tool-chip">Glob<span class="role" data-en>find paths</span><span class="role" data-zh>路径搜索</span></div>
+      <div class="tool-chip">Grep<span class="role" data-en>find content</span><span class="role" data-zh>内容搜索</span></div>
+      <div class="tool-chip">Bash<span class="role" data-en>execute</span><span class="role" data-zh>执行</span></div>
+      <div class="tool-chip">WebFetch<span class="role" data-en>retrieve</span><span class="role" data-zh>抓取</span></div>
+      <div class="tool-chip">WebSearch<span class="role" data-en>discover</span><span class="role" data-zh>搜索</span></div>
+      <div class="tool-chip">Agent<span class="role" data-en>spawn</span><span class="role" data-zh>派生</span></div>
+      <div class="tool-chip">AskUserQuestion<span class="role" data-en>ask</span><span class="role" data-zh>询问</span></div>
+      <div class="tool-chip">Skill<span class="role" data-en>invoke</span><span class="role" data-zh>调用</span></div>
+    </div>
+    <p class="tool-foot" data-en>
+      Optional tools (Memory, TodoWrite, Cron*, Team*, MCP, Notebook, …) are off by default.
+      Asserted by the integration test <code>tool_registry_has_canonical_core_set</code>.
+    </p>
+    <p class="tool-foot" data-zh>
+      可选工具（Memory、TodoWrite、Cron*、Team*、MCP、Notebook 等）默认关闭。
+      由集成测试 <code>tool_registry_has_canonical_core_set</code> 锁定契约。
+    </p>
+  </div>
+</section>
+
+<!-- ============== INSTALL ============== -->
+<section id="install">
+  <div class="wrap">
+    <h2>
+      <span data-en><span class="accent">Install</span></span>
+      <span data-zh><span class="accent">安装</span></span>
+    </h2>
+    <p class="section-lede">
+      <span data-en>Two paths. Both end in a working <code>nocode</code> binary on your <code>$PATH</code>.</span>
+      <span data-zh>两条路。哪条都能让 <code>nocode</code> 出现在你的 <code>$PATH</code> 上。</span>
+    </p>
+
+    <div class="two-col">
+      <div>
+        <h3 data-en>1. npm (recommended)</h3>
+        <h3 data-zh>1. npm（推荐）</h3>
+<pre class="terminal-block">npm install -g @telagod/nocode
+nocode init
+export OPENAI_API_KEY=sk-...
+nocode</pre>
+        <p style="font-size: 14px; color: var(--text-2);" data-en>
+          7 platform packages auto-resolved (linux/macOS/Windows · x64/arm64).
+        </p>
+        <p style="font-size: 14px; color: var(--text-2);" data-zh>
+          自动解析 7 个平台二进制包（linux/macOS/Windows · x64/arm64）。
+        </p>
+      </div>
+
+      <div>
+        <h3 data-en>2. From source</h3>
+        <h3 data-zh>2. 源码构建</h3>
+<pre class="terminal-block">git clone https://github.com/telagod/nocode.git
+cd nocode &amp;&amp; cargo build --release
+cp target/release/nocode ~/.local/bin/</pre>
+        <p style="font-size: 14px; color: var(--text-2);" data-en>
+          Rust 2024 edition · clippy <code>-D warnings</code> clean.
+        </p>
+        <p style="font-size: 14px; color: var(--text-2);" data-zh>
+          Rust 2024 edition · clippy <code>-D warnings</code> 全过。
+        </p>
+      </div>
+    </div>
+
+    <h3 data-en>Single-key path (no config file)</h3>
+    <h3 data-zh>单 key 直跑（无需配置文件）</h3>
+<pre class="terminal-block">export ANTHROPIC_API_KEY=sk-ant-...
+nocode --provider claude</pre>
+    <p style="font-size: 14px; color: var(--text-1);" data-en>
+      Three builtin aliases — <code>claude</code>, <code>openai</code>, <code>gemini</code> —
+      work without any <code>[providers.*]</code> table.
+    </p>
+    <p style="font-size: 14px; color: var(--text-1);" data-zh>
+      三个内置别名 —— <code>claude</code>、<code>openai</code>、<code>gemini</code> ——
+      无需 <code>[providers.*]</code> 表即可直接使用。
+    </p>
+  </div>
+</section>
+
+<!-- ============== CONFIG ============== -->
+<section id="config">
+  <div class="wrap">
+    <h2>
+      <span data-en><span class="accent">Configuration</span></span>
+      <span data-zh><span class="accent">配置</span></span>
+    </h2>
+    <p class="section-lede">
+      <span data-en>One TOML file. Edit it by hand. Run <code>nocode init</code> once for a commented template.</span>
+      <span data-zh>一个 TOML 文件，自己手编。<code>nocode init</code> 一键生成带注释的模板。</span>
+    </p>
+
+<pre class="toml"><span class="comment"># ~/.nocode/config.toml</span>
+<span class="key">default_provider</span> = <span class="str">"subfox"</span>
+<span class="key">model</span> = <span class="str">"gpt-5.5"</span>
+<span class="key">permission_mode</span> = <span class="str">"ask"</span>
+
+<span class="table">[providers.subfox]</span>
+<span class="key">base_url</span>     = <span class="str">"https://sub.foxnio.com/v1"</span>
+<span class="key">wire_api</span>     = <span class="str">"openai-responses"</span>     <span class="comment"># anthropic | openai-responses | openai-chat | google</span>
+<span class="key">api_key_env</span>  = <span class="str">"OPENAI_API_KEY"</span>        <span class="comment"># env var holding the key</span>
+<span class="key">default_model</span> = <span class="str">"gpt-5.5"</span>
+
+<span class="table">[providers.local-vllm]</span>
+<span class="key">base_url</span>     = <span class="str">"http://localhost:8000/v1"</span>
+<span class="key">wire_api</span>     = <span class="str">"openai-chat"</span>
+<span class="key">api_key_env</span>  = <span class="str">"VLLM_API_KEY"</span>
+
+<span class="table">[profiles.work]</span>
+<span class="key">provider</span> = <span class="str">"subfox"</span>
+
+<span class="table">[profiles.home]</span>
+<span class="key">provider</span> = <span class="str">"local-vllm"</span>
+<span class="key">permission_mode</span> = <span class="str">"auto"</span></pre>
+
+    <h3 data-en>Switch in one flag</h3>
+    <h3 data-zh>一行命令切换</h3>
+<pre class="terminal-block">nocode --provider local-vllm
+nocode --profile work
+NOCODE_PROVIDER=openai nocode</pre>
+
+    <div class="callout">
+      <div class="callout-title" data-en>v0.3.0 breaking</div>
+      <div class="callout-title" data-zh>v0.3.0 不兼容变更</div>
+      <p data-en>
+        The legacy <code>custom_*</code> scheme and the <code>--login</code> wizard were removed.
+        Upgrading from 0.2.x? Just run <code>nocode</code> — the startup error walks you through
+        the migration with a precise <code>diff</code>. Or read the
+        <a href="https://github.com/telagod/nocode/blob/main/CHANGELOG.md#030---2026-05-26--realign-release">CHANGELOG</a>.
+      </p>
+      <p data-zh>
+        旧的 <code>custom_*</code> 字段方案和 <code>--login</code> 向导已删除。
+        从 0.2.x 升级？直接运行 <code>nocode</code> —— 启动报错会用精确的 <code>diff</code>
+        指引你迁移。也可读
+        <a href="https://github.com/telagod/nocode/blob/main/CHANGELOG.md#030---2026-05-26--realign-release">CHANGELOG</a>。
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============== BEFORE/AFTER ============== -->
+<section>
+  <div class="wrap">
+    <h2>
+      <span data-en><span class="accent">Before</span> / after</span>
+      <span data-zh>升级<span class="accent">前后</span></span>
+    </h2>
+    <p class="section-lede">
+      <span data-en>The whole migration in one diff. Multiple endpoints can now coexist; switch with one flag.</span>
+      <span data-zh>整个迁移一图说清。多个端点可以共存，一个 flag 切换。</span>
+    </p>
+
+    <div class="compare">
+      <div class="before">
+        <div class="label" data-en>v0.2.x · single custom slot</div>
+        <div class="label" data-zh>v0.2.x · 单 custom 槽位</div>
+<pre><code>model_provider     = "custom"
+custom_base_url    = "https://sub.foxnio.com"
+custom_api_format  = "openai-responses"
+custom_preset      = "OpenAI"
+model              = "gpt-5.5"</code></pre>
+      </div>
+      <div class="after">
+        <div class="label" data-en>v0.3.0 · named provider table</div>
+        <div class="label" data-zh>v0.3.0 · 命名 provider 表</div>
+<pre><code>default_provider = "subfox"
+model = "gpt-5.5"
+
+[providers.subfox]
+base_url    = "https://sub.foxnio.com/v1"
+wire_api    = "openai-responses"
+api_key_env = "OPENAI_API_KEY"</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== OBSERVE ============== -->
+<section>
+  <div class="wrap">
+    <h2>
+      <span data-en><span class="accent">Observe</span> — questions, not dashboards</span>
+      <span data-zh><span class="accent">观察</span> —— 提问，而非仪表盘</span>
+    </h2>
+    <p class="section-lede">
+      <span data-en>
+        Inspired by <a href="https://github.com/telagod/antcode">antcode</a>'s observer
+        discipline: each subcommand answers one specific question. No monolithic UI.
+      </span>
+      <span data-zh>
+        借鉴 <a href="https://github.com/telagod/antcode">antcode</a> 的观察哲学：
+        每个子命令只回答一个具体问题，不堆叠仪表盘。
+      </span>
+    </p>
+
+    <div class="cmd-table">
+      <div class="cmd-row">
+        <code>nocode --status</code>
+        <span class="desc" data-en>System diagnostics + active sqlite volume + top tools and gates</span>
+        <span class="desc" data-zh>系统诊断 + 当前 sqlite 卷 + 高频工具与拒绝门</span>
+      </div>
+      <div class="cmd-row">
+        <code>nocode insight</code>
+        <span class="desc" data-en>7-day summary: sessions, tool calls, denials</span>
+        <span class="desc" data-zh>7 天总览：会话、工具调用、拒绝次数</span>
+      </div>
+      <div class="cmd-row">
+        <code>nocode insight where</code>
+        <span class="desc" data-en>File-first: where is the active state living?</span>
+        <span class="desc" data-zh>状态在哪：当前 sqlite 卷的真实路径</span>
+      </div>
+      <div class="cmd-row">
+        <code>nocode insight tools</code>
+        <span class="desc" data-en>Tool-call frequency + error counts</span>
+        <span class="desc" data-zh>工具调用频率 + 错误计数</span>
+      </div>
+      <div class="cmd-row">
+        <code>nocode insight gates</code>
+        <span class="desc" data-en>Which Policy gate denied the most this week</span>
+        <span class="desc" data-zh>本周哪道门禁拒绝最多</span>
+      </div>
+      <div class="cmd-row">
+        <code>nocode insight cost</code>
+        <span class="desc" data-en>Token usage by provider/model</span>
+        <span class="desc" data-zh>按 provider/model 统计 token 消耗</span>
+      </div>
+      <div class="cmd-row">
+        <code>nocode config list</code>
+        <span class="desc" data-en>Print current config (or <code>--json</code>)</span>
+        <span class="desc" data-zh>打印当前配置（或 <code>--json</code>）</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== STATS ============== -->
+<section>
+  <div class="wrap">
+    <h2>
+      <span data-en>v0.3.0 by the <span class="accent">numbers</span></span>
+      <span data-zh>v0.3.0 <span class="accent">数字</span>速览</span>
+    </h2>
+    <p class="section-lede">
+      <span data-en>The shape of "harness engineering bionics" in code.</span>
+      <span data-zh>"harness 工程仿生学"落在代码上的样子。</span>
+    </p>
+
+    <div class="stats">
+      <div class="stat"><div class="num">11</div><div class="label" data-en>CORE TOOLS</div><div class="label" data-zh>核心工具</div></div>
+      <div class="stat"><div class="num">3</div><div class="label" data-en>EXPLAINABLE GATES</div><div class="label" data-zh>可解释门禁</div></div>
+      <div class="stat"><div class="num">825</div><div class="label" data-en>TESTS GREEN</div><div class="label" data-zh>测试全绿</div></div>
+      <div class="stat"><div class="num">−1301</div><div class="label" data-en>NET LOC vs 0.2.55</div><div class="label" data-zh>净减代码量</div></div>
+    </div>
+
+    <p style="font-size: 14px; color: var(--text-2); text-align: center; margin-top: 4px;" data-en>
+      All clippy lints clean (<code>--all-targets -- -D warnings</code>) · 6 platforms · 7 npm packages.
+    </p>
+    <p style="font-size: 14px; color: var(--text-2); text-align: center; margin-top: 4px;" data-zh>
+      clippy lint 全绿（<code>--all-targets -- -D warnings</code>）· 6 平台 · 7 个 npm 包。
+    </p>
+  </div>
+</section>
+
+<!-- ============== PHILOSOPHY ============== -->
+<section>
+  <div class="wrap">
+    <h2>
+      <span data-en>Why <span class="accent">"no code"</span></span>
+      <span data-zh>为什么叫 <span class="accent">"no code"</span></span>
+    </h2>
+
+    <div class="philosophy">
+      <p data-en>
+        The name is a joke that became a discipline. Most agent harnesses
+        <em>add</em> code on every release — new providers, new tools, new gates,
+        new wizards. Each addition is a future tax: more lines to debug, more
+        edges to forget, more docs to keep in sync.
+      </p>
+      <p data-zh>
+        这名字本是个玩笑，后来变成了纪律。多数 agent harness 每发一次版就<em>加</em>代码 ——
+        新 provider、新工具、新门禁、新向导。每次添加都是未来的税：更多行要 debug、
+        更多边角要遗忘、更多文档要同步。
+      </p>
+      <p data-en>
+        nocode tries the opposite. <strong>Adding a feature should shrink the next
+        adjacent feature more often than it grows it.</strong> Skill-as-first-class let
+        <code>tool/skill.rs</code> drop ~70 lines. The PolicyEngine let
+        <code>tool/executor.rs</code> drop ~145. Removing the login wizard let the
+        binary drop 1128.
+      </p>
+      <p data-zh>
+        nocode 反其道而行。<strong>加一个特性，应该让相邻特性瘦身的次数多于膨胀的次数。</strong>
+        把 skill 升格为一等公民让 <code>tool/skill.rs</code> 减了约 70 行；
+        引入 PolicyEngine 让 <code>tool/executor.rs</code> 减了 145 行；
+        删除 login 向导让二进制减了 1128 行。
+      </p>
+      <p data-en>
+        The harness is the product. Tools and gates are means.
+      </p>
+      <p data-zh>
+        harness 才是产品本身。工具和门禁只是手段。
+      </p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="links">
+    <a href="https://github.com/telagod/nocode">GitHub</a>
+    <a href="https://github.com/telagod/nocode/blob/main/CHANGELOG.md">CHANGELOG</a>
+    <a href="https://github.com/telagod/nocode/tree/main/docs">Docs</a>
+    <a href="https://www.npmjs.com/package/@telagod/nocode">npm</a>
+  </div>
+  <div class="meta">
+    <span data-en>MIT · v0.3.0 · made with care, not configuration</span>
+    <span data-zh>MIT · v0.3.0 · 用心打磨，不靠堆砌</span>
+  </div>
+</footer>
+
+<script>
+  // ----- i18n: minimal toggle with localStorage memory --------------
+  (function () {
+    var body = document.body;
+    var toggle = document.getElementById('langToggle');
+    var enSpan = toggle.querySelector('.en');
+    var zhSpan = toggle.querySelector('.zh');
+
+    function detectInitialLang() {
+      var stored = null;
+      try { stored = localStorage.getItem('nocode-lang'); } catch (_) {}
+      if (stored === 'en' || stored === 'zh') return stored;
+      // Fall back to browser language; treat any zh-* as zh.
+      var nav = (navigator.language || navigator.userLanguage || '').toLowerCase();
+      return nav.indexOf('zh') === 0 ? 'zh' : 'en';
+    }
+
+    function applyLang(lang) {
+      body.setAttribute('data-lang', lang);
+      document.documentElement.setAttribute('lang', lang === 'zh' ? 'zh-CN' : 'en');
+      enSpan.classList.toggle('active', lang === 'en');
+      zhSpan.classList.toggle('active', lang === 'zh');
+      try { localStorage.setItem('nocode-lang', lang); } catch (_) {}
+    }
+
+    applyLang(detectInitialLang());
+
+    toggle.addEventListener('click', function () {
+      var next = body.getAttribute('data-lang') === 'en' ? 'zh' : 'en';
+      applyLang(next);
+    });
+  })();
+
+  // ----- header subtle border on scroll -----------------------------
+  (function () {
+    var header = document.getElementById('header');
+    var onScroll = function () {
+      header.classList.toggle('scrolled', window.scrollY > 4);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  })();
+</script>
+
+</body>
+</html>
